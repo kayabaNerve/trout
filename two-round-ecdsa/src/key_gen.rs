@@ -1,7 +1,7 @@
 use std::{sync::Arc, collections::HashMap};
 
 use zeroize::{Zeroize, Zeroizing};
-use rand_core::{RngCore, CryptoRng, SeedableRng};
+use rand::{CryptoRng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
 use group::{
@@ -283,7 +283,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Setup<PCG, 
   /// Returns `None` upon invalid parameters.
   #[must_use]
   pub fn dealer(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     security_level: SecurityLevel,
     t: u16,
     n: u16,

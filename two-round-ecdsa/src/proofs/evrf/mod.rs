@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 use zeroize::Zeroizing;
-use rand_core::{RngCore, CryptoRng};
+use rand::CryptoRng;
 
 use group::{ff::Field, Group, GroupEncoding};
 use class_groups::Element;
@@ -40,7 +40,7 @@ pub trait Evrf<CG: Element, P: Parameters<CG>> {
   /// Perform the per-participant setup for the eVRF.
   fn setup(
     global_setup: &Self::GlobalSetup,
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
   ) -> (Self::SetupView, Self::Setup);
 
   /// Create the context for the eVRF invocation.
@@ -57,7 +57,7 @@ pub trait Evrf<CG: Element, P: Parameters<CG>> {
   /// The proof is written to `proof`. If this function returns an error, the status of `proof` is
   /// undefined.
   fn prove<W: io::Write>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     global_setup: &Self::GlobalSetup,
     setup: &Self::Setup,
     context: &Self::Context,
@@ -76,7 +76,7 @@ pub trait Evrf<CG: Element, P: Parameters<CG>> {
   /// guaranteed to not be mutated however, meaning a proof which raises an error while being
   /// queued will not corrupt the batch verifier and will leave it eligible to verify other proofs.
   fn queue_verification<R: io::Read>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     global_setup: &Self::GlobalSetup,
     batch_verifier: &mut Self::BatchVerifier,
     participant: dkg::Participant,
@@ -107,13 +107,11 @@ impl<CG: Element, P: Parameters<CG>> Evrf<CG, P> for DummyEvrf {
   type Context = ();
   type BatchVerifier = ();
 
-  fn global_setup() -> Self::GlobalSetup {
-    ()
-  }
+  fn global_setup() -> Self::GlobalSetup {}
 
   fn setup(
     _global_setup: &Self::GlobalSetup,
-    _rng: &mut (impl RngCore + CryptoRng),
+    _rng: &mut impl CryptoRng,
   ) -> (Self::SetupView, Self::Setup) {
     ((), ())
   }
@@ -124,7 +122,7 @@ impl<CG: Element, P: Parameters<CG>> Evrf<CG, P> for DummyEvrf {
   fn batch_verifier(_global_setup: &Self::GlobalSetup) -> Self::BatchVerifier {}
 
   fn prove<W: io::Write>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     _global_setup: &Self::GlobalSetup,
     _setup: &Self::Setup,
     _context: &Self::Context,
@@ -137,7 +135,7 @@ impl<CG: Element, P: Parameters<CG>> Evrf<CG, P> for DummyEvrf {
   }
 
   fn queue_verification<R: io::Read>(
-    _rng: &mut (impl RngCore + CryptoRng),
+    _rng: &mut impl CryptoRng,
     _global_setup: &Self::GlobalSetup,
     _batch_verifier: &mut Self::BatchVerifier,
     _participant: dkg::Participant,

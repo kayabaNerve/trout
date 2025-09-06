@@ -1,6 +1,4 @@
-use subtle::{ConstantTimeEq, Choice};
-
-use crypto_bigint_seven::{BitOps, Limb};
+use crypto_bigint::{Choice, CtEq, CtLt, Zero, BitOr, BitOps, ShrVartime, Limb};
 
 mod uint;
 mod boxed_uint;
@@ -14,12 +12,21 @@ pub(crate) use reduction::reduce;
 /// decision of when to terminate execution of a given function. This API unifies `Uint` and
 /// `BoxedUint` (in a way `Integer` appeared ineligible for) while providing the niche methods
 /// required for performance.
-trait Limbs: Sized + ConstantTimeEq + BitOps {
+///
+/// TODO: Replace with `UintRef`.
+trait Limbs:
+  Sized
+  + Clone
+  + AsRef<[Limb]>
+  + AsMut<[Limb]>
+  + From<u8>
+  + CtEq
+  + Zero
+  + BitOr<Output = Self>
+  + BitOps
+  + ShrVartime
+{
   fn zero(limbs: usize) -> Self;
-  fn is_zero(&self) -> Choice;
-
-  fn as_limbs(&self) -> &[Limb];
-  fn as_mut_limbs(&mut self) -> &mut [Limb];
 
   fn shl(&self, bits: u32) -> Self;
   fn carrying_add(&self, b: &Self, carry: Limb) -> (Self, Limb);
@@ -29,50 +36,54 @@ trait Limbs: Sized + ConstantTimeEq + BitOps {
   // Returns `0` if passed `0` for the denominator.
   fn wrapping_div(num: (Self, Self), denom: &Self) -> Self;
 
+  #[inline(always)]
   fn double(&self, limbs: usize) -> Self {
     let mut two_a = <Self as Limbs>::zero(limbs);
     for l in (1 .. limbs).rev() {
-      two_a.as_mut_limbs()[l] =
-        (self.as_limbs()[l] << 1) | (self.as_limbs()[l - 1] >> (Limb::BITS - 1));
+      <_ as AsMut<[Limb]>>::as_mut(&mut two_a)[l] = (<_ as AsRef<[Limb]>>::as_ref(&self)[l] << 1) |
+        (<_ as AsRef<[Limb]>>::as_ref(&self)[l - 1] >> (Limb::BITS - 1));
     }
-    two_a.as_mut_limbs()[0] = self.as_limbs()[0] << 1;
+    <_ as AsMut<[Limb]>>::as_mut(&mut two_a)[0] = <_ as AsRef<[Limb]>>::as_ref(&self)[0] << 1;
     two_a
   }
 
-  #[allow(unused)]
-  fn ct_eq(a: &Self, b: &Self, limbs: usize) -> Choice {
-    let mut res = Choice::from(1u8);
+  #[inline(always)]
+  fn ct_select(&self, b: &Self, limbs: usize, choice: Choice) -> Self {
+    let mut res = <Self as Limbs>::zero(limbs);
     for l in 0 .. limbs {
-      res &= a.as_limbs()[l].ct_eq(&b.as_limbs()[l]);
-    }
-    res
-  }
-
-  fn ct_select(a: &Self, b: &Self, limbs: usize, choice: Choice) -> Self {
-    let mut res = Self::zero(limbs);
-    for l in 0 .. limbs {
-      res.as_mut_limbs()[l] = <_ as crypto_bigint_seven::ConstantTimeSelect>::ct_select(
-        &a.as_limbs()[l],
-        &b.as_limbs()[l],
+      <_ as AsMut<[Limb]>>::as_mut(&mut res)[l] = <_ as crypto_bigint::CtSelect>::ct_select(
+        &<_ as AsRef<[Limb]>>::as_ref(&self)[l],
+        &<_ as AsRef<[Limb]>>::as_ref(&b)[l],
         choice,
       );
     }
     res
   }
 
+  #[inline(always)]
+  fn ct_swap(&mut self, b: &mut Self, limbs: usize, choice: Choice) {
+    for l in 0 .. limbs {
+      <_ as crypto_bigint::CtSelect>::ct_swap(
+        &mut <_ as AsMut<[Limb]>>::as_mut(self)[l],
+        &mut <_ as AsMut<[Limb]>>::as_mut(b)[l],
+        choice,
+      );
+    }
+  }
+
+  #[inline(always)]
   fn gt(&self, b: &Self, limbs: usize) -> Choice {
     let mut carry = Limb::ZERO;
     for l in 0 .. limbs {
-      (_, carry) = b.as_limbs()[l].borrowing_sub(self.as_limbs()[l], carry);
+      (_, carry) = <_ as AsRef<[Limb]>>::as_ref(&b)[l]
+        .borrowing_sub(<_ as AsRef<[Limb]>>::as_ref(&self)[l], carry);
     }
     Choice::from((carry.0 & 1) as u8)
   }
 
+  #[inline(always)]
   fn lt(&self, b: &Self, limbs: usize) -> Choice {
-    let mut carry = Limb::ZERO;
-    for l in 0 .. limbs {
-      (_, carry) = self.as_limbs()[l].borrowing_sub(b.as_limbs()[l], carry);
-    }
-    Choice::from((carry.0 & 1) as u8)
+    crypto_bigint::UintRef::new(&self.as_ref()[.. limbs])
+      .ct_lt(&crypto_bigint::UintRef::new(&b.as_ref()[.. limbs]))
   }
 }

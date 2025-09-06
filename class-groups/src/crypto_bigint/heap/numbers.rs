@@ -1,15 +1,13 @@
 // This file contains the necessary wrappers around `BoxedUint` as necessary for
 // `CryptoBigintElement`
 
-use core::{
-  borrow::Borrow,
-  ops::{Add, Neg, Sub, Mul, Div, Rem, Shl, Shr},
-};
+use core::ops::{Add, Neg, Sub, Mul, Div, Rem, Shl, Shr};
 
-use subtle::{Choice, ConstantTimeEq, ConstantTimeLess, ConstantTimeGreater};
 use zeroize::Zeroize;
 
-use crypto_bigint_seven::{ConstantTimeSelect, Gcd, Resize, NonZero, BoxedUint};
+use crypto_bigint::{
+  Choice, CtEq, CtSelect, CtLt, CtGt, NonZero, Resize, ConcatenatingMul, Gcd, BoxedUint,
+};
 
 enum Cow<'a, B> {
   Borrowed(&'a B),
@@ -115,17 +113,13 @@ impl UnsignedInteger {
 impl Add for &UnsignedInteger {
   type Output = UnsignedInteger;
   fn add(self, other: Self) -> UnsignedInteger {
-    // widen this to ensure it doesn't overflow
-    let new_precision = self.0.bits_precision().max(other.0.bits_precision()) + 1;
-    let res = self.0.clone().resize_unchecked(new_precision);
-    UnsignedInteger(&other.0 + res)
+    UnsignedInteger(self.0.concatenating_add(&other.0))
   }
 }
 impl Mul for &UnsignedInteger {
   type Output = UnsignedInteger;
   fn mul(self, other: Self) -> UnsignedInteger {
-    // crypto-bigint widens on mul for us
-    let res = UnsignedInteger(self.0.borrow().mul(&other.0));
+    let res = UnsignedInteger(self.0.concatenating_mul(&other.0));
     debug_assert_eq!(res.0.bits_precision(), self.0.bits_precision() + other.0.bits_precision());
     res
   }
@@ -164,24 +158,24 @@ impl Shr<u32> for UnsignedInteger {
     UnsignedInteger(self.0 >> shift)
   }
 }
-impl ConstantTimeEq for UnsignedInteger {
+impl CtEq for UnsignedInteger {
   fn ct_eq(&self, b: &Self) -> Choice {
     self.0.ct_eq(&b.0)
   }
 }
-impl ConstantTimeLess for UnsignedInteger {
+impl CtLt for UnsignedInteger {
   fn ct_lt(&self, b: &Self) -> Choice {
     self.0.ct_lt(&b.0)
   }
 }
-impl ConstantTimeGreater for UnsignedInteger {
+impl CtGt for UnsignedInteger {
   fn ct_gt(&self, b: &Self) -> Choice {
     self.0.ct_gt(&b.0)
   }
 }
-impl ConstantTimeSelect for UnsignedInteger {
-  fn ct_select(a: &Self, b: &Self, choice: Choice) -> Self {
-    Self(boxed_uint_ct_select(&a.0, &b.0, choice))
+impl CtSelect for UnsignedInteger {
+  fn ct_select(&self, b: &Self, choice: Choice) -> Self {
+    Self(boxed_uint_ct_select(&self.0, &b.0, choice))
   }
 }
 
@@ -226,7 +220,7 @@ impl Add<&UnsignedInteger> for &Integer {
     // If they have different signs, the greater number's sign is preserved
     let not_same_sign = Integer { positive: greater_positive, value: UnsignedInteger(difference) };
 
-    ConstantTimeSelect::ct_select(&not_same_sign, &same_sign, self.positive.ct_eq(&other_positive))
+    CtSelect::ct_select(&not_same_sign, &same_sign, self.positive.ct_eq(&other_positive))
   }
 }
 impl Add for &Integer {
@@ -238,7 +232,7 @@ impl Add for &Integer {
     let greater_positive = Choice::ct_select(&self.positive, &other.positive, other_is_greater);
     let not_same_sign = Integer { positive: greater_positive, value: UnsignedInteger(difference) };
 
-    ConstantTimeSelect::ct_select(&not_same_sign, &same_sign, self.positive.ct_eq(&other.positive))
+    CtSelect::ct_select(&not_same_sign, &same_sign, self.positive.ct_eq(&other.positive))
   }
 }
 impl Sub for &Integer {
@@ -330,21 +324,20 @@ impl Rem<&UnsignedInteger> for &Integer {
   type Output = UnsignedInteger;
   fn rem(self, modulus: &UnsignedInteger) -> UnsignedInteger {
     let rem = &self.value % modulus;
-    // We directly use `BoxedUint::ct_select` here as we know these have the same precision
-    let rem = BoxedUint::ct_select(&(&modulus.0 - &rem.0), &rem.0, self.positive);
+    let rem = boxed_uint_ct_select(&(&modulus.0 - &rem.0), &rem.0, self.positive);
     UnsignedInteger(rem)
   }
 }
-impl ConstantTimeEq for Integer {
+impl CtEq for Integer {
   fn ct_eq(&self, b: &Self) -> Choice {
     self.positive.ct_eq(&b.positive) & self.value.ct_eq(&b.value)
   }
 }
-impl ConstantTimeSelect for Integer {
-  fn ct_select(a: &Self, b: &Self, choice: Choice) -> Self {
+impl CtSelect for Integer {
+  fn ct_select(&self, b: &Self, choice: Choice) -> Self {
     Self {
-      positive: Choice::ct_select(&a.positive, &b.positive, choice),
-      value: UnsignedInteger::ct_select(&a.value, &b.value, choice),
+      positive: Choice::ct_select(&self.positive, &b.positive, choice),
+      value: UnsignedInteger::ct_select(&self.value, &b.value, choice),
     }
   }
 }
@@ -393,7 +386,12 @@ impl UnsignedInteger {
       let b_div_g = boxed_uint_div(&b, &gcd);
 
       let a_div_g = (&UnsignedInteger(a_div_g) % &UnsignedInteger(b_div_g.clone())).0;
-      UnsignedInteger(a_div_g.invert_mod(&b_div_g).unwrap())
+      UnsignedInteger(
+        a_div_g
+          .invert_mod(&NonZero::new(b_div_g).unwrap())
+          // Happens when `a` is a multiple of `b`
+          .unwrap_or(BoxedUint::zero_with_precision(a_div_g.bits_precision())),
+      )
     };
 
     // Call with `a, b, gcd` if not a special case and `1, 2, 1` if a special case
@@ -426,8 +424,7 @@ impl UnsignedInteger {
 
     // Calculate `v` for `ua + vb = g`
     let v = |b: BoxedUint| {
-      // This mul should inherently widen, yet was still panicing as overflowing? TODO
-      let ua = &u.0 * a.resize(a.bits_precision() + 1);
+      let ua = u.0.concatenating_mul(&a);
       let (difference, _gcd_is_greater) = difference(&ua, &gcd);
       let (v, rem) = boxed_uint_div_rem(&difference, &b);
       debug_assert!(bool::from(rem.is_zero()));

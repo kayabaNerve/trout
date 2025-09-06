@@ -67,7 +67,7 @@ pub trait Parameters<CG: Element>: Sized {
   /// The elliptic curve.
   type E: PrimeGroup<Scalar = Self::F>;
   /// The scalar field of the elliptic curve.
-  type F: Zeroize + PrimeFieldBits;
+  type F: Zeroize + PrimeFieldBits + group::ff::FromUniformBytes<64>;
 
   /// The eVRF to use.
   type Evrf: Evrf<CG, Self>;
@@ -107,7 +107,7 @@ impl<CG: Element, P: Primes> Parameters<CG> for Secp256k1<P> {
   type E = k256::ProjectivePoint;
   type F = k256::Scalar;
 
-  type Evrf = DdhEvrf<ciphersuite::Secp256k1, secq256k1::Point>;
+  type Evrf = DdhEvrf<ciphersuite_kp256::Secp256k1, secq256k1::Point>;
   type RoundOneProofs = Ccykc2023RoundOne<P>;
   type RoundTwoProofs = Ccykc2023RoundTwo<P>;
 
@@ -120,11 +120,15 @@ impl<CG: Element, P: Primes> Parameters<CG> for Secp256k1<P> {
   fn hash_message(message: &[u8]) -> Self::F {
     use sha2::{Digest, Sha256};
     use k256::elliptic_curve::ops::Reduce;
-    <k256::Scalar as Reduce<k256::U256>>::reduce_bytes(&Sha256::digest(message))
+    <k256::Scalar as Reduce<k256::U256>>::reduce_bytes(
+      &<[u8; 32]>::from(Sha256::digest(message)).into(),
+    )
   }
   fn x_coordinate(point: &Self::E) -> Self::F {
     use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates};
-    <k256::Scalar as Reduce<k256::U256>>::reduce_bytes(&point.to_affine().x())
+    <k256::Scalar as Reduce<k256::U256>>::reduce_bytes(
+      &<[u8; 32]>::from(point.to_affine().x()).into(),
+    )
   }
 }
 

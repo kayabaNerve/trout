@@ -1,9 +1,8 @@
 use core::ops::Neg;
 
-use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
-use crypto_bigint_seven::{ConstantTimeSelect, Zero, NonZero, Integer, Uint};
+use crypto_bigint::{CtEq, CtSelect, NonZero, Integer, Uint};
 
 use crate::Table;
 
@@ -20,15 +19,15 @@ const BITS: u32 = 2688;
 // We use `U` to represent `a` which is bounded by the square root of the absolute value of the
 // discriminant, so its bit-length will be half of the absolute value of the discriminant's
 const A_BITS: u32 = BITS / 2;
-type U = Uint<{ crypto_bigint_seven::nlimbs!(A_BITS) }>;
+type U = Uint<{ crypto_bigint::nlimbs(A_BITS) }>;
 // We use `I` to represent `b` which is bounded `-a < b < a`, so its absolute value fits into the
 // same amount of bits as `a` does
-type I = IStruct<Uint<{ crypto_bigint_seven::nlimbs!(A_BITS) }>>;
+type I = IStruct<Uint<{ crypto_bigint::nlimbs(A_BITS) }>>;
 
-type WideU = Uint<{ crypto_bigint_seven::nlimbs!(BITS) }>;
+type WideU = Uint<{ crypto_bigint::nlimbs(BITS) }>;
 type WideI = IStruct<WideU>;
 
-type WideWideU = Uint<{ crypto_bigint_seven::nlimbs!(2 * BITS) }>;
+type WideWideU = Uint<{ crypto_bigint::nlimbs(2 * BITS) }>;
 
 /// A constant-time element of a class group, implemented via crypto-bigint's `Uint, Int`.
 ///
@@ -68,14 +67,14 @@ impl Zeroize for CryptoBigintStackElement {
   }
 }
 
-impl crypto_bigint_seven::ConstantTimeSelect for CryptoBigintStackElement {
-  fn ct_select(a: &Self, b: &Self, choice: subtle::Choice) -> Self {
+impl crypto_bigint::CtSelect for CryptoBigintStackElement {
+  fn ct_select(&self, b: &Self, choice: crypto_bigint::Choice) -> Self {
     Self {
-      a: U::ct_select(&a.a, &b.a, choice),
-      b: I::ct_select(&a.b, &b.b, choice),
+      a: U::ct_select(&self.a, &b.a, choice),
+      b: I::ct_select(&self.b, &b.b, choice),
       // Safe since `Element` is documented to have undefined behavior when mixed across class
       // groups
-      discriminant: a.discriminant,
+      discriminant: self.discriminant,
     }
   }
 }
@@ -95,7 +94,7 @@ impl crate::Element for CryptoBigintStackElement {
   const MAX_TABLE_BITS: u32 = 12;
 
   fn is_identity(&self) -> subtle::Choice {
-    self.a.ct_eq(&U::ONE) & self.b.ct_eq(&I::one())
+    (self.a.ct_eq(&U::ONE) & self.b.ct_eq(&I::one())).into()
   }
 
   // Allegedly, Arndt's method, as specified on the Wikipedia page for binary quadratic forms
@@ -204,12 +203,12 @@ impl crate::Element for CryptoBigintStackElement {
     }
     let (wide_congruence_12, mod_12): (_, WideU) =
       crt::<
-        { crypto_bigint_seven::nlimbs!(BITS / 2) },
-        { crypto_bigint_seven::nlimbs!(BITS) },
-        { crypto_bigint_seven::nlimbs!(BITS + (BITS / 2)) },
+        { crypto_bigint::nlimbs(BITS / 2) },
+        { crypto_bigint::nlimbs(BITS) },
+        { crypto_bigint::nlimbs(BITS + (BITS / 2)) },
       >(congruence_1, mod_1, congruence_2, mod_2, mod_1_mod_2_xgcd);
 
-    let mut wide_mod_12 = Uint::<{ crypto_bigint_seven::nlimbs!(BITS + (BITS / 2)) }>::ZERO;
+    let mut wide_mod_12 = Uint::<{ crypto_bigint::nlimbs(BITS + (BITS / 2)) }>::ZERO;
     let mod_12_words = mod_12.as_words();
     wide_mod_12.as_mut_words()[.. mod_12_words.len()].copy_from_slice(mod_12_words);
     let wide_congruence_12 = wide_congruence_12 % wide_mod_12;
@@ -244,7 +243,7 @@ impl crate::Element for CryptoBigintStackElement {
       let gcd_g1_g3 = gcd_g1_g3.split().0.split().0;
 
       // TODO: We need to calculate this without a call to `bingcd` somehow
-      let gcd_e_g3 = Uint::from((e, Uint::ZERO)).bingcd(&g_3).split().0;
+      let gcd_e_g3 = Uint::from((e, Uint::ZERO)).gcd(&g_3).split().0;
       let gcd_g1_g3 = gcd_g1_g3.concatenating_mul(&gcd_e_g3);
       debug_assert_eq!(Uint::from((g_1 / e, Uint::ZERO)).extended_gcd(g_3).0, Uint::ONE);
       debug_assert_eq!(Uint::from((g_1, Uint::ZERO)).extended_gcd(g_3).0, gcd_g1_g3);
@@ -297,12 +296,12 @@ impl crate::Element for CryptoBigintStackElement {
       xgcd
     };
     let (x, _mod_123): (_, WideWideU) = crt::<
-      { crypto_bigint_seven::nlimbs!(BITS) },
-      { crypto_bigint_seven::nlimbs!(2 * BITS) },
-      { crypto_bigint_seven::nlimbs!(3 * BITS) },
+      { crypto_bigint::nlimbs(BITS) },
+      { crypto_bigint::nlimbs(2 * BITS) },
+      { crypto_bigint::nlimbs(3 * BITS) },
     >(congruence_12, mod_12, congruence_3, mod_3, gcd_5);
 
-    let mut wide_two_A = Uint::<{ crypto_bigint_seven::nlimbs!(3 * BITS) }>::ZERO;
+    let mut wide_two_A = Uint::<{ crypto_bigint::nlimbs(3 * BITS) }>::ZERO;
     let two_A_words = two_A.as_words();
     wide_two_A.as_mut_words()[.. two_A_words.len()].copy_from_slice(two_A_words);
     let wide_B = x % wide_two_A;
@@ -341,7 +340,7 @@ impl crate::Element for CryptoBigintStackElement {
     let congruence_3 = {
       let congruence_3_rhs = {
         let congruence_3_rhs_numerator =
-          -IStruct::from(*self.discriminant.abs() - self.b.abs().widening_square());
+          -IStruct::from(*self.discriminant.abs() - self.b.abs().concatenating_square());
         let (congruence_3_rhs_mul_2, rem) = congruence_3_rhs_numerator / wide_e;
         debug_assert!(bool::from(rem.is_zero()));
         congruence_3_rhs_mul_2.half()
@@ -481,10 +480,10 @@ impl crate::Element for CryptoBigintStackElement {
         (g, u, v)
       };
 
-      const LIMBS: usize = crypto_bigint_seven::nlimbs!(BITS / 2);
-      const TWICE_LIMBS: usize = crypto_bigint_seven::nlimbs!(BITS);
-      const THRICE_LIMBS: usize = crypto_bigint_seven::nlimbs!(3 * (BITS / 2));
-      const FIVE_LIMBS: usize = crypto_bigint_seven::nlimbs!(5 * (BITS / 2));
+      const LIMBS: usize = crypto_bigint::nlimbs(BITS / 2);
+      const TWICE_LIMBS: usize = crypto_bigint::nlimbs(BITS);
+      const THRICE_LIMBS: usize = crypto_bigint::nlimbs(3 * (BITS / 2));
+      const FIVE_LIMBS: usize = crypto_bigint::nlimbs(5 * (BITS / 2));
 
       let x1: IStruct<Uint<{ FIVE_LIMBS }>> =
         IStruct::<Uint<THRICE_LIMBS>>::from(mul_arbitrary_uints(congruence_1, mod_3)).mul_i_uint(v);
@@ -503,7 +502,7 @@ impl crate::Element for CryptoBigintStackElement {
       x
     };
 
-    let mut wide_two_A = Uint::<{ crypto_bigint_seven::nlimbs!(5 * (BITS / 2)) }>::ZERO;
+    let mut wide_two_A = Uint::<{ crypto_bigint::nlimbs(5 * (BITS / 2)) }>::ZERO;
     let two_A_words = two_A.as_words();
     wide_two_A.as_mut_words()[.. two_A_words.len()].copy_from_slice(two_A_words);
     let wide_B = x % wide_two_A;
@@ -603,7 +602,7 @@ impl crate::Element for CryptoBigintStackElement {
 
     let b = I::from(U::from_be_slice(&full_bytes(usize::try_from(A_BITS).unwrap(), b)));
     // TODO: ct_neg
-    let b = I::ct_select(&-b, &b, b_positive);
+    let b = I::ct_select(&-b, &b, b_positive.into());
 
     Self {
       a: U::from_be_slice(&full_bytes(usize::try_from(A_BITS).unwrap(), a)),
@@ -630,7 +629,7 @@ impl crate::Element for CryptoBigintStackElement {
     while bytes.get(start) == Some(&0) {
       start += 1;
     }
-    (self.b.positive(), bytes[start ..].to_vec())
+    (self.b.positive().into(), bytes[start ..].to_vec())
   }
 }
 

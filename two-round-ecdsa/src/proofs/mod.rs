@@ -64,26 +64,24 @@ mod crypto_primes {
 
   // Wrap the XOF into an RNG to satisfy crypto_primes's requirement for an RNG
   struct Blake3Rng(blake3::OutputReader);
-  impl rand_core::RngCore for Blake3Rng {
-    fn next_u32(&mut self) -> u32 {
+  impl rand::TryRng for Blake3Rng {
+    type Error = rand::rand_core::Infallible;
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
       let mut bytes = [0; 4];
       self.0.fill(&mut bytes);
-      u32::from_le_bytes(bytes)
+      Ok(u32::from_le_bytes(bytes))
     }
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
       let mut bytes = [0; 8];
       self.0.fill(&mut bytes);
-      u64::from_le_bytes(bytes)
+      Ok(u64::from_le_bytes(bytes))
     }
-    fn fill_bytes(&mut self, dst: &mut [u8]) {
-      self.0.fill(dst)
-    }
-    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), rand_core::Error> {
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
       self.0.fill(dst);
       Ok(())
     }
   }
-  impl rand_core::CryptoRng for Blake3Rng {}
+  impl rand::TryCryptoRng for Blake3Rng {}
 
   /// A source of primes premised on crypto-primes.
   ///
@@ -94,13 +92,13 @@ mod crypto_primes {
   // https://github.com/entropyxyz/crypto-primes/issues/23
   // https://github.com/entropyxyz/crypto-primes/issues/25
   pub struct CryptoPrimesStack<
-    U: crypto_bigint::Integer
+    U: crypto_bigint::UnsignedWithMontyForm
       + crypto_bigint::RandomBits
       + crypto_bigint::RandomMod
       + crypto_bigint::Encoding,
   >(PhantomData<U>);
   impl<
-    U: crypto_bigint::Integer
+    U: crypto_bigint::UnsignedWithMontyForm
       + crypto_bigint::RandomBits
       + crypto_bigint::RandomMod
       + crypto_bigint::Encoding,
@@ -109,7 +107,8 @@ mod crypto_primes {
     fn prime(lambda: u32, xof: blake3::OutputReader) -> UnsignedInteger {
       let mut rng = Blake3Rng(xof);
       loop {
-        let candidate = ::crypto_primes::generate_prime_with_rng::<U>(&mut rng, lambda);
+        let candidate =
+          ::crypto_primes::random_prime::<U, _>(&mut rng, ::crypto_primes::Flavor::Any, lambda);
         if bool::from(crypto_bigint::Integer::is_even(&candidate)) {
           continue;
         }
@@ -132,8 +131,11 @@ mod crypto_primes {
     fn prime(lambda: u32, xof: blake3::OutputReader) -> UnsignedInteger {
       let mut rng = Blake3Rng(xof);
       loop {
-        let candidate =
-          ::crypto_primes::generate_prime_with_rng::<crypto_bigint::BoxedUint>(&mut rng, lambda);
+        let candidate = ::crypto_primes::random_prime::<crypto_bigint::BoxedUint, _>(
+          &mut rng,
+          ::crypto_primes::Flavor::Any,
+          lambda,
+        );
         if bool::from(crypto_bigint::Integer::is_even(&candidate)) {
           continue;
         }

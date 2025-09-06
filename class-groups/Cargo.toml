@@ -6,16 +6,14 @@ edition = "2024"
 [dependencies]
 subtle = { version = "2", default-features = false, features = ["std"] }
 zeroize = { version = "1", default-features = false, features = ["std", "derive"] }
-rand_core = { version = "0.6", default-features = false, features = ["std"] }
-crypto-bigint = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
-crypto-bigint-seven = { package = "crypto-bigint", git = "https://github.com/RustCrypto/crypto-bigint", rev = "bd389e20520854d386065fd041f5c91d0006413d", default-features = false, features = ["alloc", "zeroize", "extra-sizes"] }
-crypto-primes = { version = "=0.6.2", default-features = false }
-malachite = { version = "0.5", default-features = false, features = ["naturals_and_integers"] }
+rand = { version = "0.10", default-features = false, features = ["std", "sys_rng"] }
+crypto-bigint = { version = "0.7", default-features = false, features = ["alloc", "zeroize", "subtle", "extra-sizes"] }
+crypto-primes = { version = "=0.7.0", default-features = false }
+malachite = { version = "0.9", default-features = false, features = ["naturals_and_integers"] }
 rug = { version = "1", default-features = false, features = ["std", "integer"], optional = true }
 
 [dev-dependencies]
-rand_core_nine = { package = "rand_core", version = "0.9", default-features = false, features = ["std", "os_rng"] }
-rand_chacha = { version = "0.3", default-features = false, features = ["std"] }
+rand_chacha = { version = "0.10", default-features = false, features = ["std"] }
 
 [features]
 gmp = ["rug"]

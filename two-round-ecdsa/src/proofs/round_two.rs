@@ -2,7 +2,7 @@ use core::{marker::PhantomData, ops::Deref};
 use std::io;
 
 use zeroize::Zeroizing;
-use rand_core::{RngCore, CryptoRng};
+use rand::CryptoRng;
 
 use ::malachite::base::num::logic::traits::*;
 
@@ -38,7 +38,7 @@ pub trait RoundTwoProofs<CG: Element, P: Parameters<CG>> {
   ///
   /// If an error is returned, the state of `proof` is undefined.
   fn prove<W: io::Write>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     class_group: &ClassGroup<CG>,
     G: &Table<CG>,
     Y: &Table<CG>,
@@ -61,7 +61,7 @@ pub trait RoundTwoProofs<CG: Element, P: Parameters<CG>> {
   ///
   /// If an error is returned, `proof` is left in an undefined state.
   fn verify<R: io::Read>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     class_group: &ClassGroup<CG>,
     G: &Table<CG>,
     Y: &Table<CG>,
@@ -83,7 +83,7 @@ pub trait RoundTwoProofs<CG: Element, P: Parameters<CG>> {
 pub struct NoIdentifiableAborts;
 impl<CG: Element, P: Parameters<CG>> RoundTwoProofs<CG, P> for NoIdentifiableAborts {
   fn prove<W: io::Write>(
-    _rng: &mut (impl RngCore + CryptoRng),
+    _rng: &mut impl CryptoRng,
     _class_group: &ClassGroup<CG>,
     _G: &Table<CG>,
     _Y: &Table<CG>,
@@ -100,7 +100,7 @@ impl<CG: Element, P: Parameters<CG>> RoundTwoProofs<CG, P> for NoIdentifiableAbo
   }
 
   fn verify<R: io::Read>(
-    _rng: &mut (impl RngCore + CryptoRng),
+    _rng: &mut impl CryptoRng,
     _class_group: &ClassGroup<CG>,
     _G: &Table<CG>,
     _Y: &Table<CG>,
@@ -123,7 +123,7 @@ impl<CG: Element, P: Parameters<CG>> RoundTwoProofs<CG, P> for NoIdentifiableAbo
 pub struct Ccykc2023RoundTwo<Pr: Primes>(PhantomData<Pr>);
 impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P> for Ccykc2023RoundTwo<Pr> {
   fn prove<W: io::Write>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     class_group: &ClassGroup<CG>,
     G: &Table<CG>,
     Y: &Table<CG>,
@@ -235,7 +235,7 @@ impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P> for Ccykc
   }
 
   fn verify<R: io::Read>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     class_group: &ClassGroup<CG>,
     G: &Table<CG>,
     Y: &Table<CG>,

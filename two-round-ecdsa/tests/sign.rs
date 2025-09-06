@@ -1,4 +1,4 @@
-use rand_core::OsRng;
+use rand::{rand_core, rngs::SysRng};
 use dkg::Participant;
 use two_round_ecdsa::{SecurityLevel, Setup, SigningProtocol, Ready};
 
@@ -15,7 +15,7 @@ fn sign() {
   type Primes = two_round_ecdsa::proofs::GmpPrimes;
 
   let mut setups = Setup::<ProverElement, Element, two_round_ecdsa::Secp256k1<Primes>>::dealer(
-    &mut OsRng,
+    &mut rand_core::UnwrapErr(SysRng),
     SecurityLevel::Insecure,
     2,
     3,
@@ -30,31 +30,43 @@ fn sign() {
 
   let (first, first_message) =
     SigningProtocol::<_, _, two_round_ecdsa::Secp256k1<Primes>>::participate(
-      &mut OsRng, first, [0; 32],
+      &mut rand_core::UnwrapErr(SysRng),
+      first,
+      [0; 32],
     );
   let (second, second_message) =
     SigningProtocol::<_, _, two_round_ecdsa::Secp256k1<Primes>>::participate(
-      &mut OsRng, second, [0; 32],
+      &mut rand_core::UnwrapErr(SysRng),
+      second,
+      [0; 32],
     );
   println!("Participated!");
 
-  let Ready::Ready(first) = first.accumulate(&mut OsRng, second_i, second_message) else {
+  let Ready::Ready(first) =
+    first.accumulate(&mut rand_core::UnwrapErr(SysRng), second_i, second_message)
+  else {
     panic!()
   };
-  let Ready::Ready(second) = second.accumulate(&mut OsRng, first_i, first_message) else {
+  let Ready::Ready(second) =
+    second.accumulate(&mut rand_core::UnwrapErr(SysRng), first_i, first_message)
+  else {
     panic!()
   };
   println!("Accumulated!");
 
   const MESSAGE: &[u8] = b"Hello, World!";
-  let (first, first_message) = first.sign(&mut OsRng, MESSAGE);
-  let (second, second_message) = second.sign(&mut OsRng, MESSAGE);
+  let (first, first_message) = first.sign(&mut rand_core::UnwrapErr(SysRng), MESSAGE);
+  let (second, second_message) = second.sign(&mut rand_core::UnwrapErr(SysRng), MESSAGE);
   println!("Signed!");
 
-  let Ready::Ready(first_signature) = first.aggregate(&mut OsRng, second_i, second_message) else {
+  let Ready::Ready(first_signature) =
+    first.aggregate(&mut rand_core::UnwrapErr(SysRng), second_i, second_message)
+  else {
     panic!()
   };
-  let Ready::Ready(second_signature) = second.aggregate(&mut OsRng, first_i, first_message) else {
+  let Ready::Ready(second_signature) =
+    second.aggregate(&mut rand_core::UnwrapErr(SysRng), first_i, first_message)
+  else {
     panic!()
   };
   let first_signature = first_signature.unwrap();

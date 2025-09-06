@@ -2,7 +2,7 @@ use core::{marker::PhantomData, ops::Deref};
 use std::io::{self, Read, Write};
 
 use zeroize::Zeroizing;
-use rand_core::{RngCore, CryptoRng};
+use rand::CryptoRng;
 
 use ::malachite::{base::num::basic::traits::*, *};
 
@@ -34,7 +34,7 @@ pub trait RoundOneProofs<CG: Element, P: Parameters<CG>> {
   ///
   /// If an error is returned, the state of `transcript` is undefined.
   fn prove<W: io::Write>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     class_group: &ClassGroup<CG>,
     G: &Table<CG>,
     Y: &Table<CG>,
@@ -57,7 +57,7 @@ pub trait RoundOneProofs<CG: Element, P: Parameters<CG>> {
   /// guaranteed to not be mutated however, meaning a proof which raises an error while being
   /// queued will not corrupt the batch verifier and will leave it eligible to verify other proofs.
   fn queue_verification<R: io::Read>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     batch_verifier: &mut Self::BatchVerifier,
     participant: dkg::Participant,
     class_group: &ClassGroup<CG>,
@@ -95,7 +95,7 @@ impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P> for Ccykc
   type BatchVerifier = Ccykc2023RoundOneBatchVerifier<CG, P>;
 
   fn prove<W: io::Write>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     class_group: &ClassGroup<CG>,
     G: &Table<CG>,
     Y: &Table<CG>,
@@ -205,7 +205,7 @@ impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P> for Ccykc
   }
 
   fn queue_verification<R: io::Read>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     batch_verifier: &mut Self::BatchVerifier,
     _participant: dkg::Participant,
     class_group: &ClassGroup<CG>,

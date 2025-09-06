@@ -1,8 +1,17 @@
 [workspace]
+resolver = "3"
 members = [
   "class-groups",
   "two-round-ecdsa",
 ]
+
+[patch.crates-io]
+# Patch to include `FromUniformBytes<64>` over `Scalar`
+k256 = { git = "https://github.com/kayabaNerve/elliptic-curves", rev = "8293be3f9855eea0936523a9b100f1f69261ea4b" }
+p256 = { git = "https://github.com/kayabaNerve/elliptic-curves", rev = "8293be3f9855eea0936523a9b100f1f69261ea4b" }
+
+rand_core = { path = "./rand_core" }
+ciphersuite = { path = "./ciphersuite" }
 
 [profile.dev.package]
 crypto-bigint = { opt-level = 3 }
@@ -53,7 +62,7 @@ redundant_closure_for_method_calls = "deny"
 redundant_else = "deny"
 string_add_assign = "deny"
 string_slice = "deny"
-unchecked_duration_subtraction = "deny"
+unchecked_time_subtraction = "deny"
 uninlined_format_args = "deny"
 unnecessary_box_returns = "deny"
 unnecessary_join = "deny"

@@ -1,10 +1,9 @@
 use core::ops::Neg;
 use std::sync::Arc;
 
-use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
-use crypto_bigint_seven::{ConstantTimeSelect, Resize, BoxedUint};
+use crypto_bigint::{CtEq, CtSelect, Resize, BoxedUint};
 
 use crate::Table;
 
@@ -45,14 +44,14 @@ impl Zeroize for CryptoBigintHeapElement {
   }
 }
 
-impl crypto_bigint_seven::ConstantTimeSelect for CryptoBigintHeapElement {
-  fn ct_select(a: &Self, b: &Self, choice: subtle::Choice) -> Self {
+impl crypto_bigint::CtSelect for CryptoBigintHeapElement {
+  fn ct_select(&self, b: &Self, choice: crypto_bigint::Choice) -> Self {
     Self {
-      a: UnsignedInteger::ct_select(&a.a, &b.a, choice),
-      b: Integer::ct_select(&a.b, &b.b, choice),
+      a: UnsignedInteger::ct_select(&self.a, &b.a, choice),
+      b: Integer::ct_select(&self.b, &b.b, choice),
       // Safe since `Element` is documented to have undefined behavior when mixed across class
       // groups
-      discriminant: a.discriminant.clone(),
+      discriminant: self.discriminant.clone(),
     }
   }
 }
@@ -102,7 +101,7 @@ impl crate::Element for CryptoBigintHeapElement {
   const MAX_TABLE_BITS: u32 = 8;
 
   fn is_identity(&self) -> subtle::Choice {
-    self.a.is_one() & self.b.positive() & self.b.abs().is_one()
+    (self.a.is_one() & self.b.positive() & self.b.abs().is_one()).into()
   }
 
   // Allegedly, Arndt's method, as specified on the Wikipedia page for binary quadratic forms
@@ -331,7 +330,7 @@ impl crate::Element for CryptoBigintHeapElement {
   ) -> Self {
     let b = Integer::from(UnsignedInteger::from_be_slice(b));
     // TODO: ct_neg
-    let b = Integer::ct_select(&-b.clone(), &b, b_positive);
+    let b = Integer::ct_select(&-b.clone(), &b, b_positive.into());
 
     let mut res = Self {
       a: UnsignedInteger::from_be_slice(a),
@@ -359,7 +358,7 @@ impl crate::Element for CryptoBigintHeapElement {
     while bytes.first() == Some(&0) {
       bytes.remove(0);
     }
-    (self.b.positive(), bytes)
+    (self.b.positive().into(), bytes)
   }
 }
 

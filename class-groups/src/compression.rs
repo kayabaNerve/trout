@@ -177,10 +177,10 @@ pub(crate) fn read_varint(
 pub(crate) fn read_number(mut reader: impl io::Read, len: usize) -> io::Result<Natural> {
   let mut num = vec![0xff; len];
   reader.read_exact(&mut num)?;
-  if let Some(b) = num.first() {
-    if *b == 0 {
-      return Err(io::Error::other("non-canonical bignum"));
-    }
+  if let Some(b) = num.first() &&
+    (*b == 0)
+  {
+    return Err(io::Error::other("non-canonical bignum"));
   }
   Ok(natural_from_bytes(&num))
 }
@@ -221,7 +221,7 @@ pub(crate) fn read_epsilon_a_g_t_b_0(
 
 #[test]
 fn varint_encoding() {
-  use rand_core::{RngCore, OsRng};
+  use rand::{Rng, rngs::SysRng};
 
   // 0 should encode as a single 0 byte
   {
@@ -248,7 +248,7 @@ fn varint_encoding() {
 
   // Test 100 random values
   for _ in 0 .. 100 {
-    let value = usize::try_from(OsRng.next_u64() % (1 << 20)).unwrap();
+    let value = usize::try_from(rand::rand_core::UnwrapErr(SysRng).next_u64() % (1 << 20)).unwrap();
     let mut bytes = vec![];
     write_varint(&mut bytes, 0, 8, value).unwrap();
     assert_eq!(read_varint(&mut &bytes[1 ..], bytes[0], 8).unwrap(), value);
@@ -257,10 +257,10 @@ fn varint_encoding() {
 
 #[test]
 fn test_crt() {
-  use rand_core::{RngCore, OsRng};
+  use rand::{Rng, rngs::SysRng};
 
   let test = |n1, n2| {
-    let value = Natural::from(OsRng.next_u64());
+    let value = Natural::from(rand::rand_core::UnwrapErr(SysRng).next_u64());
     assert_eq!(
       crt(&value % &n1, n1.clone(), &value % &n2, n2.clone()).unwrap(),
       value % (&n1 * &n2)

@@ -1,12 +1,9 @@
-use core::{
-  borrow::Borrow,
-  ops::{Add, AddAssign, Mul},
-};
+use core::ops::{Add, AddAssign, Mul};
 
 use zeroize::{Zeroize, Zeroizing};
-use rand_core::{RngCore, CryptoRng};
+use rand::CryptoRng;
 
-use crypto_bigint::{NonZero, BoxedUint};
+use crypto_bigint::{Resize, ConcatenatingMul, NonZero, BoxedUint};
 
 /// A constant-time variable-size (dynamically-allocated) unsigned integer.
 // This wraps BoxedUint with a type which re-allocates as necessary to ensure it never wraps.
@@ -25,7 +22,7 @@ impl UnsignedInteger {
   }
 
   #[must_use]
-  pub(crate) fn random(bits: u32, rng: &mut (impl RngCore + CryptoRng)) -> Self {
+  pub(crate) fn random(bits: u32, rng: &mut impl CryptoRng) -> Self {
     let mut bytes = Zeroizing::new(vec![0; bits.div_ceil(8).try_into().unwrap()]);
     rng.fill_bytes(&mut bytes);
     // If we created 8 bits when we were only supposed to create 5 bits...
@@ -39,11 +36,11 @@ impl UnsignedInteger {
   #[must_use]
   pub(crate) fn div_rem(&self, denominator: &NonZero<BoxedUint>) -> (Zeroizing<Box<[u8]>>, Self) {
     let denominator_bits = denominator.bits_precision();
-    let denominator = denominator.widen(self.0.bits_precision());
+    let denominator = denominator.resize(self.0.bits_precision());
     let (d, e) = self.0.div_rem(&denominator);
     let d = Zeroizing::new(d);
     let d = Zeroizing::new(d.to_be_bytes());
-    let e = e.shorten(denominator_bits);
+    let e = e.resize(denominator_bits);
     (d, Self(e))
   }
 }
@@ -51,23 +48,19 @@ impl UnsignedInteger {
 impl Add for &UnsignedInteger {
   type Output = UnsignedInteger;
   fn add(self, other: Self) -> UnsignedInteger {
-    let new_precision = self.0.bits_precision().max(other.0.bits_precision()) + 1;
-    let res = self.0.widen(new_precision);
-    UnsignedInteger(&other.0 + res)
+    UnsignedInteger(other.0.concatenating_add(&self.0))
   }
 }
 
 impl AddAssign for UnsignedInteger {
   fn add_assign(&mut self, other: Self) {
-    let new_precision = self.0.bits_precision().max(other.0.bits_precision()) + 1;
-    let res = self.0.widen(new_precision);
-    *self = Self(&other.0 + res);
+    *self = Self(other.0.concatenating_add(&self.0));
   }
 }
 
 impl Mul for &UnsignedInteger {
   type Output = UnsignedInteger;
   fn mul(self, other: Self) -> UnsignedInteger {
-    UnsignedInteger(self.0.borrow().mul(&other.0))
+    UnsignedInteger(self.0.concatenating_mul(&other.0))
   }
 }

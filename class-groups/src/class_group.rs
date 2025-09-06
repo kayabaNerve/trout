@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 use std::io;
 
-use rand_core::{RngCore, CryptoRng};
+use rand::CryptoRng;
 
 use ::malachite::{
   base::num::{arithmetic::traits::*, basic::traits::*, logic::traits::*},
@@ -9,7 +9,6 @@ use ::malachite::{
 };
 
 use ::crypto_bigint::BoxedUint;
-use crypto_primes::generate_prime_with_rng;
 
 use crate::{
   *,
@@ -87,11 +86,7 @@ impl<E: Element> ClassGroup<E> {
   /// `p_be_bytes` is expected to be the big-endian encoding of the odd prime order of the
   /// subgroup.
   // https://eprint.iacr.org/2015/047 Figure 2, slightly modified with regards to `g`
-  pub fn setup(
-    rng: &mut (impl RngCore + CryptoRng),
-    lambda: u64,
-    p_be_bytes: Vec<u8>,
-  ) -> Option<Self> {
+  pub fn setup(rng: &mut impl CryptoRng, lambda: u64, p_be_bytes: Vec<u8>) -> Option<Self> {
     let p = natural_from_bytes(&p_be_bytes);
 
     let mu = p.significant_bits();
@@ -106,7 +101,11 @@ impl<E: Element> ClassGroup<E> {
       let q_bits = (2 * lambda) - mu;
       let q_bits = u32::try_from(q_bits).unwrap();
       loop {
-        let q = generate_prime_with_rng::<BoxedUint>(&mut *rng, q_bits);
+        let q = crypto_primes::random_prime::<BoxedUint, _>(
+          &mut *rng,
+          crypto_primes::Flavor::Any,
+          q_bits,
+        );
         let q = natural_from_bytes(q.to_be_bytes().as_ref());
         debug_assert_eq!(u64::from(q_bits), q.significant_bits());
         // p * q is congruent to -1 mod 4
@@ -189,13 +188,14 @@ impl<E: Element> ClassGroup<E> {
   ///
   /// This uses Wesolowski's hash-to-class-group internally, making it somewhat slow. More
   /// efficient algorithms should be used by the caller if this will be called on a regular basis.
-  pub fn generator_p(&self, rng: &mut (impl RngCore + CryptoRng)) -> E {
+  pub fn generator_p(&self, rng: &mut impl CryptoRng) -> E {
     let prime_limit: Natural = self.delta_p.unsigned_abs_ref().floor_sqrt() >> 1;
     let r = loop {
       // crypto-primes won't generate a prime up to this large yet solely a prime exactly this
       // large, limiting the distribution of primes and adding at least one bit of bias
-      let r = generate_prime_with_rng::<BoxedUint>(
+      let r = crypto_primes::random_prime::<BoxedUint, _>(
         &mut *rng,
+        crypto_primes::Flavor::Any,
         u32::try_from(prime_limit.significant_bits()).unwrap(),
       );
       let r = natural_from_bytes(r.to_be_bytes().as_ref());
@@ -400,7 +400,7 @@ impl<E: Element> ClassGroup<E> {
 }
 
 #[cfg(test)]
-fn test_class_group<E: Element>(mut rng: impl RngCore + CryptoRng) {
+fn test_class_group<E: Element>(mut rng: impl CryptoRng) {
   let prime = 19;
   let cg = ClassGroup::<E>::setup(&mut rng, 100, vec![prime]).unwrap();
 
@@ -489,7 +489,7 @@ fn test_class_group<E: Element>(mut rng: impl RngCore + CryptoRng) {
 }
 
 #[cfg(test)]
-fn bench_class_group<E: Element>(mut rng: impl RngCore + CryptoRng) {
+fn bench_class_group<E: Element>(mut rng: impl CryptoRng) {
   // Benchmark with the maximum size of class group supported by CryptoBigintStackElement
   let prime = 19u8;
   // The fundamental discriminant is of length `lambda * 2`, yet then that's scaled by `prime**2`
@@ -533,25 +533,29 @@ fn bench_class_group<E: Element>(mut rng: impl RngCore + CryptoRng) {
 
 #[test]
 fn malachite_class_group() {
-  test_class_group::<crate::MalachiteElement>(&mut rand_core::OsRng);
+  test_class_group::<crate::MalachiteElement>(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
 }
 #[test]
 fn crypto_bigint_stack_class_group() {
-  test_class_group::<crate::CryptoBigintStackElement>(&mut rand_core::OsRng);
+  test_class_group::<crate::CryptoBigintStackElement>(&mut rand::rand_core::UnwrapErr(
+    rand::rngs::SysRng,
+  ));
 }
 #[test]
 fn crypto_bigint_heap_class_group() {
-  test_class_group::<crate::CryptoBigintHeapElement>(&mut rand_core::OsRng);
+  test_class_group::<crate::CryptoBigintHeapElement>(&mut rand::rand_core::UnwrapErr(
+    rand::rngs::SysRng,
+  ));
 }
 #[cfg(feature = "gmp")]
 #[test]
 fn gmp_class_group() {
-  test_class_group::<crate::GmpElement>(&mut rand_core::OsRng);
+  test_class_group::<crate::GmpElement>(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
 }
 
 #[test]
 fn bench() {
-  use rand_core::SeedableRng;
+  use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
   const SEED: [u8; 32] = [0; 32];
   bench_class_group::<crate::MalachiteElement>(ChaCha20Rng::from_seed(SEED));

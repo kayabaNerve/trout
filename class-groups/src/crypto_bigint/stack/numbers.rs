@@ -1,11 +1,12 @@
 use core::ops::{Add, Neg, Sub, Mul, Div, Rem};
 
-use subtle::{Choice, ConstantTimeEq};
 use zeroize::Zeroize;
 
-use crypto_bigint_seven::{ConstantTimeSelect, ConcatenatingMul, Zero, NonZero, Integer, Uint};
+use crypto_bigint::{
+  Choice, CtEq, CtSelect, ConcatenatingMul, Zero, One, NonZero, BitOps, Integer, Uint,
+};
 #[cfg(test)]
-use crypto_bigint_seven::{Gcd, U256};
+use crypto_bigint::U256;
 
 pub(crate) fn mul_arbitrary_uints<
   const LHS_LIMBS: usize,
@@ -27,7 +28,7 @@ pub(crate) fn mul_arbitrary_uints<
 // Calculate the difference of two `I`s, returning it and if `b` was greater.
 //
 // This assumes the difference will not have the top bit set.
-fn difference<I: Copy + Integer>(a: &I, b: &I) -> (I, Choice) {
+fn difference<I: Copy + BitOps + Integer>(a: &I, b: &I) -> (I, Choice) {
   debug_assert!(!a.bit_vartime(a.bits_precision() - 1));
   let diff = a.wrapping_sub(b);
   let b_gt = Choice::from(diff.bit_vartime(diff.bits_precision() - 1) as u8);
@@ -36,11 +37,11 @@ fn difference<I: Copy + Integer>(a: &I, b: &I) -> (I, Choice) {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct IStruct<I: Copy + Integer> {
+pub(crate) struct IStruct<I: Copy + BitOps + Integer> {
   positive: Choice,
   value: I,
 }
-impl<I: Copy + Integer> IStruct<I> {
+impl<I: Copy + BitOps + Integer> IStruct<I> {
   pub(crate) fn positive(&self) -> Choice {
     self.positive
   }
@@ -61,7 +62,7 @@ impl<I: Copy + Integer> IStruct<I> {
     Self { positive: 1.into(), value: I::one() }
   }
 
-  pub(crate) fn widen<I2: Copy + Integer + From<(I, I)>>(self) -> IStruct<I2> {
+  pub(crate) fn widen<I2: Copy + BitOps + Integer + From<(I, I)>>(self) -> IStruct<I2> {
     IStruct { positive: self.positive, value: I2::from((self.value, I::zero())) }
   }
 }
@@ -76,12 +77,12 @@ impl<const LIMBS: usize> IStruct<Uint<LIMBS>> {
     IStruct { positive, value }
   }
 }
-impl<I: Copy + Integer> From<I> for IStruct<I> {
+impl<I: Copy + BitOps + Integer> From<I> for IStruct<I> {
   fn from(value: I) -> Self {
     IStruct { positive: 1.into(), value }
   }
 }
-impl<I: Copy + Integer> Add<I> for IStruct<I> {
+impl<I: Copy + BitOps + Integer> Add<I> for IStruct<I> {
   type Output = IStruct<I>;
   fn add(self, other: I) -> IStruct<I> {
     let same_sign = IStruct { positive: self.positive, value: self.value + other };
@@ -95,7 +96,7 @@ impl<I: Copy + Integer> Add<I> for IStruct<I> {
     IStruct::ct_select(&not_same_sign, &same_sign, self.positive.ct_eq(&other_positive))
   }
 }
-impl<I: Copy + Integer> Add for IStruct<I> {
+impl<I: Copy + BitOps + Integer> Add for IStruct<I> {
   type Output = IStruct<I>;
   fn add(self, other: Self) -> IStruct<I> {
     let same_sign = IStruct { positive: self.positive, value: self.value + other.value };
@@ -107,7 +108,7 @@ impl<I: Copy + Integer> Add for IStruct<I> {
     IStruct::ct_select(&not_same_sign, &same_sign, self.positive.ct_eq(&other.positive))
   }
 }
-impl<I: Copy + Integer> Sub for IStruct<I> {
+impl<I: Copy + BitOps + Integer> Sub for IStruct<I> {
   type Output = IStruct<I>;
   fn sub(self, other: Self) -> IStruct<I> {
     let sum = self.value.wrapping_add(&other.value);
@@ -118,7 +119,7 @@ impl<I: Copy + Integer> Sub for IStruct<I> {
     }
   }
 }
-impl<I: Copy + Integer> Neg for IStruct<I> {
+impl<I: Copy + BitOps + Integer> Neg for IStruct<I> {
   type Output = Self;
   fn neg(mut self) -> Self {
     // Perform the negation
@@ -132,8 +133,8 @@ impl<I: Copy + Integer> Neg for IStruct<I> {
   }
 }
 
-impl<IRhs: Integer, I: Copy + ConcatenatingMul<IRhs, Output: Copy> + Integer> Mul<IRhs>
-  for IStruct<I>
+impl<IRhs: Integer, I: Copy + ConcatenatingMul<IRhs, Output: Copy + BitOps> + BitOps + Integer>
+  Mul<IRhs> for IStruct<I>
 {
   type Output = IStruct<<I as ConcatenatingMul<IRhs>>::Output>;
   fn mul(self, other: IRhs) -> Self::Output {
@@ -142,8 +143,10 @@ impl<IRhs: Integer, I: Copy + ConcatenatingMul<IRhs, Output: Copy> + Integer> Mu
     IStruct { positive: self.positive | value.is_zero(), value }
   }
 }
-impl<IRhs: Copy + Integer, I: Copy + ConcatenatingMul<IRhs, Output: Copy> + Integer>
-  Mul<IStruct<IRhs>> for IStruct<I>
+impl<
+  IRhs: Copy + BitOps + Integer,
+  I: Copy + ConcatenatingMul<IRhs, Output: Copy + BitOps> + BitOps + Integer,
+> Mul<IStruct<IRhs>> for IStruct<I>
 {
   type Output = IStruct<<I as ConcatenatingMul<IRhs>>::Output>;
   fn mul(self, other: IStruct<IRhs>) -> Self::Output {
@@ -161,7 +164,7 @@ impl<const LIMBS: usize> Div<Uint<LIMBS>> for IStruct<Uint<LIMBS>> {
   fn div(self, denominator: Uint<LIMBS>) -> Self::Output {
     let (mut d, mut e) = self.value.div_rem(&NonZero::new(denominator).unwrap());
 
-    let increment = (!self.positive) & (!e.ct_eq(&Uint::ZERO));
+    let increment = (!self.positive) & (!e.is_zero());
     d = Uint::ct_select(&d, &(d + Uint::one()), increment);
     // Since we're dividing by an unsigned number, the sign inherits from the numerator
     let d = IStruct { positive: self.positive, value: d };
@@ -175,46 +178,44 @@ impl<const LIMBS: usize> Div for IStruct<Uint<LIMBS>> {
   fn div(self, denominator: Self) -> Self::Output {
     let (mut d, mut e) = self.value.div_rem(&NonZero::new(denominator.value).unwrap());
 
-    let increment = (!self.positive) & (!e.ct_eq(&Uint::ZERO));
+    let increment = (!self.positive) & (!e.is_zero());
     d = Uint::ct_select(&d, &(d + Uint::one()), increment);
     e = Uint::ct_select(&e, &(denominator.value - e), increment);
 
     // (positive * positive) | (negative * negative) | (0 / either)
-    let d = IStruct {
-      positive: self.positive.ct_eq(&denominator.positive) | d.ct_eq(&Uint::ZERO),
-      value: d,
-    };
+    let d =
+      IStruct { positive: self.positive.ct_eq(&denominator.positive) | d.is_zero(), value: d };
     (d, e)
   }
 }
-impl<I: Copy + Rem<Output = I> + Integer> Rem<I> for IStruct<I> {
+impl<I: Copy + Rem<Output = I> + BitOps + Integer> Rem<I> for IStruct<I> {
   type Output = I;
   fn rem(self, modulus: I) -> I {
     let rem = self.value % modulus;
     I::ct_select(&(modulus - rem), &rem, self.positive)
   }
 }
-impl<I: Copy + Integer> ConstantTimeEq for IStruct<I> {
+impl<I: Copy + BitOps + Integer> CtEq for IStruct<I> {
   fn ct_eq(&self, b: &Self) -> Choice {
     self.positive.ct_eq(&b.positive) & self.value.ct_eq(&b.value)
   }
 }
-impl<I: Copy + Integer> ConstantTimeSelect for IStruct<I> {
-  fn ct_select(a: &Self, b: &Self, choice: Choice) -> Self {
+impl<I: Copy + BitOps + Integer> CtSelect for IStruct<I> {
+  fn ct_select(&self, b: &Self, choice: Choice) -> Self {
     Self {
-      positive: Choice::ct_select(&a.positive, &b.positive, choice),
-      value: I::ct_select(&a.value, &b.value, choice),
+      positive: Choice::ct_select(&self.positive, &b.positive, choice),
+      value: I::ct_select(&self.value, &b.value, choice),
     }
   }
 }
-impl<I: Copy + Zeroize + Integer> Zeroize for IStruct<I> {
+impl<I: Copy + Zeroize + BitOps + Integer> Zeroize for IStruct<I> {
   fn zeroize(&mut self) {
     self.positive = Choice::ct_select(&0.into(), &1.into(), 1.into());
     self.value.zeroize();
   }
 }
 
-pub(crate) trait ExtendedGcd: Copy + Sized + Integer {
+pub(crate) trait ExtendedGcd: Copy + Sized + BitOps + Integer {
   // (g, u, other / g)
   fn extended_gcd_part(self, other: Self) -> (Self, Self, Self);
   // (g, u, v, self / g)
@@ -224,16 +225,14 @@ impl<const LIMBS: usize> ExtendedGcd for Uint<LIMBS> {
   fn extended_gcd_part(self, other: Self) -> (Self, Self, Self) {
     debug_assert!(bool::from((!self.ct_eq(&Self::zero())) | (!other.ct_eq(&Self::zero()))));
 
-    let res = self.binxgcd(&other);
-    debug_assert!(!bool::from(
-      Choice::from(res.x.is_negative()) & Choice::from(res.y.is_negative())
-    ));
+    let res = self.xgcd(&other);
+    debug_assert!(!bool::from(res.x.is_negative() & res.y.is_negative()));
     let g = res.gcd;
     let u = res.x;
     let other_div_g = res.rhs_on_gcd;
 
     let u_abs = u.abs();
-    let u = <_>::ct_select(&u_abs, &other_div_g.saturating_sub(&u_abs), u.is_negative().into());
+    let u = <_>::ct_select(&u_abs, &other_div_g.saturating_sub(&u_abs), u.is_negative());
 
     (g, u, other_div_g)
   }
@@ -241,21 +240,19 @@ impl<const LIMBS: usize> ExtendedGcd for Uint<LIMBS> {
   fn extended_gcd(self, other: Self) -> (Self, Self, IStruct<Self>, Self) {
     debug_assert!(bool::from((!self.ct_eq(&Self::zero())) | (!other.ct_eq(&Self::zero()))));
 
-    let res = self.binxgcd(&other);
-    debug_assert!(!bool::from(
-      Choice::from(res.x.is_negative()) & Choice::from(res.y.is_negative())
-    ));
+    let res = self.xgcd(&other);
+    debug_assert!(!bool::from(res.x.is_negative() & res.y.is_negative()));
     let g = res.gcd;
     let u = res.x;
     let v = res.y;
     let self_div_g = res.lhs_on_gcd;
     let other_div_g = res.rhs_on_gcd;
 
-    let u_is_neg = Choice::from(u.is_negative());
+    let u_is_neg = u.is_negative();
     let u_abs = u.abs();
     let u = <_>::ct_select(&u_abs, &other_div_g.saturating_sub(&u_abs), u_is_neg);
 
-    let v_is_neg = Choice::from(v.is_negative());
+    let v_is_neg = v.is_negative();
     let v_abs = v.abs();
     let v_abs = <_>::ct_select(&v_abs, &self_div_g.saturating_sub(&v_abs), u_is_neg);
     let v = IStruct::from(v_abs);
@@ -444,11 +441,11 @@ fn gcd() {
   }
 
   {
-    let a = crypto_bigint_seven::U512::from_be_hex(concat!(
+    let a = crypto_bigint::U512::from_be_hex(concat!(
       "0000000000000000000000000000000000000000000000000000000000000000",
       "000000000000000000000000000000000000001A0DEEF6F3AC2566149D925044"
     ));
-    let b = crypto_bigint_seven::U512::from_be_hex(concat!(
+    let b = crypto_bigint::U512::from_be_hex(concat!(
       "0000000000000000000000000000000000000000000000000000000000000000",
       "000000000000072B69C9DD0AA15F135675EA9C5180CF8FF0A59298CFC92E87FA"
     ));

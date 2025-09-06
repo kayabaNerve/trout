@@ -3,14 +3,14 @@ use std::io::{self, Read, Write};
 
 use subtle::ConditionallySelectable;
 use zeroize::{Zeroize, Zeroizing};
-use rand_core::{RngCore, CryptoRng};
+use rand::CryptoRng;
 
 use group::{
   Group, GroupEncoding,
   prime::PrimeGroup,
   ff::{Field, PrimeField, PrimeFieldBits},
 };
-use ciphersuite::Ciphersuite;
+use ciphersuite::{group::ff::FromUniformBytes, Ciphersuite};
 
 use generalized_bulletproofs::*;
 use generalized_bulletproofs_circuit_abstraction::*;
@@ -160,8 +160,8 @@ impl<G: EmbeddedCurve> DiscreteLogarithm<G> {
     )
     .unwrap()
   }
-  fn commit<C: Ciphersuite<F = G::FieldElement>>(
-    rng: &mut (impl RngCore + CryptoRng),
+  fn commit<C: Clone + Ciphersuite<F = G::FieldElement>>(
+    rng: &mut impl CryptoRng,
     scalar: &G::Scalar,
   ) -> Zeroizing<PedersenVectorCommitment<C>> {
     /*
@@ -241,7 +241,7 @@ impl<G: EmbeddedCurve> DiscreteLogarithm<G> {
     }
     // The value which will be used by the nonce
     values.push(C::F::ZERO);
-    Zeroizing::new(PedersenVectorCommitment { g_values: values.into(), mask: C::F::random(rng) })
+    Zeroizing::new(PedersenVectorCommitment { g_values: values, mask: C::F::random(rng) })
   }
 }
 
@@ -422,7 +422,10 @@ impl<G: EmbeddedCurve> Iterator for P_iIterator<'_, G> {
 // Claim 2
 struct P;
 impl P {
-  fn evaluate<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C::F>>(
+  fn evaluate<
+    C: Clone + Ciphersuite<F: FromUniformBytes<64>>,
+    G: EmbeddedCurve<FieldElement = C::F>,
+  >(
     circuit: &mut Circuit<C>,
     C: &[G],
     X: &[G],
@@ -525,13 +528,13 @@ impl P {
   This means we only duplicate the allocation/formatting of the constraints themselves.
 */
 #[derive(Clone)]
-struct CommonCircuit<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C::F>>(
-  Circuit<C>,
-  Variable,
-  Variable,
-  PhantomData<G>,
-);
-impl<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C::F>> CommonCircuit<C, G> {
+struct CommonCircuit<
+  C: Clone + Ciphersuite<F: FromUniformBytes<64>>,
+  G: EmbeddedCurve<FieldElement = C::F>,
+>(Circuit<C>, Variable, Variable, PhantomData<G>);
+impl<C: Clone + Ciphersuite<F: FromUniformBytes<64>>, G: EmbeddedCurve<FieldElement = C::F>>
+  CommonCircuit<C, G>
+{
   fn new(
     C: &[G],
     X_0: &[G],
@@ -560,7 +563,10 @@ impl<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C::F>> CommonCircuit<C, G> 
 
 /// The global setup for the DDH eVRF.
 #[derive(Clone)]
-pub struct DdhEvrfGlobalSetup<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C::F>> {
+pub struct DdhEvrfGlobalSetup<
+  C: Clone + Ciphersuite<F: FromUniformBytes<64>>,
+  G: EmbeddedCurve<FieldElement = C::F>,
+> {
   generators: Generators<C>,
   C: Vec<G>,
   C_xy: CXY<G::FieldElement>,
@@ -578,13 +584,13 @@ pub struct DdhEvrfGlobalSetup<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C:
   they could already so by committing to a $k$ value greater than or equal to $2**ceil_log_2(s)$.
 */
 #[derive(Clone)]
-pub struct DdhEvrfSetupView<C: Ciphersuite> {
+pub struct DdhEvrfSetupView<C: Clone + Ciphersuite> {
   Q: C::G,
   k_apostrophe: C::F,
 }
-impl<C: Ciphersuite> DdhEvrfSetupView<C> {
+impl<C: Clone + Ciphersuite<F: FromUniformBytes<64>>> DdhEvrfSetupView<C> {
   fn new(Q: C::G) -> Self {
-    let k_apostrophe = C::reduce_512({
+    let k_apostrophe = C::F::from_uniform_bytes(&{
       let mut hasher = blake3::Hasher::new();
       hasher.update(Q.to_bytes().as_ref());
       let mut bytes = [0; 64];
@@ -598,7 +604,10 @@ impl<C: Ciphersuite> DdhEvrfSetupView<C> {
 
 /// A setup for the eVRF.
 #[derive(Clone)]
-pub struct DdhEvrfSetup<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C::F>> {
+pub struct DdhEvrfSetup<
+  C: Clone + Ciphersuite<F: FromUniformBytes<64>>,
+  G: EmbeddedCurve<FieldElement = C::F>,
+> {
   k: Zeroizing<G::Scalar>,
   Q: Zeroizing<PedersenVectorCommitment<C>>,
   Q_commitment: C::G,
@@ -606,7 +615,10 @@ pub struct DdhEvrfSetup<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C::F>> {
 }
 
 /// The context for the DDH eVRF.
-pub struct DdhEvrfContext<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C::F>> {
+pub struct DdhEvrfContext<
+  C: Clone + Ciphersuite<F: FromUniformBytes<64>>,
+  G: EmbeddedCurve<FieldElement = C::F>,
+> {
   X_0: Vec<G>,
   X_0_delta_i: Delta_i<G>,
   X_1: Vec<G>,
@@ -625,11 +637,14 @@ fn random_point<G: GroupEncoding>(xof: &mut blake3::OutputReader) -> G {
 }
 
 /// The DDH-premised eVRF proposed within the eVRF paper.
-pub struct DdhEvrf<C: Ciphersuite, G: EmbeddedCurve<FieldElement = C::F>>(PhantomData<(C, G)>);
+pub struct DdhEvrf<
+  C: Clone + Ciphersuite<F: FromUniformBytes<64>>,
+  G: EmbeddedCurve<FieldElement = C::F>,
+>(PhantomData<(C, G)>);
 impl<
   CG: class_groups::Element,
   P: Parameters<CG>,
-  C: Ciphersuite<G = P::E, F = P::F>,
+  C: Clone + Ciphersuite<G = P::E, F = P::F>,
   G: EmbeddedCurve<FieldElement = C::F>,
 > Evrf<CG, P> for DdhEvrf<C, G>
 {
@@ -669,7 +684,7 @@ impl<
 
   fn setup(
     global_setup: &Self::GlobalSetup,
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
   ) -> (Self::SetupView, Self::Setup) {
     let k = loop {
       let candidate = Zeroizing::new(G::Scalar::random(&mut *rng));
@@ -723,7 +738,7 @@ impl<
   }
 
   fn prove<W: io::Write>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     global_setup: &Self::GlobalSetup,
     setup: &Self::Setup,
     context: &Self::Context,
@@ -778,7 +793,7 @@ impl<
     Generators::batch_verifier()
   }
   fn queue_verification<R: io::Read>(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     global_setup: &Self::GlobalSetup,
     global_batch_verifier: &mut Self::BatchVerifier,
     // TODO: Use this to implement identifiable aborts
@@ -870,14 +885,18 @@ impl<
 
 #[test]
 fn test_ddh_evrf() {
-  type EvrfInstantiated = DdhEvrf<ciphersuite::Secp256k1, secq256k1::Point>;
+  use rand::{rand_core, rngs::SysRng};
+
+  type EvrfInstantiated = DdhEvrf<ciphersuite_kp256::Secp256k1, secq256k1::Point>;
   type Parameters = crate::Secp256k1<crate::CryptoPrimesStackCcykc>;
   type Element = class_groups::CryptoBigintStackElement;
 
   let global_setup = <EvrfInstantiated as Evrf<Element, Parameters>>::global_setup();
 
-  let (setup_view, setup) =
-    <EvrfInstantiated as Evrf<Element, Parameters>>::setup(&global_setup, &mut rand_core::OsRng);
+  let (setup_view, setup) = <EvrfInstantiated as Evrf<Element, Parameters>>::setup(
+    &global_setup,
+    &mut rand_core::UnwrapErr(SysRng),
+  );
 
   let context = <EvrfInstantiated as Evrf<Element, Parameters>>::context(
     &global_setup,
@@ -886,7 +905,7 @@ fn test_ddh_evrf() {
 
   let mut transcript = DigestWriter(blake3::Hasher::new(), vec![]);
   let nonce = <EvrfInstantiated as Evrf<Element, Parameters>>::prove(
-    &mut rand_core::OsRng,
+    &mut rand_core::UnwrapErr(SysRng),
     &global_setup,
     &setup,
     &context,
@@ -898,7 +917,7 @@ fn test_ddh_evrf() {
     <EvrfInstantiated as Evrf<Element, Parameters>>::batch_verifier(&global_setup);
   let mut transcript = DigestReader(blake3::Hasher::new(), transcript.1.as_slice());
   let nonce_commitment = <EvrfInstantiated as Evrf<Element, Parameters>>::queue_verification(
-    &mut rand_core::OsRng,
+    &mut rand_core::UnwrapErr(SysRng),
     &global_setup,
     &mut batch_verifier,
     dkg::Participant::new(1).unwrap(),

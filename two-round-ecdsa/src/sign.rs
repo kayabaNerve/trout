@@ -5,7 +5,7 @@ use std::{
 };
 
 use zeroize::Zeroizing;
-use rand_core::{RngCore, CryptoRng};
+use rand::CryptoRng;
 
 use group::{
   ff::{Field, PrimeField, PrimeFieldBits},
@@ -138,7 +138,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> SigningProt
   /// specified signing set has their messages accumulated.
   #[must_use]
   pub fn participate(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     setup: Arc<Setup<PCG, CG, P>>,
     session_id: [u8; 32],
   ) -> (Participating<PCG, CG, P>, Vec<u8>)
@@ -311,7 +311,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Observing<P
   /// behavior.
   pub fn accumulate(
     mut self,
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     participant: Participant,
     message: Vec<u8>,
   ) -> Ready<(Self, Option<RoundOneError>), ObservingSigning<PCG, CG, P>>
@@ -469,8 +469,26 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Observing<P
         neg_U: -U.unwrap(),
         lagrange_coefficients: signing_set
           .iter()
-          .map(|participant| {
-            (*participant, dkg::lagrange::<<P as Parameters<PCG>>::F>(*participant, &signing_set))
+          .copied()
+          .map(|i| {
+            let i_f = <P as Parameters<PCG>>::F::from(u64::from(u16::from(i)));
+
+            let mut num = <P as Parameters<PCG>>::F::ONE;
+            let mut denom = <P as Parameters<PCG>>::F::ONE;
+            for l in &signing_set {
+              if i == *l {
+                continue;
+              }
+
+              let share = <P as Parameters<PCG>>::F::from(u64::from(u16::from(*l)));
+              num *= share;
+              denom *= share - i_f;
+            }
+
+            // Safe as this will only be 0 if we're part of the above loop
+            // (which we have an if case to avoid)
+            let lagrange = num * denom.invert().unwrap();
+            (i, lagrange)
           })
           .collect(),
         K_tilde_i_0_U_i,
@@ -503,7 +521,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Participati
   /// and is accordingly subject to the long commentary present on `SigningProtocol::participate`.
   pub fn accumulate(
     mut self,
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     participant: Participant,
     message: Vec<u8>,
   ) -> Ready<(Self, Option<RoundOneError>), Signing<PCG, CG, P>>
@@ -599,7 +617,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Signing<PCG
   #[must_use]
   pub fn sign(
     self,
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     message: &[u8],
   ) -> (Aggregating<PCG, CG, P>, Vec<u8>) {
     let mut aggregating = self.observing_signing.message(message);
@@ -727,7 +745,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Aggregating
   /// If a signature is returned, no messages were faulty.
   pub fn aggregate(
     mut self,
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     participant: Participant,
     message: Vec<u8>,
   ) -> Ready<
