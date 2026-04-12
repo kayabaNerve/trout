@@ -49,8 +49,9 @@ pub struct CryptoBigintStackElement {
 
 impl PartialEq for CryptoBigintStackElement {
   fn eq(&self, other: &Self) -> bool {
-    (self.a.ct_eq(&other.a) & self.b.ct_eq(&other.b) & self.discriminant.ct_eq(&other.discriminant))
-      .into()
+    let a = Self::reduce(self.a, self.b, self.discriminant);
+    let other = Self::reduce(other.a, other.b, other.discriminant);
+    (a.a.ct_eq(&other.a) & a.b.ct_eq(&other.b) & a.discriminant.ct_eq(&other.discriminant)).into()
   }
 }
 impl Eq for CryptoBigintStackElement {}
@@ -80,9 +81,26 @@ impl crypto_bigint::CtSelect for CryptoBigintStackElement {
 }
 
 impl CryptoBigintStackElement {
-  fn reduce(log_2_a_bound: u32, a: WideU, b: WideI, discriminant: WideI) -> Self {
+  fn partial_reduce(a: WideU, b: WideI, discriminant: WideI) -> Self {
     let b_decomposed = (!b.positive(), *b.abs());
-    let (a, b_decomposed, _c) = super::reduce(log_2_a_bound, a, b_decomposed, discriminant.abs());
+    let (a, b_decomposed, _c) =
+      super::partial_reduce(discriminant.abs().bits_vartime(), a, b_decomposed, discriminant.abs());
+    let (a, a_hi) = a.split();
+    debug_assert!(bool::from(a_hi.is_zero()));
+    let (b_abs, b_abs_hi) = b_decomposed.1.split();
+    debug_assert!(bool::from(b_abs_hi.is_zero()));
+    let mut b = IStruct::from(b_abs);
+    b = <_>::ct_select(&b, &-b, b_decomposed.0);
+    Self { a, b, discriminant }
+  }
+  fn reduce(a: U, b: I, discriminant: WideI) -> Self {
+    let b_decomposed = (!b.positive(), *b.abs());
+    let (a, b_decomposed, _c) = super::reduce(
+      discriminant.abs().bits_vartime().div_ceil(2),
+      a.concat(&Uint::ZERO),
+      (b_decomposed.0, b_decomposed.1.concat(&Uint::ZERO)),
+      discriminant.abs(),
+    );
     let a = a.split().0;
     let mut b = IStruct::from(b_decomposed.1.split().0);
     b = <_>::ct_select(&b, &-b, b_decomposed.0);
@@ -94,7 +112,8 @@ impl crate::Element for CryptoBigintStackElement {
   const MAX_TABLE_BITS: u32 = 12;
 
   fn is_identity(&self) -> subtle::Choice {
-    (self.a.ct_eq(&U::ONE) & self.b.ct_eq(&I::one())).into()
+    let a = Self::reduce(self.a, self.b, self.discriminant);
+    (a.a.ct_eq(&U::ONE) & a.b.ct_eq(&I::one())).into()
   }
 
   // Allegedly, Arndt's method, as specified on the Wikipedia page for binary quadratic forms
@@ -309,10 +328,7 @@ impl crate::Element for CryptoBigintStackElement {
     let mut B = WideU::ZERO;
     B.as_mut_words().copy_from_slice(&wide_B.as_words()[.. wide_words_len]);
 
-    // Since `A = (A_1 / e) * (A_2 / e)`, where `e = gcd(A_1, A_2, B_mu)`, we assume `e = 1` and
-    // the bound on `log_2(A)` becomes `log_2(A_1 * A_2)`
-    let log_2_a_bound = 2 * self.discriminant.abs().bits_vartime().div_ceil(2);
-    Self::reduce(log_2_a_bound, A, WideI::from(B), self.discriminant)
+    Self::partial_reduce(A, WideI::from(B), self.discriminant)
   }
 
   fn double(&self) -> CryptoBigintStackElement {
@@ -511,10 +527,7 @@ impl crate::Element for CryptoBigintStackElement {
     let wide_words_len = B.as_words().len();
     B.as_mut_words().copy_from_slice(&wide_B.as_words()[.. wide_words_len]);
 
-    // Since `A = (A_1 / e) * (A_2 / e)`, where `e = gcd(A_1, A_2, B_mu)`, we assume `e = 1` and
-    // the bound on `log_2(A)` becomes `log_2(A_1 * A_2)`
-    let log_2_a_bound = 2 * self.discriminant.abs().bits_vartime().div_ceil(2);
-    Self::reduce(log_2_a_bound, A, WideI::from(B), self.discriminant)
+    Self::partial_reduce(A, WideI::from(B), self.discriminant)
   }
 
   fn sub(&self, other: CryptoBigintStackElement) -> CryptoBigintStackElement {
@@ -615,7 +628,7 @@ impl crate::Element for CryptoBigintStackElement {
   }
 
   fn a(&self) -> Vec<u8> {
-    let bytes = self.a.to_be_bytes();
+    let bytes = Self::reduce(self.a, self.b, self.discriminant).a.to_be_bytes();
     let mut start = 0;
     while bytes.get(start) == Some(&0) {
       start += 1;
@@ -624,7 +637,7 @@ impl crate::Element for CryptoBigintStackElement {
   }
 
   fn b(&self) -> (subtle::Choice, Vec<u8>) {
-    let bytes = self.b.abs().to_be_bytes();
+    let bytes = Self::reduce(self.a, self.b, self.discriminant).b.abs().to_be_bytes();
     let mut start = 0;
     while bytes.get(start) == Some(&0) {
       start += 1;
@@ -635,12 +648,8 @@ impl crate::Element for CryptoBigintStackElement {
 
 impl Neg for CryptoBigintStackElement {
   type Output = Self;
-  fn neg(self) -> Self {
-    Self::reduce(
-      self.discriminant.abs().bits_vartime().div_ceil(2),
-      (&self.a).into(),
-      (-self.b).widen(),
-      self.discriminant,
-    )
+  fn neg(mut self) -> Self {
+    self.b = -self.b;
+    self
   }
 }

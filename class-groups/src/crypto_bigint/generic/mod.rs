@@ -4,7 +4,7 @@ mod uint;
 mod boxed_uint;
 
 mod reduction;
-pub(crate) use reduction::reduce;
+pub(crate) use reduction::{partial_reduce, reduce};
 
 /// A collection of limbs and associated helper methods, all expected to execute in constant-time.
 ///
@@ -84,6 +84,6 @@ trait Limbs:
   #[inline(always)]
   fn lt(&self, b: &Self, limbs: usize) -> Choice {
     crypto_bigint::UintRef::new(&self.as_ref()[.. limbs])
-      .ct_lt(&crypto_bigint::UintRef::new(&b.as_ref()[.. limbs]))
+      .ct_lt(crypto_bigint::UintRef::new(&b.as_ref()[.. limbs]))
   }
 }

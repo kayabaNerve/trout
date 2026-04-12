@@ -248,9 +248,13 @@ fn reduce_last_bit<L: Limbs>(a: L, b: (Choice, L), c: L) -> (L, (Choice, L), L) 
   (a, b, c)
 }
 
+/// Reduce only ~half the bits in the values.
+///
+/// This is not a full reduction, but is sufficient to go from a wide representation to a normal
+/// representation, as usable to perform further arithmetic without under/overflow.
 #[allow(private_bounds)]
 #[inline(always)]
-pub(crate) fn reduce<L: Limbs>(
+pub(crate) fn partial_reduce<L: Limbs>(
   log_2_a_bound: u32,
   mut a: L,
   mut b: (Choice, L),
@@ -287,9 +291,26 @@ pub(crate) fn reduce<L: Limbs>(
 
   // Iterate from the current log2 of `a` to the log2 of the sqrt of the discriminant
   let sqrt_discriminant_bits = negative_discriminant.bits_vartime().div_ceil(2);
-  // TODO: There's presumably a better bound on the amount of iterations premised on the
-  // minium/maximum size for `a` and the distance between `a`, `b`
-  for a_bits in (0 ..= log_2_a_bound).rev() {
+  for a_bits in ((log_2_a_bound / 2) ..= log_2_a_bound).rev() {
+    (a, b, c) = reduce_to_next_bit(a, b, c, a_bits.max(sqrt_discriminant_bits) + 1);
+  }
+  // This is done here just for some normalization steps, not because there are the final bits,
+  // though the operations are correct regardless
+  let (a, b, c) = reduce_second_to_last_bit(a, b, c, sqrt_discriminant_bits);
+  reduce_last_bit(a, b, c)
+}
+
+#[allow(private_bounds)]
+#[inline(always)]
+pub(crate) fn reduce<L: Limbs>(
+  log_2_a_bound: u32,
+  a: L,
+  b: (Choice, L),
+  negative_discriminant: &L,
+) -> (L, (Choice, L), L) {
+  let (mut a, mut b, mut c) = partial_reduce(log_2_a_bound, a, b, negative_discriminant);
+  let sqrt_discriminant_bits = negative_discriminant.bits_vartime().div_ceil(2);
+  for a_bits in (0 .. (log_2_a_bound / 2)).rev() {
     (a, b, c) = reduce_to_next_bit(a, b, c, a_bits.max(sqrt_discriminant_bits) + 1);
   }
   let (a, b, c) = reduce_second_to_last_bit(a, b, c, sqrt_discriminant_bits);
