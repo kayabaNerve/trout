@@ -5,10 +5,6 @@ use class_groups::{Element, ClassGroup};
 
 use crate::UnsignedInteger;
 
-/// The eVRF trait and provided implementations.
-pub mod evrf;
-pub(crate) use evrf::*;
-
 mod round_one;
 pub use round_one::*;
 

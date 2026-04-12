@@ -1,7 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
-#![allow(non_snake_case)]
+#![allow(non_snake_case, clippy::too_many_arguments, clippy::type_complexity)]
 
 use core::marker::PhantomData;
 use std::io;
@@ -69,8 +69,6 @@ pub trait Parameters<CG: Element>: Sized {
   /// The scalar field of the elliptic curve.
   type F: Zeroize + PrimeFieldBits + group::ff::FromUniformBytes<64>;
 
-  /// The eVRF to use.
-  type Evrf: Evrf<CG, Self>;
   /// The round one proofs.
   type RoundOneProofs: RoundOneProofs<CG, Self>;
   /// The round two proofs.
@@ -107,7 +105,6 @@ impl<CG: Element, P: Primes> Parameters<CG> for Secp256k1<P> {
   type E = k256::ProjectivePoint;
   type F = k256::Scalar;
 
-  type Evrf = DdhEvrf<ciphersuite_kp256::Secp256k1, secq256k1::Point>;
   type RoundOneProofs = Ccykc2023RoundOne<P>;
   type RoundTwoProofs = Ccykc2023RoundTwo<P>;
 
@@ -140,7 +137,6 @@ impl<CG: Element, P: Primes> Parameters<CG> for Secp256k1NoIa<P> {
   type E = <Secp256k1<P> as Parameters<CG>>::E;
   type F = <Secp256k1<P> as Parameters<CG>>::F;
 
-  type Evrf = <Secp256k1<P> as Parameters<CG>>::Evrf;
   type RoundOneProofs = <Secp256k1<P> as Parameters<CG>>::RoundOneProofs;
   type RoundTwoProofs = NoIdentifiableAborts;
 

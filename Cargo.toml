@@ -8,10 +8,8 @@ members = [
 [patch.crates-io]
 # Patch to include `FromUniformBytes<64>` over `Scalar`
 k256 = { git = "https://github.com/kayabaNerve/elliptic-curves", rev = "8293be3f9855eea0936523a9b100f1f69261ea4b" }
-p256 = { git = "https://github.com/kayabaNerve/elliptic-curves", rev = "8293be3f9855eea0936523a9b100f1f69261ea4b" }
-
+# Consolidate to `rand_core 0.10`
 rand_core = { path = "./rand_core" }
-ciphersuite = { path = "./ciphersuite" }
 
 [profile.dev.package]
 crypto-bigint = { opt-level = 3 }

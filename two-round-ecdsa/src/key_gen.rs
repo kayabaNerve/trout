@@ -12,7 +12,7 @@ use class_groups::{Element, Table, ClassGroup};
 
 use dkg::Participant;
 
-use crate::{UnsignedInteger, Evrf, Parameters};
+use crate::{UnsignedInteger, Parameters};
 
 /// The security level to target with the setup.
 ///
@@ -39,7 +39,7 @@ pub enum SecurityLevel {
 fn class_group<CG: Element, P: Parameters<CG>>(
   seed: [u8; 32],
   security_level: SecurityLevel,
-) -> (ClassGroup<CG>, Table<CG>, Table<CG>) {
+) -> (ClassGroup<CG>, Table<CG>) {
   let mut class_group_rng = ChaCha20Rng::from_seed(seed);
 
   // The security level is converted to the lambda parameter of which the fundamental
@@ -77,17 +77,7 @@ fn class_group<CG: Element, P: Parameters<CG>>(
   );
   let G = Table::new(12, class_group.identity_p().clone(), G);
 
-  let Y = class_group.generator_p(&mut class_group_rng);
-  let Y = CG::mul(
-    &Table::new_for_scalar_bits(
-      P::F::NUM_BITS.try_into().unwrap(),
-      class_group.identity_p().clone(),
-      Y,
-    ),
-    &p_bytes,
-  );
-  let Y = Table::new(12, class_group.identity_p().clone(), Y);
-  (class_group, G, Y)
+  (class_group, G)
 }
 
 /// A view of the setup for a multisig.
@@ -98,17 +88,13 @@ pub struct SetupView<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<
 
   prover_class_group: ClassGroup<PCG>,
   prover_G: Table<PCG>,
-  prover_Y: Table<PCG>,
 
   class_group: ClassGroup<CG>,
   G: Table<CG>,
-  Y: Table<CG>,
 
   verification_key: <P as Parameters<PCG>>::E,
   // verification_shares: HashMap<Participant, P::E>,
-  evrf_global_setup: <<P as Parameters<PCG>>::Evrf as Evrf<PCG, P>>::GlobalSetup,
-  evrf_setups: HashMap<Participant, <<P as Parameters<PCG>>::Evrf as Evrf<PCG, P>>::SetupView>,
-  share_ciphertexts: HashMap<Participant, (Table<CG>, Table<CG>)>,
+  share_ciphertexts: HashMap<Participant, Table<CG>>,
 
   // The transcript of this view
   transcript: blake3::Hasher,
@@ -122,11 +108,9 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> SetupView<P
     class_group_seed: [u8; 32],
     security_level: SecurityLevel,
     verification_key: <P as Parameters<PCG>>::E,
-    evrf_setups: HashMap<Participant, <<P as Parameters<PCG>>::Evrf as Evrf<PCG, P>>::SetupView>,
-    share_ciphertexts: HashMap<Participant, (CG, CG)>,
+    share_ciphertexts: HashMap<Participant, CG>,
   ) -> Self {
-    assert_eq!(evrf_setups.len(), share_ciphertexts.len());
-    let n = u16::try_from(evrf_setups.len()).unwrap();
+    let n = u16::try_from(share_ciphertexts.len()).unwrap();
 
     // Transcript the parameters for the set
     let mut transcript = blake3::Hasher::new();
@@ -142,36 +126,21 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> SetupView<P
       // A buffer we reuse for compressed class-group elements
       let mut buf = Vec::with_capacity(384);
       for participant in (1 ..= n).map(|i| Participant::new(i).unwrap()) {
-        // TODO: Also transcript the eVRF setups here
-
         let ciphertext = &share_ciphertexts[&participant];
 
         // These are canonical and self-prefixing, so there's no risk of malleation here
-        ciphertext.0.compress(&mut buf).unwrap();
-        transcript.update(&buf);
-        buf.clear();
-
-        ciphertext.1.compress(&mut buf).unwrap();
+        ciphertext.compress(&mut buf).unwrap();
         transcript.update(&buf);
         buf.clear();
       }
     }
 
-    let (prover_class_group, prover_G, prover_Y) =
-      class_group::<PCG, P>(class_group_seed, security_level);
-    let (class_group, G, Y) = class_group::<CG, P>(class_group_seed, security_level);
+    let (prover_class_group, prover_G) = class_group::<PCG, P>(class_group_seed, security_level);
+    let (class_group, G) = class_group::<CG, P>(class_group_seed, security_level);
 
     let share_ciphertexts = share_ciphertexts
       .into_iter()
-      .map(|(participant, (C_0, C_1))| {
-        (
-          participant,
-          (
-            Table::new(12, class_group.identity_p().clone(), C_0),
-            Table::new(12, class_group.identity_p().clone(), C_1),
-          ),
-        )
-      })
+      .map(|(participant, C)| (participant, Table::new(12, class_group.identity_p().clone(), C)))
       .collect();
 
     Self {
@@ -180,15 +149,11 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> SetupView<P
 
       prover_class_group,
       prover_G,
-      prover_Y,
 
       class_group,
       G,
-      Y,
 
       verification_key,
-      evrf_global_setup: <P as Parameters<PCG>>::Evrf::global_setup(),
-      evrf_setups,
       share_ciphertexts,
       transcript,
     }
@@ -206,37 +171,17 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> SetupView<P
   pub(crate) fn prover_G(&self) -> &Table<PCG> {
     &self.prover_G
   }
-  pub(crate) fn prover_Y(&self) -> &Table<PCG> {
-    &self.prover_Y
-  }
   pub(crate) fn class_group(&self) -> &ClassGroup<CG> {
     &self.class_group
   }
   pub(crate) fn G(&self) -> &Table<CG> {
     &self.G
   }
-  pub(crate) fn Y(&self) -> &Table<CG> {
-    &self.Y
-  }
   /// The ECDSA verification key.
   pub fn verification_key(&self) -> <P as Parameters<PCG>>::E {
     self.verification_key
   }
-  pub(crate) fn evrf_global_setup(
-    &self,
-  ) -> &<<P as Parameters<PCG>>::Evrf as Evrf<PCG, P>>::GlobalSetup {
-    &self.evrf_global_setup
-  }
-  pub(crate) fn evrf_setup(
-    &self,
-    participant: &Participant,
-  ) -> Option<&<<P as Parameters<PCG>>::Evrf as Evrf<PCG, P>>::SetupView> {
-    self.evrf_setups.get(participant)
-  }
-  pub(crate) fn share_ciphertext(
-    &self,
-    participant: &Participant,
-  ) -> Option<&(Table<CG>, Table<CG>)> {
+  pub(crate) fn share_ciphertext(&self, participant: &Participant) -> Option<&Table<CG>> {
     self.share_ciphertexts.get(participant)
   }
 
@@ -250,7 +195,6 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> SetupView<P
 pub struct Setup<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> {
   view: Arc<SetupView<PCG, CG, P>>,
   i: Participant,
-  evrf_setup: <<P as Parameters<PCG>>::Evrf as Evrf<PCG, P>>::Setup,
   share_ciphertext_opening: Zeroizing<(UnsignedInteger, <P as Parameters<PCG>>::F)>,
 }
 
@@ -265,14 +209,9 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Setup<PCG, 
     self.i
   }
 
-  /// Our eVRF setup.
-  pub(crate) fn evrf_setup(&self) -> &<<P as Parameters<PCG>>::Evrf as Evrf<PCG, P>>::Setup {
-    &self.evrf_setup
-  }
-
-  /// The opening of our share's ciphertext.
-  pub(crate) fn share_ciphertext_opening(&self) -> &UnsignedInteger {
-    &self.share_ciphertext_opening.0
+  /// The randomness of our share's ciphertext.
+  pub(crate) fn share_ciphertext_opening(&self) -> &(UnsignedInteger, <P as Parameters<PCG>>::F) {
+    &self.share_ciphertext_opening
   }
 
   /// Perform the setup with a dealer key-generation.
@@ -297,7 +236,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Setup<PCG, 
 
     let mut class_group_seed = [0; 32];
     rng.fill_bytes(&mut class_group_seed);
-    let (class_group, G, Y) = class_group::<CG, P>(class_group_seed, security_level);
+    let (class_group, G) = class_group::<CG, P>(class_group_seed, security_level);
 
     // Generate `t` coefficients
     let mut coeffs = Zeroizing::new(vec![<P as Parameters<PCG>>::F::ZERO; usize::from(t)]);
@@ -308,15 +247,8 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Setup<PCG, 
     // Set the verification key
     let verification_key = <P as Parameters<PCG>>::E::generator() * coeffs[0];
 
-    let evrf_global_setup = <P as Parameters<PCG>>::Evrf::global_setup();
-    let mut evrf_setup_views = HashMap::new();
-    let mut evrf_setups = HashMap::new();
     let mut share_ciphertext_openings = HashMap::new();
     for participant in (1 ..= n).map(|i| Participant::new(i).unwrap()) {
-      let (setup_view, setup) = <P as Parameters<PCG>>::Evrf::setup(&evrf_global_setup, &mut *rng);
-      evrf_setup_views.insert(participant, setup_view);
-      evrf_setups.insert(participant, setup);
-
       // Create the shares for each participant
       fn polynomial<F: PrimeField + Zeroize>(coefficients: &[F], l: Participant) -> Zeroizing<F> {
         let l = F::from(u64::from(u16::from(l)));
@@ -348,12 +280,9 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Setup<PCG, 
         let (mask, scalar) = &**mask_and_scalar;
         (*participant, {
           let mask = Zeroizing::new(mask.to_be_bytes());
-          (
-            CG::mul(&G, &mask),
-            CG::multiexp(
-              class_group.identity_p(),
-              &[(&Y, &mask), (class_group.f(), &Zeroizing::new(crate::be_bytes(scalar)))],
-            ),
+          CG::multiexp(
+            class_group.identity_p(),
+            &[(&G, &mask), (class_group.f(), &Zeroizing::new(crate::be_bytes(scalar)))],
           )
         })
       })
@@ -365,7 +294,6 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Setup<PCG, 
       class_group_seed,
       security_level,
       verification_key,
-      evrf_setup_views,
       share_ciphertexts,
     ));
 
@@ -377,7 +305,6 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Setup<PCG, 
         Arc::new(Setup {
           view: view.clone(),
           i,
-          evrf_setup: evrf_setups.remove(&i).unwrap(),
           share_ciphertext_opening: share_ciphertext_openings.remove(&i).unwrap(),
         }),
       );

@@ -32,13 +32,11 @@ fn sign() {
     SigningProtocol::<_, _, two_round_ecdsa::Secp256k1<Primes>>::participate(
       &mut rand_core::UnwrapErr(SysRng),
       first,
-      [0; 32],
     );
   let (second, second_message) =
     SigningProtocol::<_, _, two_round_ecdsa::Secp256k1<Primes>>::participate(
       &mut rand_core::UnwrapErr(SysRng),
       second,
-      [0; 32],
     );
   println!("Participated!");
 
