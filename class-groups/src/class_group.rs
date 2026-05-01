@@ -1,5 +1,5 @@
 use core::cmp::Ordering;
-use std::io;
+use std::{sync::Arc, io};
 
 use rand::CryptoRng;
 
@@ -61,6 +61,68 @@ fn element<E: Element>(
   ))
 }
 
+#[must_use]
+fn make_coprime(
+  mut a: Natural,
+  mut b: Integer,
+  prime: &Natural,
+  delta: &Integer,
+  tess_root: &[u8],
+) -> (Natural, Integer) {
+  #[cfg(debug_assertions)]
+  let original_a = a.clone();
+  #[cfg(debug_assertions)]
+  let original_b = b.clone();
+
+  /*
+    (a, b, c) -> (a + b + c, -b - 2a, a)
+    OR
+    (a, b, c) -> (a, b + 2a, a + b + c)
+
+    We apply the first transformation when `a + b + c >= 0`. We apply the second, which is an
+    equivalent form but ensures `a` remains positive, otherwise.
+  */
+  let mut c = Integer::from(c(&a, b.unsigned_abs_ref(), delta).unwrap());
+  while !(&a).coprime_with(prime) {
+    let mut int_abc;
+    while {
+      int_abc = Integer::from(&a) + &b + &c;
+      &int_abc
+    } < &Integer::ZERO
+    {
+      b += Integer::from(&a << 1);
+      c = int_abc;
+    }
+    c = Integer::from(&a);
+    a = int_abc.unsigned_abs();
+    b = -b;
+    b -= Integer::from(&a << 1);
+  }
+
+  #[cfg(debug_assertions)]
+  {
+    debug_assert_eq!(
+      {
+        let reduced = MalachiteElement::reduce(
+          Integer::from(a.clone()),
+          b.clone(),
+          c.clone(),
+          Arc::new(Integer::from(natural_from_bytes(tess_root))),
+        );
+        let (b_positive, b) = reduced.b();
+        let mut b = Integer::from(natural_from_bytes(&b));
+        if !bool::from(b_positive) {
+          b = -b;
+        }
+        (natural_from_bytes(&reduced.a()), b)
+      },
+      (original_a, original_b)
+    );
+  }
+
+  (a, b)
+}
+
 /// A class group.
 #[derive(Clone)]
 pub struct ClassGroup<E: Element> {
@@ -70,6 +132,8 @@ pub struct ClassGroup<E: Element> {
   // TODO identity_k: E,
   identity_p: E,
   f_table: Table<E>,
+  delta_k: Integer,
+  tess_root_k: Vec<u8>,
   delta_p: Integer,
   tess_root_p: Vec<u8>,
 }
@@ -123,6 +187,11 @@ impl<E: Element> ClassGroup<E> {
 
     // Step 3
     let delta_k = -Integer::from(&p * &q);
+    let tess_root_k = {
+      let delta_k_div_4: Integer = &delta_k >> 2;
+      natural_to_bytes(&delta_k_div_4.abs().floor_root(4).try_into().unwrap())
+    };
+
     let p_square = p.clone().pow(2u64);
     let delta_p = &delta_k * Integer::from(p_square.clone());
 
@@ -159,6 +228,8 @@ impl<E: Element> ClassGroup<E> {
       // Make a very large table for this as it's static to the setup
       // This should be ~24 MB
       f_table: Table::new(12, identity_p, f),
+      delta_k,
+      tess_root_k,
       delta_p,
       tess_root_p,
     })
@@ -383,8 +454,27 @@ impl<E: Element> ClassGroup<E> {
       .ok_or_else(|| io::Error::other("element didn't have a `c`"))
   }
 
+  /// Map an element of the class group with discriminant `k` with a distinct type into this
+  /// element type.
+  ///
+  /// This has undefined behavior for an element which isn't of discriminant `k`.
+  ///
+  /// This function executes in variable time.
+  pub fn map_k<E2: Element>(&self, e: &E2) -> E {
+    let (b_positive, b) = e.b();
+    let mut b = Integer::from(natural_from_bytes(&b));
+    if !bool::from(b_positive) {
+      b = -b;
+    }
+    // `unwrap` is fine as this is either valid or of a different discriminant, which means we're
+    // allowed to have undefined behavior
+    element::<E>(natural_from_bytes(&e.a()), b, &self.delta_k, &self.tess_root_k).unwrap()
+  }
+
   /// Map an element of the class group with discriminant `p` with a distinct type into this
   /// element type.
+  ///
+  /// This has undefined behavior for an element which isn't of discriminant `p`.
   ///
   /// This function executes in variable time.
   pub fn map_p<E2: Element>(&self, e: &E2) -> E {
@@ -396,6 +486,76 @@ impl<E: Element> ClassGroup<E> {
     // `unwrap` is fine as this is either valid or of a different discriminant, which means we're
     // allowed to have undefined behavior
     element::<E>(natural_from_bytes(&e.a()), b, &self.delta_p, &self.tess_root_p).unwrap()
+  }
+
+  /// Surject an element of the class group of discriminant `p` to the class group of discriminant
+  /// `k`.
+  ///
+  /// This has undefined behavior for an element which isn't of discriminant `p`.
+  ///
+  /// This function executes in variable time.
+  // HJPT98, Algorithm 3, for odd discriminants (b_O = 1)
+  pub fn surject(&self, e: &E) -> E {
+    let a = natural_from_bytes(&e.a());
+    let (b_positive, b) = e.b();
+    let mut b = Integer::from(natural_from_bytes(&b));
+    if !bool::from(b_positive) {
+      b = -b;
+    }
+
+    // Ensure `a` and `p` are coprime
+    let (a, mut b) = make_coprime(a, b, &self.p, &self.delta_p, &self.tess_root_p);
+
+    // Apply the surjections
+    let (_one, mu, lambda) = (&self.p).extended_gcd(&a);
+    b = (b * mu) + (Integer::from(&a) * lambda);
+
+    let c = Integer::from(c(&a, b.unsigned_abs_ref(), &self.delta_k).unwrap());
+    self.map_k(&MalachiteElement::reduce(
+      Integer::from(a),
+      b,
+      c,
+      Arc::new(Integer::from(natural_from_bytes(&self.tess_root_k))),
+    ))
+  }
+
+  /// Inject an element of the class group of discriminant `k` to the class group of discriminant
+  /// `p`.
+  ///
+  /// This has undefined behavior for an element which isn't of discriminant `k`.
+  ///
+  /// This function executes in variable time.
+  // HJPT, Algorithm 2
+  pub fn inject(&self, e: E) -> E {
+    let a = natural_from_bytes(&e.a());
+    let (b_positive, b) = e.b();
+    let mut b = Integer::from(natural_from_bytes(&b));
+    if !bool::from(b_positive) {
+      b = -b;
+    }
+
+    // Ensure `a` and `p` are coprime
+    let (a, mut b) = make_coprime(a, b, &self.p, &self.delta_k, &self.tess_root_k);
+
+    // Apply the injection
+    b *= Integer::from(&self.p);
+    let c = Integer::from(c(&a, b.unsigned_abs_ref(), &self.delta_p).unwrap());
+
+    self.map_p(&MalachiteElement::reduce(
+      Integer::from(a),
+      b,
+      c,
+      Arc::new(Integer::from(natural_from_bytes(&self.tess_root_p))),
+    ))
+  }
+
+  /// Apply the coset labelling function for an element in the class group of discriminant `p`.
+  ///
+  /// This has undefined behavior for an element which isn't of discriminant `p`.
+  ///
+  /// This function executes in variable time.
+  pub fn coset_labelling_function(&self, e: &E) -> E {
+    self.inject(self.surject(e))
   }
 }
 
@@ -411,6 +571,7 @@ fn test_class_group<E: Element>(mut rng: impl CryptoRng) {
 
   // Select a generator
   let g = cg.generator_p(&mut rng);
+  assert_ne!(g, cg.identity_p);
   let g = Table::new(10, cg.identity_p.clone(), g);
 
   // Check add is complete with regards to doubling
@@ -486,6 +647,12 @@ fn test_class_group<E: Element>(mut rng: impl CryptoRng) {
     f.compress(&mut bytes).unwrap();
     assert_eq!(&cg.decompress_p(&mut bytes.as_slice()).unwrap(), f);
   }
+
+  // Test the coset labelling function
+  let label = cg.coset_labelling_function(&g[1]);
+  assert_eq!(label, cg.coset_labelling_function(&(g[1].add(&cg.f_table[1]))));
+  let dlog = cg.discrete_logarithm(&(label.sub(g[1].clone()))).unwrap();
+  assert_eq!(E::mul(&cg.f_table, &dlog), label.sub(g[1].clone()));
 }
 
 #[cfg(test)]

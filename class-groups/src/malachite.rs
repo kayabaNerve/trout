@@ -71,9 +71,7 @@ pub struct MalachiteElement {
 
 impl MalachiteElement {
   // Algorithm 5.4.2 of A Course in Computational Algebraic Number Theory
-  fn reduce(self) -> Self {
-    let Self { mut a, mut b, mut c, L } = self;
-
+  pub(crate) fn reduce(mut a: Integer, mut b: Integer, mut c: Integer, L: Arc<Integer>) -> Self {
     // Step 2
     let normalize = |a: &mut Integer, b: &mut Integer, c: &mut Integer| {
       let two_a = a.clone() << 1;
@@ -144,7 +142,7 @@ impl crate::Element for MalachiteElement {
       let b2_part = &d + &v3;
       let b2 = &self.b + (&b2_part * &b2_part) - &a2 - &c2;
       let c2 = &c2 + (&g * &d1);
-      return (MalachiteElement { a: a2, b: b2, c: c2, L: self.L.clone() }).reduce();
+      return MalachiteElement::reduce(a2, b2, c2, self.L.clone());
     }
 
     let e = ((&self.c * &v) + (&B * &d)) / &A;
@@ -161,7 +159,7 @@ impl crate::Element for MalachiteElement {
     let b2 = &b2 + (&b2_part * &b2_part) - &a2 - &c2;
     let a2 = &a2 + (&e * &v);
     let c2 = &c2 + (&g * &v2);
-    (MalachiteElement { a: a2, b: b2, c: c2, L: self.L.clone() }).reduce()
+    MalachiteElement::reduce(a2, b2, c2, self.L.clone())
   }
 
   // Algorithm 5.4.9 of A Course in Computational Algebraic Number Theory
@@ -230,7 +228,7 @@ impl crate::Element for MalachiteElement {
       let a3 = &d * &a2;
       let c3 = (&v3 * &f) + (&g * &d1);
       let b3 = (Q1 << 1) + &f2.b;
-      return (MalachiteElement { a: a3, b: b3, c: c3, L: self.L.clone() }).reduce();
+      return MalachiteElement::reduce(a3, b3, c3, self.L.clone());
     }
 
     let b = ((&a2 * &d) + (&n * &v)) / &a1;
@@ -249,7 +247,7 @@ impl crate::Element for MalachiteElement {
     let a3 = (&d * &b) + (&e * &v);
     let c3 = (&v3 * &f) + (&g * &v2);
     let b3 = (&Q1 + &Q2) + (&d1 * (&Q3 + &Q4));
-    (MalachiteElement { a: a3, b: b3, c: c3, L: self.L.clone() }).reduce()
+    MalachiteElement::reduce(a3, b3, c3, self.L.clone())
   }
 
   fn sub(&self, other: MalachiteElement) -> MalachiteElement {
@@ -284,6 +282,6 @@ impl crate::Element for MalachiteElement {
 impl Neg for MalachiteElement {
   type Output = Self;
   fn neg(self) -> Self {
-    Self { a: self.a, b: -self.b, c: self.c, L: self.L.clone() }.reduce()
+    MalachiteElement::reduce(self.a, -self.b, self.c, self.L)
   }
 }
