@@ -645,7 +645,10 @@ fn test_class_group<E: Element>(mut rng: impl CryptoRng) {
   }
 
   // Check we can compress all elements of the f table
-  for f in cg.f_table.as_ref() {
+  for (i, f) in cg.f_table.as_ref().iter().enumerate() {
+    if (i % usize::from(prime)) == 0 {
+      assert_eq!(f, &cg.identity_p);
+    }
     let mut bytes = vec![];
     f.compress(&mut bytes).unwrap();
     assert_eq!(&cg.decompress_p(&mut bytes.as_slice()).unwrap(), f);
@@ -665,7 +668,7 @@ fn bench_class_group<E: Element>(mut rng: impl CryptoRng) {
   // The fundamental discriminant is of length `lambda * 2`, yet then that's scaled by `prime**2`
   // `2560`, the target class group size, minus the logarithm of `prime**2`, divided by 2
   let lambda = (2560 - u64::from((u64::from(prime) * u64::from(prime)).ilog2())) / 2;
-  let class_group = ClassGroup::<E>::setup(&mut rng, lambda, vec![19]).unwrap();
+  let class_group = ClassGroup::<E>::setup(&mut rng, lambda, vec![prime]).unwrap();
   let g = class_group.generator_p(&mut rng);
 
   {
