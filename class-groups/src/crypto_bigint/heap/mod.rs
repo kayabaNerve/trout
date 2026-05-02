@@ -81,7 +81,7 @@ impl CryptoBigintHeapElement {
     b: Integer,
     discriminant: Arc<Integer>,
   ) -> Self {
-    let mut b_decomposed = (!b.positive(), b.into_abs().0);
+    let mut b_decomposed = (b.positive(), b.into_abs().0);
     // Resize `a` to the size of the discriminant, plus some spare bits
     let a = a.0.resize(discriminant.abs().0.bits_vartime() + 8);
     // Resize `b` to be the size of `a`
@@ -93,7 +93,7 @@ impl CryptoBigintHeapElement {
     // Resize `b` to the size of `a`
     b_decomposed.1 = b_decomposed.1.resize(discriminant.abs().0.bits_vartime().div_ceil(2) + 1);
     let b = Integer::from(UnsignedInteger::from(b_decomposed.1));
-    Self { a: UnsignedInteger(a), b: <_>::ct_select(&b.clone(), &-b, b_decomposed.0), discriminant }
+    Self { a: UnsignedInteger(a), b: <_>::ct_select(&-b.clone(), &b, b_decomposed.0), discriminant }
   }
 }
 

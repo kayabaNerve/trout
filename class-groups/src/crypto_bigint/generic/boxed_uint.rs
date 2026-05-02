@@ -1,12 +1,8 @@
-use crypto_bigint::{CtSelect, Zero, Resize, ConcatenatingSquare, Limb, BoxedUint};
+use crypto_bigint::{Choice, CtSelect, CtLt, Resize, ConcatenatingSquare, Limb, BoxedUint};
 
 use super::Limbs;
 
 impl Limbs for BoxedUint {
-  fn zero(limbs: usize) -> Self {
-    <Self as Zero>::zero().resize_unchecked(u32::try_from(limbs).unwrap() * Limb::BITS + 1)
-  }
-
   fn shl(&self, bits: u32) -> Self {
     self.unbounded_shl(bits)
   }
@@ -37,5 +33,16 @@ impl Limbs for BoxedUint {
       denom_is_zero,
     );
     quotient.resize_unchecked(denom_bits)
+  }
+  #[inline(always)]
+  fn swap(&mut self, b: &mut Self, _limbs: usize, choice: Choice) {
+    let bits = self.bits_precision().max(b.bits_precision());
+    *self = self.clone().resize_unchecked(bits);
+    *b = b.clone().resize(bits);
+    <_ as crypto_bigint::CtSelect>::ct_swap(self, b, choice);
+  }
+  #[inline(always)]
+  fn lt(&self, b: &Self, _limbs: usize) -> Choice {
+    crypto_bigint::UintRef::new(self.as_ref()).ct_lt(crypto_bigint::UintRef::new(b.as_ref()))
   }
 }

@@ -82,7 +82,7 @@ impl crypto_bigint::CtSelect for CryptoBigintStackElement {
 
 impl CryptoBigintStackElement {
   fn partial_reduce(a: WideU, b: WideI, discriminant: WideI) -> Self {
-    let b_decomposed = (!b.positive(), *b.abs());
+    let b_decomposed = (b.positive(), *b.abs());
     let (a, b_decomposed, _c) =
       super::partial_reduce(discriminant.abs().bits_vartime(), a, b_decomposed, discriminant.abs());
     let (a, a_hi) = a.split();
@@ -90,11 +90,11 @@ impl CryptoBigintStackElement {
     let (b_abs, b_abs_hi) = b_decomposed.1.split();
     debug_assert!(bool::from(b_abs_hi.is_zero()));
     let mut b = IStruct::from(b_abs);
-    b = <_>::ct_select(&b, &-b, b_decomposed.0);
+    b = <_>::ct_select(&-b, &b, b_decomposed.0);
     Self { a, b, discriminant }
   }
   fn reduce(a: U, b: I, discriminant: WideI) -> Self {
-    let b_decomposed = (!b.positive(), *b.abs());
+    let b_decomposed = (b.positive(), *b.abs());
     let (a, b_decomposed, _c) = super::reduce(
       discriminant.abs().bits_vartime().div_ceil(2),
       a.concat(&Uint::ZERO),
@@ -103,7 +103,7 @@ impl CryptoBigintStackElement {
     );
     let a = a.split().0;
     let mut b = IStruct::from(b_decomposed.1.split().0);
-    b = <_>::ct_select(&b, &-b, b_decomposed.0);
+    b = <_>::ct_select(&-b, &b, b_decomposed.0);
     Self { a, b, discriminant }
   }
 }

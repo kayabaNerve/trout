@@ -8,11 +8,6 @@ where
   Uint<WIDE_LIMBS>: CheckedDiv<Self> + SplitEven<Output = Self>,
 {
   #[inline(always)]
-  fn zero(_limbs: usize) -> Self {
-    Self::ZERO
-  }
-
-  #[inline(always)]
   fn shl(&self, bits: u32) -> Self {
     self.unbounded_shl(bits)
   }
