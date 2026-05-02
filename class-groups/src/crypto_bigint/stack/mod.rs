@@ -637,12 +637,13 @@ impl crate::Element for CryptoBigintStackElement {
   }
 
   fn b(&self) -> (subtle::Choice, Vec<u8>) {
-    let bytes = Self::reduce(self.a, self.b, self.discriminant).b.abs().to_be_bytes();
+    let b = Self::reduce(self.a, self.b, self.discriminant).b;
+    let bytes = b.abs().to_be_bytes();
     let mut start = 0;
     while bytes.get(start) == Some(&0) {
       start += 1;
     }
-    (self.b.positive().into(), bytes[start ..].to_vec())
+    (b.positive().into(), bytes[start ..].to_vec())
   }
 }
 

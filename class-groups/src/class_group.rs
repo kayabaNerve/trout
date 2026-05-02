@@ -396,9 +396,12 @@ impl<E: Element> ClassGroup<E> {
       }
       let t_ = &t_ % &a_int;
       let t_ = (if t_.sign() == Ordering::Less { a_int + t_ } else { t_ }).unsigned_abs();
+      if t_ == Integer::ZERO {
+        Err(io::Error::other("t' wasn't in the multiplicative ring modulo a'"))?;
+      }
       let inv_t_ = t_
         .mod_inverse(&a_)
-        .ok_or_else(|| io::Error::other("t didn't have an inverse modulo a'"))?;
+        .ok_or_else(|| io::Error::other("t' didn't have an inverse modulo a'"))?;
       (s_ * inv_t_) % &a_
     };
     // Step 8-10
