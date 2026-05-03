@@ -64,7 +64,7 @@ impl Zeroize for CryptoBigintStackElement {
 
     // Set to the identity
     self.a = U::ONE;
-    self.b = I::one();
+    self.b = I::from(U::ONE);
     self.c = (WideU::ONE + self.discriminant.abs()).overflowing_shr_vartime(2).unwrap();
   }
 }
@@ -84,7 +84,7 @@ impl crypto_bigint::CtSelect for CryptoBigintStackElement {
 
 impl CryptoBigintStackElement {
   fn partial_reduce(a: WideU, b: WideI, discriminant: WideI) -> Self {
-    let b_decomposed = (b.positive(), b.into_abs());
+    let b_decomposed = (b.positive(), *b.abs());
     let (a, b_decomposed, c) =
       super::partial_reduce(discriminant.abs().bits_vartime(), a, b_decomposed, discriminant.abs());
     let (a, a_hi) = a.split();
@@ -96,7 +96,7 @@ impl CryptoBigintStackElement {
     Self { a, b, c, discriminant }
   }
   fn reduce(a: U, b: I, discriminant: WideI) -> Self {
-    let b_decomposed = (b.positive(), b.into_abs());
+    let b_decomposed = (b.positive(), *b.abs());
     let (a, b_decomposed, c) = super::reduce(
       discriminant.abs().bits_vartime().div_ceil(2),
       a.concat(&Uint::ZERO),
@@ -115,7 +115,7 @@ impl crate::Element for CryptoBigintStackElement {
 
   fn is_identity(&self) -> subtle::Choice {
     let a = Self::reduce(self.a, self.b, self.discriminant);
-    (a.a.ct_eq(&U::ONE) & a.b.ct_eq(&I::one())).into()
+    (a.a.ct_eq(&U::ONE) & a.b.ct_eq(&I::from(U::ONE))).into()
   }
 
   // Algorithm 5.4.7 Composition of Positive Definite Forms from
