@@ -8,23 +8,6 @@ use crypto_bigint::{
 #[cfg(test)]
 use crypto_bigint::U256;
 
-pub(crate) fn mul_arbitrary_uints<
-  const LHS_LIMBS: usize,
-  const RHS_LIMBS: usize,
-  const OUTPUT_LIMBS: usize,
->(
-  a: Uint<LHS_LIMBS>,
-  b: Uint<RHS_LIMBS>,
-) -> Uint<OUTPUT_LIMBS> {
-  let (c_lo, c_hi) = a.widening_mul(&b);
-  let c_lo = c_lo.as_words();
-  let c_hi = c_hi.as_words();
-  let mut res = Uint::<{ OUTPUT_LIMBS }>::ZERO;
-  res.as_mut_words()[.. c_lo.len()].copy_from_slice(c_lo);
-  res.as_mut_words()[c_lo.len() ..].copy_from_slice(c_hi);
-  res
-}
-
 // Calculate the difference of two `I`s, returning it and if `b` was greater.
 //
 // This assumes the difference will not have the top bit set.
@@ -60,21 +43,6 @@ impl<I: Copy + BitOps + Integer> IStruct<I> {
 
   pub(crate) fn one() -> Self {
     Self { positive: 1.into(), value: I::one() }
-  }
-
-  pub(crate) fn widen<I2: Copy + BitOps + Integer + From<(I, I)>>(self) -> IStruct<I2> {
-    IStruct { positive: self.positive, value: I2::from((self.value, I::zero())) }
-  }
-}
-impl<const LIMBS: usize> IStruct<Uint<LIMBS>> {
-  pub(crate) fn mul_i_uint<const RHS_LIMBS: usize, const OUTPUT_LIMBS: usize>(
-    self,
-    other: IStruct<Uint<RHS_LIMBS>>,
-  ) -> IStruct<Uint<OUTPUT_LIMBS>> {
-    let value = mul_arbitrary_uints(self.value, other.value);
-    // (positive * positive) | (negative * negative) | (0 * either)
-    let positive = self.positive.ct_eq(&other.positive) | value.is_zero();
-    IStruct { positive, value }
   }
 }
 impl<I: Copy + BitOps + Integer> From<I> for IStruct<I> {
@@ -215,56 +183,6 @@ impl<I: Copy + Zeroize + BitOps + Integer> Zeroize for IStruct<I> {
   }
 }
 
-pub(crate) trait ExtendedGcd: Copy + Sized + BitOps + Integer {
-  // (g, u, other / g)
-  fn extended_gcd_part(self, other: Self) -> (Self, Self, Self);
-  // (g, u, v, self / g)
-  fn extended_gcd(self, other: Self) -> (Self, Self, IStruct<Self>, Self);
-}
-impl<const LIMBS: usize> ExtendedGcd for Uint<LIMBS> {
-  fn extended_gcd_part(self, other: Self) -> (Self, Self, Self) {
-    debug_assert!(bool::from((!self.ct_eq(&Self::zero())) | (!other.ct_eq(&Self::zero()))));
-
-    let res = self.xgcd(&other);
-    debug_assert!(!bool::from(res.x.is_negative() & res.y.is_negative()));
-    let g = res.gcd;
-    let u = res.x;
-    let other_div_g = res.rhs_on_gcd;
-
-    let u_abs = u.abs();
-    let u = <_>::ct_select(&u_abs, &other_div_g.saturating_sub(&u_abs), u.is_negative());
-
-    (g, u, other_div_g)
-  }
-
-  fn extended_gcd(self, other: Self) -> (Self, Self, IStruct<Self>, Self) {
-    debug_assert!(bool::from((!self.ct_eq(&Self::zero())) | (!other.ct_eq(&Self::zero()))));
-
-    let res = self.xgcd(&other);
-    debug_assert!(!bool::from(res.x.is_negative() & res.y.is_negative()));
-    let g = res.gcd;
-    let u = res.x;
-    let v = res.y;
-    let self_div_g = res.lhs_on_gcd;
-    let other_div_g = res.rhs_on_gcd;
-
-    let u_is_neg = u.is_negative();
-    let u_abs = u.abs();
-    let u = <_>::ct_select(&u_abs, &other_div_g.saturating_sub(&u_abs), u_is_neg);
-
-    let v_is_neg = v.is_negative();
-    let v_abs = v.abs();
-    let v_abs = <_>::ct_select(&v_abs, &self_div_g.saturating_sub(&v_abs), u_is_neg);
-    let v = IStruct::from(v_abs);
-    // Restore the sign `v` originally had
-    let v = <_>::ct_select(&v, &-v, v_is_neg);
-    // If we negated `u`, negate `v`
-    let v = <_>::ct_select(&v, &-v, u_is_neg);
-
-    (g, u, v, self_div_g)
-  }
-}
-
 #[test]
 fn test_integer_sub() {
   // Positive minus smaller positive
@@ -368,93 +286,5 @@ fn test_integer_div() {
     assert!(bool::from(res.positive.ct_eq(&1.into())));
     assert_eq!(res.value, U256::ONE);
     assert_eq!(rem, U256::ONE);
-  }
-}
-
-#[test]
-fn gcd() {
-  // Ensure the underlying crypto-bigint handles the case where one is zero correctly
-  assert_eq!(U256::ONE.gcd(&U256::ZERO), U256::ONE);
-
-  {
-    let (gcd, u, v, _) = U256::ONE.extended_gcd(U256::ZERO);
-    assert_eq!(gcd, U256::ONE);
-    assert_eq!(u, U256::ONE);
-    assert!(bool::from(v.positive.ct_eq(&1.into())));
-    assert_eq!(v.value, U256::ZERO);
-  }
-
-  {
-    let (gcd, u, v, _) = U256::ZERO.extended_gcd(U256::ONE);
-    assert_eq!(gcd, U256::ONE);
-    assert_eq!(u, U256::ZERO);
-    assert!(bool::from(v.positive.ct_eq(&1.into())));
-    assert_eq!(v.value, U256::ONE);
-  }
-
-  {
-    let (gcd, u, v, _) = U256::from(2u8).extended_gcd(U256::from(3u8));
-    assert_eq!(gcd, U256::ONE);
-    assert_eq!(u, U256::from(2u8));
-    assert!(bool::from(v.positive.ct_eq(&0.into())));
-    assert_eq!(v.value, U256::ONE);
-  }
-
-  {
-    let (gcd, u, v, _) = (U256::from(4u8)).extended_gcd(U256::from(8u8));
-    assert_eq!(gcd, U256::from(4u8));
-    assert_eq!(u, U256::ONE);
-    assert!(bool::from(v.positive.ct_eq(&1.into())));
-    assert_eq!(v.value, U256::ZERO);
-  }
-
-  {
-    let (gcd, u, v, _) = (U256::from(8u8)).extended_gcd(U256::from(4u8));
-    assert_eq!(gcd, U256::from(4u8));
-    assert_eq!(u, U256::ZERO);
-    assert!(bool::from(v.positive.ct_eq(&1.into())));
-    assert_eq!(v.value, U256::ONE);
-  }
-
-  {
-    let (gcd, u, v, _) = (U256::from(4u8)).extended_gcd(U256::from(10u8));
-    assert_eq!(gcd, U256::from(2u8));
-    assert_eq!(u, U256::from(3u8));
-    assert!(bool::from(v.positive.ct_eq(&0.into())));
-    assert_eq!(v.value, U256::ONE);
-  }
-
-  {
-    let (gcd, u, v, _) = U256::from(2u8).extended_gcd(U256::from(2u8));
-    assert_eq!(gcd, U256::from(2u8));
-    assert_eq!(u, U256::ONE);
-    assert!(bool::from(v.positive.ct_eq(&1.into())));
-    assert_eq!(v.value, U256::ZERO);
-  }
-
-  {
-    let (gcd, u, v, _) = (U256::from(10u8)).extended_gcd(U256::from(4u8));
-    assert_eq!(gcd, U256::from(2u8));
-    assert_eq!(u, U256::from(1u8));
-    assert!(bool::from(v.positive.ct_eq(&0.into())));
-    assert_eq!(v.value, U256::from(2u8));
-  }
-
-  {
-    let a = crypto_bigint::U512::from_be_hex(concat!(
-      "0000000000000000000000000000000000000000000000000000000000000000",
-      "000000000000000000000000000000000000001A0DEEF6F3AC2566149D925044"
-    ));
-    let b = crypto_bigint::U512::from_be_hex(concat!(
-      "0000000000000000000000000000000000000000000000000000000000000000",
-      "000000000000072B69C9DD0AA15F135675EA9C5180CF8FF0A59298CFC92E87FA"
-    ));
-    let (gcd, u, v, _) = a.extended_gcd(b);
-    // u * a + v * b = g
-    // v is either 0 or negative, so this is equivalent to
-    // u * a - |v| * b = g
-    // which is equivalent to
-    // u * a = g + |v| * b
-    assert_eq!(u * a, gcd + (v.value * b));
   }
 }
