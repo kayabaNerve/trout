@@ -35,6 +35,11 @@ impl<I: Copy + BitOps + Integer> IStruct<I> {
     self.positive = Choice::ct_select(&self.positive, &1.into(), self.value.ct_eq(&I::zero()));
     self
   }
+  #[must_use]
+  pub(crate) fn ct_neg(mut self, neg: Choice) -> Self {
+    self.positive = <_>::ct_select(&self.positive, &!self.positive, neg);
+    self
+  }
 }
 impl<I: Copy + BitOps + Integer> From<I> for IStruct<I> {
   fn from(value: I) -> Self {

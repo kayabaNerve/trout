@@ -2,7 +2,7 @@ use core::ops::Neg;
 
 use zeroize::Zeroize;
 
-use crypto_bigint::{CtEq, CtGt, CtSelect, NonZero, Uint};
+use crypto_bigint::{CtEq, CtSelect, NonZero, Uint};
 
 use crate::Table;
 
@@ -91,8 +91,7 @@ impl CryptoBigintStackElement {
     debug_assert!(bool::from(a_hi.is_zero()));
     let (b_abs, b_abs_hi) = b_decomposed.1.split();
     debug_assert!(bool::from(b_abs_hi.is_zero()));
-    let mut b = IStruct::from(b_abs);
-    b = <_>::ct_select(&-b, &b, b_decomposed.0);
+    let b = IStruct::from(b_abs).ct_neg(!b_decomposed.0);
     Self { a, b, c, discriminant }
   }
   fn reduce(a: U, b: I, discriminant: WideI) -> Self {
@@ -121,34 +120,25 @@ impl crate::Element for CryptoBigintStackElement {
   // Algorithm 5.4.7 Composition of Positive Definite Forms from
   // "A Course in Computational Algebraic Number Theory"
   fn add(&self, other: &Self) -> CryptoBigintStackElement {
-    let mut a1 = self.a;
-    let mut b1 = self.b;
-    let mut c1 = self.c;
-    let mut a2 = other.a;
-    let mut b2 = other.b;
-    let mut c2 = other.c;
-    {
-      let swap = a1.ct_gt(&a2);
-      a1.ct_swap(&mut a2, swap);
-      b1.ct_swap(&mut b2, swap);
-      c1.ct_swap(&mut c2, swap);
-    }
+    let a1 = self.a;
+    let b1 = self.b;
+    let a2 = other.a;
+    let b2 = other.b;
+    let c2 = other.c;
 
-    let s: I = (self.b + other.b).half();
+    let s: I = (b1 + b2).half();
     let n: I = b2 - s;
 
-    let (d, y1) = {
-      let xgcd = a2.xgcd(&a1);
-      (xgcd.gcd, xgcd.x)
-    };
-    let (d1, x2, y2) = {
+    let (d1, x2, y1, y2) = {
+      let (d, y1) = {
+        let xgcd = a2.xgcd(&a1);
+        (xgcd.gcd, xgcd.x)
+      };
+
       let xgcd = s.abs().xgcd(&d);
 
-      let (y_abs, y_is_negative) = xgcd.y.abs_sign();
-      let y_abs = I::from(y_abs);
-      let y = <_>::ct_select(&y_abs, &-y_abs, y_is_negative);
-
-      (xgcd.gcd, xgcd.x, -y)
+      let (y2_abs, y2_is_negative) = xgcd.y.abs_sign();
+      (xgcd.gcd, xgcd.x, y1, -I::from(y2_abs).ct_neg(y2_is_negative))
     };
 
     let v1: U = a1 / d1;
@@ -160,10 +150,9 @@ impl crate::Element for CryptoBigintStackElement {
       let r1 = y1.abs().mul_mod(y2.abs(), &modulus).mul_mod(n.abs(), &modulus);
       let r1_is_negative = y1.is_negative() ^ (!y2.positive()) ^ (!n.positive());
       let r1 = <_>::ct_select(&r1, &r1.neg_mod(&modulus), r1_is_negative);
-      let c2_reduced = c2.rem(&NonZero::new(modulus.concat(&U::ZERO)).unwrap());
-      let (c2_reduced, _) = c2_reduced.split();
+      let c2_reduced = c2.rem(&modulus);
       let r2 = x2.abs().mul_mod(&c2_reduced, &modulus);
-      let r2 = <_>::ct_select(&((*modulus) - r2), &r2, x2.is_positive().ct_eq(&s.positive()));
+      let r2 = <_>::ct_select(&r2.neg_mod(&modulus), &r2, x2.is_positive().ct_eq(&s.positive()));
 
       r1.sub_mod(&r2, &modulus)
     };
@@ -176,12 +165,10 @@ impl crate::Element for CryptoBigintStackElement {
       // `a3` is guaranteed to be non-zero as its an `a`, which are guaranteed to be non-zero for
       // negative discriminants
       let modulus = NonZero::new(two_a3).unwrap();
-      let b2_abs = b2.abs().concat(&U::ZERO).rem(&modulus);
-      let b2 = <_>::ct_select(&((*modulus) - b2_abs), &b2_abs, b2.positive());
+      let b2_abs = b2.abs().rem(&modulus);
+      let b2 = <_>::ct_select(&b2_abs.neg_mod(&modulus), &b2_abs, b2.positive());
       b2.add_mod(&v2.concatenating_mul(&r).overflowing_shl_vartime(1).unwrap(), &modulus)
     };
-
-    // TODO: `c3`
 
     Self::partial_reduce(a3, IStruct::from(b3), self.discriminant)
   }
@@ -204,8 +191,7 @@ impl crate::Element for CryptoBigintStackElement {
     let r = {
       // `a` is guaranteed to be non-zero for negative discriminants, so `v1` will be
       let modulus = NonZero::new(v1).unwrap();
-      let c1_reduced = c1.rem(&NonZero::new(modulus.concat(&U::ZERO)).unwrap());
-      let (c1_reduced, _) = c1_reduced.split();
+      let c1_reduced = c1.rem(&modulus);
       let r2 = x2.abs().mul_mod(&c1_reduced, &modulus);
       <_>::ct_select(&r2, &((*modulus) - r2), x2.is_positive().ct_eq(&s.positive()))
     };
@@ -217,7 +203,7 @@ impl crate::Element for CryptoBigintStackElement {
       // `a3` is guaranteed to be non-zero as its an `a`, which are guaranteed to be non-zero for
       // negative discriminants
       let modulus = NonZero::new(two_a3).unwrap();
-      let b1_abs = b1.abs().concat(&U::ZERO).rem(&modulus);
+      let b1_abs = b1.abs().rem(&modulus);
       let b1 = <_>::ct_select(&((*modulus) - b1_abs), &b1_abs, b1.positive());
       b1.add_mod(&v1.concatenating_mul(&r).overflowing_shl_vartime(1).unwrap(), &modulus)
     };
@@ -296,6 +282,7 @@ impl crate::Element for CryptoBigintStackElement {
     b: &[u8],
     c: &[u8],
     abs_value_of_neg_discriminant: &[u8],
+    // We do not use `_tess_root` as we do not implement `PARTEUCL` (or similar)
     _tess_root: &[u8],
   ) -> Self {
     if (8 * abs_value_of_neg_discriminant.len()) > usize::try_from(BITS - 128).unwrap() {
@@ -308,9 +295,8 @@ impl crate::Element for CryptoBigintStackElement {
       full_bytes
     };
 
-    let b = I::from(U::from_be_slice(&full_bytes(usize::try_from(A_BITS).unwrap(), b)));
-    // TODO: ct_neg
-    let b = I::ct_select(&-b, &b, b_positive.into());
+    let b = I::from(U::from_be_slice(&full_bytes(usize::try_from(A_BITS).unwrap(), b)))
+      .ct_neg(!crypto_bigint::Choice::from(b_positive));
 
     Self {
       a: U::from_be_slice(&full_bytes(usize::try_from(A_BITS).unwrap(), a)),
