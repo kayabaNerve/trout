@@ -41,6 +41,7 @@ fn a_lte_c<L: Limbs>(a: &mut L, b: &mut (Choice, L), c: &mut L, limbs: usize) {
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
 /// - `a <= c` (such as forms output of `a_lte_c`)
+/// - `ceil(log_2(max(|b|))) <= b_bits_bound` when `b_lte_2a == false`
 /// - `ceil(log_2(max(a, |b|))) <= a_max_b_bits_bound` when `b_lte_2a == false`
 /// - `ceil(a_max_b_bits_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(a).len())`
 /// - `ceil(a_max_b_bits_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
@@ -61,6 +62,7 @@ fn reduce_to_next_bit<L: Limbs>(
   c: &mut L,
   b_lte_2a: &mut Choice,
   limbs: usize,
+  b_bits_bound: u32,
   a_max_b_bits_bound: u32,
   c_limbs: usize,
 ) {
@@ -69,7 +71,8 @@ fn reduce_to_next_bit<L: Limbs>(
     use crypto_bigint::CtGt;
 
     debug_assert!(bool::from(a.lt(c, <_ as AsRef<[Limb]>>::as_ref(c).len())));
-    // Either `b <= 2a` or `a.bits(), b.1.bits() <= a_max_b_bits_bound`
+    // Either `b <= 2a` or `b.1.bits() <= b_bits_bound, a.bits(), b.1.bits() <= a_max_b_bits_bound`
+    debug_assert!(bool::from((*b_lte_2a) | (!b.1.bits().ct_gt(&b_bits_bound))));
     debug_assert!(bool::from((*b_lte_2a) | (!a.bits().ct_gt(&a_max_b_bits_bound))));
     debug_assert!(bool::from((*b_lte_2a) | (!b.1.bits().ct_gt(&a_max_b_bits_bound))));
     debug_assert!(limbs <= <_ as AsRef::<[Limb]>>::as_ref(a).len());
@@ -84,16 +87,34 @@ fn reduce_to_next_bit<L: Limbs>(
     well-defined.
   */
   let b_gt_2_a = (!*b_lte_2a) & b.1.gt(&a.clone().double(limbs), limbs);
-  // Update `b_lte_2a`
+  /*
+    Update `b_lte_2a`.
+
+    If `b_lte_2a` is set, this will never unset it, as `b_gt_2_a` won't be set if `b_lte_2a` was.
+  */
   *b_lte_2a = !b_gt_2_a;
+
+  /*
+    Only run this iteration if this specific bit of `b` is in fact set.
+
+    This is a correct optimization, as we run for all bits regardless. It also is an optimization
+    as it avoids having to determine the amount of bits in `b`, instead assuming it equal to the
+    bound (or performing a NOP).
+
+    This does slightly overload `b_gt_2_a` as a pseudo-`should_iterate`.
+  */
+  let b_gt_2_a = b_gt_2_a & Choice::from(b.1.bit_vartime(b_bits_bound.saturating_sub(1)) as u8);
 
   /*
     This definition is important as when `b_gt_2_a = true`, we have
     `floor(log_2(2 * (1 << m) * a)) = floor(log_2(b))`. This is foundational for further proofs.
   */
   let m = {
+    let a_bits = UintRef::new(&<_ as AsRef<[Limb]>>::as_ref(&a)[.. limbs]).bits();
+    // This is correct per the check this bit, the highest possible, was actually set
+    let b_bits = b_bits_bound;
     // This is only well-defined if `a_bits < b_bits`
-    let m = b.1.bits().wrapping_sub(a.bits()).wrapping_sub(1);
+    let m = b_bits.wrapping_sub(a_bits).wrapping_sub(1);
     // Set `m = 0` if `m` wouldn't be well-defined otherwise
     <_ as CtSelect>::ct_select(&0, &m, b_gt_2_a)
   };
@@ -232,10 +253,6 @@ fn reduce_second_to_last_bit<L: Limbs>(
   #[cfg(debug_assertions)]
   {
     debug_assert!(bool::from(a.lt(c, <_ as AsRef<[Limb]>>::as_ref(c).len())));
-    {
-      let two_a = a.clone().double(limbs);
-      debug_assert!(bool::from(b.1.lt(&two_a, limbs) | b.1.eq(&two_a, limbs)));
-    }
     debug_assert!(limbs <= <_ as AsRef::<[Limb]>>::as_ref(a).len());
     debug_assert!(limbs <= <_ as AsRef::<[Limb]>>::as_ref(&b.1).len());
   }
@@ -514,27 +531,17 @@ pub(crate) fn partial_reduce<L: Limbs>(
     iteration applies.
   */
   let mut b_lte_2a = Choice::FALSE;
-  #[cfg(debug_assertions)]
-  let mut last_bits: Option<u32> = None;
   for bits in ((discriminant_bits / 2) ..= log_2_b_bound).rev() {
-    if progress_in_limb == Limb::BITS {
-      progress_in_limb = 0;
-      limbs -= 1;
-    }
-    progress_in_limb += 1;
-
     a_lte_c(&mut a, &mut b, &mut c, c_limbs);
 
     // Confirm each iteration achieved the expected bound
     #[cfg(debug_assertions)]
     {
-      if let Some(last_bits) = last_bits {
-        debug_assert!(bool::from({
-          use crypto_bigint::CtLt;
-          b_lte_2a | b.1.bits().ct_lt(&last_bits)
-        }));
-      }
-      last_bits = Some(b.1.bits());
+      debug_assert!(bool::from({
+        use crypto_bigint::CtLt;
+        // `b.1.bits() <= (bits + 1)`
+        b_lte_2a | b.1.bits().ct_lt(&(bits + 1))
+      }));
     }
 
     reduce_to_next_bit(
@@ -543,9 +550,16 @@ pub(crate) fn partial_reduce<L: Limbs>(
       &mut c,
       &mut b_lte_2a,
       limbs,
+      bits,
       bits.max(sqrt_discriminant_bits),
       c_limbs,
     );
+
+    if progress_in_limb == Limb::BITS {
+      progress_in_limb = 0;
+      limbs -= 1;
+    }
+    progress_in_limb += 1;
   }
 
   /*
@@ -658,26 +672,15 @@ pub(crate) fn reduce<L: Limbs>(
   let c_limbs = <_ as AsRef<[Limb]>>::as_ref(&c).len();
 
   let mut b_lte_2a = Choice::FALSE;
-  #[cfg(debug_assertions)]
-  let mut last_bits: Option<u32> = None;
-  for bits in ((discriminant_bits / 2) ..= log_2_b_bound).rev() {
-    if progress_in_limb == Limb::BITS {
-      progress_in_limb = 0;
-      limbs -= 1;
-    }
-    progress_in_limb += 1;
-
+  for bits in (0 ..= log_2_b_bound).rev() {
     a_lte_c(&mut a, &mut b, &mut c, c_limbs);
 
     #[cfg(debug_assertions)]
     {
-      if let Some(last_bits) = last_bits {
-        debug_assert!(bool::from({
-          use crypto_bigint::CtLt;
-          b_lte_2a | b.1.bits().ct_lt(&last_bits)
-        }));
-      }
-      last_bits = Some(b.1.bits());
+      debug_assert!(bool::from({
+        use crypto_bigint::CtLt;
+        b_lte_2a | b.1.bits().ct_lt(&(bits + 1))
+      }));
     }
 
     reduce_to_next_bit(
@@ -686,9 +689,16 @@ pub(crate) fn reduce<L: Limbs>(
       &mut c,
       &mut b_lte_2a,
       limbs,
+      bits,
       bits.max(sqrt_discriminant_bits),
       c_limbs,
     );
+
+    if progress_in_limb == Limb::BITS {
+      progress_in_limb = 0;
+      limbs -= 1;
+    }
+    progress_in_limb += 1;
   }
 
   a_lte_c(&mut a, &mut b, &mut c, c_limbs);

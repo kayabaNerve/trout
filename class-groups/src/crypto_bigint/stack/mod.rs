@@ -95,7 +95,10 @@ impl CryptoBigintStackElement {
     Self { a, b, c, discriminant }
   }
   fn reduce(a: U, b: I, discriminant: WideI) -> Self {
-    let b_decomposed = (b.positive(), *b.abs());
+    let mut b_decomposed = (b.positive(), *b.abs());
+    // Our reduction methods require this, but the output of `partial_reduce` doesn't guarantee it
+    let two_a_mod = NonZero::new(a.overflowing_shl_vartime(1).unwrap()).unwrap();
+    b_decomposed.1 = b_decomposed.1.rem(&two_a_mod);
     let (a, b_decomposed, c) = super::reduce(
       discriminant.abs().bits_vartime().div_ceil(2),
       a.concat(&Uint::ZERO),
