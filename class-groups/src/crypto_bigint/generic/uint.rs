@@ -8,11 +8,6 @@ where
   Uint<WIDE_LIMBS>: CheckedDiv<Self> + SplitEven<Output = Self>,
 {
   #[inline(always)]
-  fn shl(&self, bits: u32) -> Self {
-    self.unbounded_shl(bits)
-  }
-
-  #[inline(always)]
   fn carrying_add(&self, b: &Self, carry: Limb) -> (Self, Limb) {
     self.carrying_add(b, carry)
   }

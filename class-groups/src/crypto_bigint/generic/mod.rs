@@ -35,13 +35,6 @@ trait Limbs:
   + BitOps
   + ShrVartime
 {
-  /// Shift the number left by the specified amount of bits.
-  ///
-  /// Callers MUST NOT shift a value by more bits than remaining precision.
-  ///
-  /// The result is undefined on overflow.
-  fn shl(&self, bits: u32) -> Self;
-
   /// Perform an addition, with carry.
   ///
   /// Returns the sum value and the updated carry value.
@@ -82,17 +75,6 @@ trait Limbs:
         choice,
       );
     }
-  }
-
-  /// `true` if `self > b` and `false` otherwise.
-  #[inline(always)]
-  fn gt(&self, b: &Self, limbs: usize) -> Choice {
-    let mut carry = Limb::ZERO;
-    for l in 0 .. limbs {
-      (_, carry) = <_ as AsRef<[Limb]>>::as_ref(&b)[l]
-        .borrowing_sub(<_ as AsRef<[Limb]>>::as_ref(&self)[l], carry);
-    }
-    Choice::from((carry.0 & 1) as u8)
   }
 
   /// `true` if `self < b` and `false` otherwise.

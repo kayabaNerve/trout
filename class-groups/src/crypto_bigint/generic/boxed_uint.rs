@@ -3,9 +3,6 @@ use crypto_bigint::{Choice, CtSelect, CtLt, Resize, ConcatenatingSquare, Limb, B
 use super::Limbs;
 
 impl Limbs for BoxedUint {
-  fn shl(&self, bits: u32) -> Self {
-    self.unbounded_shl(bits)
-  }
   fn carrying_add(&self, b: &Self, carry: Limb) -> (Self, Limb) {
     self.carrying_add(b, carry)
   }
