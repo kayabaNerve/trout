@@ -1,7 +1,9 @@
 //! A constant-time reduction algorithm.
 //!
 //! This is derived from Algorithm 1 of https://eprint.iacr.org/2022-466. Some typos have been
-//! accounted for.
+//! accounted for. Algorithm 2 is a restatement of Algorithm 1 in an iterative fashion and
+//! accordingly may of more approximate structure to the following, yet this work was independently
+//! derived from Algorithm 1.
 //!
 //! In order to be efficient, this does not always operate over the full amount of limbs of each
 //! number. Instead, as the reduction occurs (and as the numbers shrink), the amount of limbs
@@ -38,7 +40,7 @@ fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
   *b_sign ^= c_lt_a;
 }
 
-/// Reduce by one bit.
+/// Reduce by one bit if `b >= 2a` and `(floor(log_2(|b|)) + 1) == b_bits_bound`.
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
@@ -48,12 +50,40 @@ fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
 ///
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `a' = a`
-/// - `floor(log_2(|b'|)) <= floor(log_2(|b|)) - 1` if `|b| > 2 a`, else `(a', b', c') = (a, b, c)`
-/// - `<L as AsRef::<[Limb]>>::as_ref(c').len()) = <L as AsRef::<[Limb]>>::as_ref(c).len())`
+/// - `floor(log_2(|b'|)) <= floor(log_2(|b|)) - 1` if `|b| > 2 a` and
+///   `(floor(log_2(|b|)) + 1) == b_bits_bound`, else `(a', b', c') = (a, b, c)`
 ///
 /// This is intended to perform _most_ steps of the reduction algorithm but explicitly not the last
 /// steps. This allows it to optimize around certain edge cases. Specifically, it corresponds to
 /// steps 3 and 6 of Algorithm 1, or a NOP if step 3's branch would not execute.
+///
+/// The steps of the reduction algorithm must run for however many iterations. As written, the
+/// iterations will always occur until they don't occur. This is distinct in that this function
+/// (representing a single iteration) only performs an operation _not_ if further iterations are
+/// necessary, but if `(floor(log_2(|b|)) + 1) == b_bits_bound`. This is done as:
+///
+/// 1) It is still correct. This function, if called correctly, must be called from the current
+///    bound to the minimal bound, the current bound decrementing by one bit with each call, as
+///    this function is only guaranteed to reduce `|b|` by a single bit (if it's reduced at all).
+///    Assuming the bound is properly decremented with each call, then we know `|b|` is within the
+///    bound with each call, as the iteration is either unnecessary (the current bound exceeding
+///    the actual `floor(log_2(|b|)) + 1`) or will be reduced by at least one (and therefore within
+///    the next iteration's bound).
+///
+/// 2) It is faster to check if `(floor(log_2(|b|)) + 1) == b_bits_bound` than to calculate
+///    `floor(log_2(|b|))`, even with how cheap that operation is. Finding the leading bit is an
+///    operation of linear complexity, while checking if the highest bit within the bound is set is
+///    of constant complexity (assuming the bound is public, allowing us to perform the retrieval
+///    with a variable memory-access pattern). This optimization decreased the time of point
+///    doubling by ~3.5%, implying this to optimize ~5% of reduction.
+///
+/// 3) If we always did the iterations which need to happen at the start, than being off-by-one
+///    would be quite hard to detect as the last iterations are unlikely to actually be necessary.
+///    This means `|b|` is likely below the bound for the entire duration of the algorithm, and the
+///    bound being inaccurate may not be noticed. As this methodology intersperses the necessary
+///    iterations with the unnecessary, `|b|` is worked with at the bound itself, which more
+///    aggressively requires the accuracy of the bounds. This itself helps to ensure the bounds are
+///    accurate.
 #[inline(always)]
 fn reduce_to_next_bit<L: Limbs>(
   a: &L,
