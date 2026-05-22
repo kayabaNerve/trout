@@ -132,15 +132,14 @@ fn reduce_to_next_bit<L: Limbs>(
 
   // Step 3 body, Step 4
 
-  // We set `m` not as `2^k` but rather as `k` itself, the amount we have to shift by
-  let m = {
+  let log_2_m = {
     let a_bits = UintRef::new(&<_ as AsRef<[Limb]>>::as_ref(&a)[.. limbs]).bits();
     // This is correct per the check this bit, the highest possible, was actually set
     let b_bits = b_bits_bound;
     // This is only well-defined if `a_bits < b_bits`
-    let m = b_bits.wrapping_sub(a_bits).wrapping_sub(1);
+    let log_2_m = b_bits.wrapping_sub(a_bits).wrapping_sub(1);
     // Set `m = 0` if `m` they have equal bit lengths or if `m` wouldn't be well-defined otherwise
-    <_ as CtSelect>::ct_select(&0, &m, (!a_bits.ct_eq(&b_bits)) & b_gt_a)
+    <_ as CtSelect>::ct_select(&0, &log_2_m, (!a_bits.ct_eq(&b_bits)) & b_gt_a)
   };
 
   // Step 6
@@ -148,7 +147,7 @@ fn reduce_to_next_bit<L: Limbs>(
   // When `b_gt_a = true`, `((1 << m) * a) < b`, so this will fit in `limbs` limbs
   let mut m_a = a.clone();
   let m_a = UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut m_a)[.. limbs]);
-  m_a.shl_assign(m);
+  m_a.shl_assign(log_2_m);
 
   // epsilon b == |b| since epsilon = sgn(b)
   /*
@@ -197,7 +196,7 @@ fn reduce_to_next_bit<L: Limbs>(
     */
     let mut m_b_diff_m_square_a = b_diff_m_a.clone();
     UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut m_b_diff_m_square_a))
-      .unbounded_shl_assign(m);
+      .unbounded_shl_assign(log_2_m);
     // This subtraction is well-defined as `c >= m_b_diff_m_square_a` when `b_gt_a = true`
     let mut borrow = Limb::ZERO;
     for l in 0 .. <_ as AsRef<[Limb]>>::as_ref(c).len() {
