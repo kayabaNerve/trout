@@ -1,16 +1,10 @@
-use crypto_bigint::{ConstZero, CheckedDiv, Concat, SplitEven, Limb, Uint};
+use crypto_bigint::{ConstZero, Concat, SplitEven, Uint};
 
-use super::Limbs;
-
-impl<const LIMBS: usize, const WIDE_LIMBS: usize> Limbs for Uint<LIMBS>
+impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::Limbs for Uint<LIMBS>
 where
   Self: Concat<LIMBS, Output = Uint<WIDE_LIMBS>>,
-  Uint<WIDE_LIMBS>: CheckedDiv<Self> + SplitEven<Output = Self>,
+  Uint<WIDE_LIMBS>: SplitEven<Output = Self>,
 {
-  #[inline(always)]
-  fn carrying_add(&self, b: &Self, carry: Limb) -> (Self, Limb) {
-    self.carrying_add(b, carry)
-  }
   #[inline(always)]
   fn widening_square(&self) -> (Self, Self) {
     Uint::<LIMBS>::widening_square(self)

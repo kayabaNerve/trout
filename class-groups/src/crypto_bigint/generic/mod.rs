@@ -1,4 +1,4 @@
-use crypto_bigint::{Choice, CtEq, CtLt, Zero, BitOr, BitOps, ShrVartime, Limb, UintRef};
+use crypto_bigint::{Choice, CtEq, CtLt, Zero, BitOps, ShrVartime, Limb, UintRef};
 
 mod uint;
 mod boxed_uint;
@@ -23,22 +23,17 @@ pub(crate) use reduction::{partial_reduce, reduce};
 /// input which the caller MAY pass.
 //
 // TODO: Replace with `UintRef`.
-trait Limbs:
-  Sized
-  + Clone
-  + AsRef<[Limb]>
-  + AsMut<[Limb]>
-  + From<u8>
-  + CtEq
-  + Zero
-  + BitOr<Output = Self>
-  + BitOps
-  + ShrVartime
-{
+trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOps + ShrVartime {
   /// Perform an addition, with carry.
   ///
+  /// Callers MUST ensure the two values have an equivalent amount of limbs.
+  ///
   /// Returns the sum value and the updated carry value.
-  fn carrying_add(&self, b: &Self, carry: Limb) -> (Self, Limb);
+  fn carrying_add(&self, b: &Self, carry: Limb) -> (Self, Limb) {
+    let mut result = self.clone();
+    let carry = UintRef::new_mut(result.as_mut()).carrying_add_assign_slice(b.as_ref(), carry);
+    (result, carry)
+  }
 
   /// Square the value, returning the `(lo, hi)` terms.
   ///

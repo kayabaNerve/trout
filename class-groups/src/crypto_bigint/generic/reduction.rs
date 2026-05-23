@@ -10,11 +10,8 @@
 //! operated over also reduce. This requires extensively arguing the bounds for inputs and the
 //! outputs of each function. This is done via brief proofs written in comments within each
 //! function.
-//!
-//! Currently, no bounds on the value of `c` is established. This is a potential spot for
-//! optimization.
 
-use crypto_bigint::{Choice, CtEq, CtSelect, CtAssign, Zero, Limb, UintRef};
+use crypto_bigint::{Choice, CtEq, CtSelect, Zero, Limb, UintRef};
 
 use super::Limbs;
 
@@ -46,7 +43,8 @@ fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
 /// - `a <= c` (such as forms output of `a_lte_c`)
-/// - `ceil(log_2(|b|)) <= (limbs * Limb::BITS)` when `b_lte_a == false`
+/// - `ceil(1 + log_2(|b|)) <= (limbs * Limb::BITS)` when `b_lte_a == false`
+/// - `|b| < 2^b_bits_bound`
 ///
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `a' = a`
@@ -144,29 +142,10 @@ fn reduce_to_next_bit<L: Limbs>(
 
   // Step 6
 
-  // When `b_gt_a = true`, `((1 << m) * a) < b`, so this will fit in `limbs` limbs
+  // When `b_gt_a = true`, `((1 << log_2_m) * a) < b`, so this will fit in `limbs` limbs
   let mut m_a = a.clone();
   let m_a = UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut m_a)[.. limbs]);
   m_a.shl_assign(log_2_m);
-
-  // epsilon b == |b| since epsilon = sgn(b)
-  /*
-    Instead of calculating `- epsilon m b + m m a`, we calculate `m (-|b| + m a)` to reduce the
-    bit-length of the addition within the parentheses. As `m a < b` when `a < b`, the evaluation of
-    the parentheses is negative and has an absolute value `< |b|` (which fits in `limbs` limbs).
-  */
-  let b_diff_m_a = {
-    // This is a container of size `c` as we later operate on it with the bound the derivative is
-    // `<= c`, which means this has to be large enough to contain a number `<= c`
-    let mut b_diff_m_a = <L as Zero>::zero_like(&*c);
-    {
-      let b_diff_m_a =
-        UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b_diff_m_a)[.. limbs]);
-      b_diff_m_a.copy_from_slice(b.1.as_limbs());
-      b_diff_m_a.borrowing_sub_assign(m_a, Limb::ZERO);
-    }
-    b_diff_m_a
-  };
 
   /*
     The following does _not_ swap `c, a`, as we always perform any necessary swap during the next
@@ -178,60 +157,92 @@ fn reduce_to_next_bit<L: Limbs>(
     missing a negation on the output of its form, and once that's considered, this is equivalent.
   */
 
+  // $\epsilon b == |b|$ since $\epsilon = \mathsf{sgn}(b)$
   /*
-    We need to prove that `c >= (m b - m^2 a)`. We do so with the claim the output `c'` will be a
-    positive integer, and therefore `c` MUST be greater than or equal to `m b - m^2 a` (when
-    `b_gt_a = true`), as else `c'` would be negative.
+    Instead of calculating `- epsilon m b + m m a`, we calculate `m (-|b| + m a)` to reduce the
+    bit-length of the addition within the parentheses. As `m a < b` when `a < b`, the evaluation
+    of the parentheses is negative and has an absolute value `< |b|` (which fits in `limbs`
+    limbs) whenever `b_gt_a == true`.
 
-    We know each intermediate form is equivalent to the input form, and therefore as for input
-    `(a, b, c)` satisfying `b^2 - (4 a c) = delta`, we have `b'^2 - (4 a' c') = delta`. As
-    `delta < 0`, and `b^2 >= 0`, `4 a' c'` MUST be a positive number. As our algorithm sets
-    `a' = a` where `a` is positive, `c'` must be positive as well.
+    When `b_gt_a = false`, `b_diff_m_a` is set to `0` so we may unconditionally calculate the new
+    `c` coefficient as `c - m b_diff_m_a`.
+
+    We simultaneously calculate $|b| - m a$ and $b - \epsilon 2 m a$ as we can merge their loops.
   */
+  let mut b_diff_two_m_a_borrow = Limb::ZERO;
+  let b_diff_m_a = {
+    // This is a container of size `c` as we later operate on it with the bound the derivative is
+    // `<= c`, which means this has to be large enough to contain a number `<= c`
+    let mut b_diff_m_a = <L as Zero>::zero_like(&*c);
+    {
+      let b_diff_m_a =
+        UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b_diff_m_a)[.. limbs]);
+
+      let mut b_diff_m_a_borrow = Limb::ZERO;
+      let mut two_m_a_carry = Limb::ZERO;
+      for ((b_limb, m_a_limb), b_diff_m_a_limb) in
+        b.1.iter_mut().zip(m_a.iter()).zip(b_diff_m_a.iter_mut())
+      {
+        let new_b_diff_m_a_limb;
+        (new_b_diff_m_a_limb, b_diff_m_a_borrow) =
+          b_limb.borrowing_sub(*m_a_limb, b_diff_m_a_borrow);
+        *b_diff_m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, b_gt_a);
+
+        let two_m_a_limb = (m_a_limb << 1) | two_m_a_carry;
+        two_m_a_carry = m_a_limb >> const { Limb::BITS - 1 };
+
+        /*
+          `m a < |b| <= 2 m a`, so `||b| - 2 m a| < m a < |b|`, and `||b| - 2 m a|` will fit in any
+          container `|b|` does.
+        */
+        let new_b_limb;
+        (new_b_limb, b_diff_two_m_a_borrow) = b_limb.borrowing_sub(
+          Limb::ct_select(&Limb::ZERO, &two_m_a_limb, b_gt_a),
+          b_diff_two_m_a_borrow,
+        );
+        *b_limb = new_b_limb;
+      }
+    }
+    b_diff_m_a
+  };
+
+  // Calculate the new `c` coefficient
   {
     /*
-      Because `c` is greater than or equal to this value, this will fit within a container which
+      We need to prove that `c >= (m b - m^2 a)`. We do so with the claim the output `c'` will be a
+      positive integer, and therefore `c` MUST be greater than or equal to `m b - m^2 a` (when
+      `b_gt_a = true`), as else `c'` would be negative.
+
+      We know each intermediate form is equivalent to the input form, and therefore as for input
+      `(a, b, c)` satisfying `b^2 - (4 a c) = delta`, we have `b'^2 - (4 a' c') = delta`. As
+      `delta < 0`, and `b^2 >= 0`, `4 a' c'` MUST be a positive number. As our algorithm sets
+      `a' = a` where `a` is positive, `c'` must be positive as well.
+
+      Because `c` is greater than or equal to `m b - m^2 a`, it will fit within a container which
       fits `c`, where `b_diff_m_a` is a container of size equal to `c`'s container (making this
       `shl` call well-defined).
     */
-    let mut m_b_diff_m_square_a = b_diff_m_a.clone();
-    UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut m_b_diff_m_square_a))
-      .unbounded_shl_assign(log_2_m);
+    let mut m_b_diff_m_square_a = b_diff_m_a;
+    UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut m_b_diff_m_square_a)).shl_assign(log_2_m);
+    let m_b_diff_m_square_a = m_b_diff_m_square_a;
+
     // This subtraction is well-defined as `c >= m_b_diff_m_square_a` when `b_gt_a = true`
     let mut borrow = Limb::ZERO;
-    for l in 0 .. <_ as AsRef<[Limb]>>::as_ref(c).len() {
-      // When `b_gt_a = false`, we subtract `0`, effecting a NOP
-      let to_subtract = Limb::ct_select(
-        &Limb::ZERO,
-        &<_ as AsRef<[Limb]>>::as_ref(&m_b_diff_m_square_a)[l],
-        b_gt_a,
-      );
-
-      let limb = &mut <_ as AsMut<[Limb]>>::as_mut(c)[l];
+    for (c_limb, m_b_diff_m_square_a_limb) in <_ as AsMut<[Limb]>>::as_mut(c)
+      .iter_mut()
+      .zip(<_ as AsRef<[Limb]>>::as_ref(&m_b_diff_m_square_a))
+    {
+      // When `b_gt_a = false`, `m_b_diff_m_square_a_limb = 0`, effecting a NOP
       let new_limb;
-      (new_limb, borrow) = limb.borrowing_sub(to_subtract, borrow);
-      *limb = new_limb;
+      (new_limb, borrow) = c_limb.borrowing_sub(*m_b_diff_m_square_a_limb, borrow);
+      *c_limb = new_limb;
     }
   }
 
+  // Finish calculating the new `b` coefficient, handling if it underflowed
   {
-    let mut borrow = Limb::ZERO;
-    /*
-      `m a < |b| <= 2 m a`, so `||b| - 2 m a| < m a < |b|`, and `||b| - 2 m a|` will fit in any
-      container `|b|` does.
-    */
-    for l in 0 .. limbs {
-      let b_diff_2_m_a_limb;
-      (b_diff_2_m_a_limb, borrow) =
-        <_ as AsRef<[Limb]>>::as_ref(&b_diff_m_a)[l].borrowing_sub(m_a[l], borrow);
-      // This writes the difference directly to `b`, but only when `b_gt_a = true`
-      // (and we should iterate)
-      b.1[l].ct_assign(&b_diff_2_m_a_limb, b_gt_a);
-    }
-    // If `b_gt_a = false`, set `borrow = 0`, so the next operations are guaranteed to be a NOP
-    let borrow = Limb::ct_select(&Limb::ZERO, &borrow, b_gt_a);
-
-    // If this underflowed (`2 m a > |b|`) and `borrow = 1`, apply the logical NOT to take the
+    let borrow = b_diff_two_m_a_borrow;
+    // If this underflowed (`2 m a > |b|`) and `borrow != 0`, apply the logical NOT to take the
     // absolute value
     let mut overflow_carry = Limb::ONE & borrow;
     // If `2 m a > |b|`, flip the sign of the result
@@ -240,12 +251,11 @@ fn reduce_to_next_bit<L: Limbs>(
     {
       *b.0 ^= Choice::from(overflow_carry.0 as u8);
     }
-    for l in 0 .. limbs {
-      let limb = &mut b.1[l];
-      *limb ^= borrow;
+    for b_limb in b.1.iter_mut() {
+      *b_limb ^= borrow;
       let new_limb;
-      (new_limb, overflow_carry) = limb.carrying_add(Limb::ZERO, overflow_carry);
-      *limb = new_limb;
+      (new_limb, overflow_carry) = b_limb.carrying_add(Limb::ZERO, overflow_carry);
+      *b_limb = new_limb;
     }
   }
 }
@@ -282,7 +292,7 @@ fn normalize<L: Limbs>(mut a: L, mut b: (Choice, L), mut c: L) -> (L, (Choice, L
 /// - `ceil(log_2(a)) <= log_2_a_bound`
 /// - `|b| < 2 a`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
-/// - `(a - delta) < 2^(<L as AsRef::<[Limb]>>::as_ref(&b.1).len() * Limb::BITS)``
+/// - `(a - delta) < 2^(<L as AsRef::<[Limb]>>::as_ref(&b.1).len() * Limb::BITS)`
 ///
 /// `delta` is specified via its absolute value in `negative_discriminant_abs`.
 #[inline(always)]
@@ -328,6 +338,7 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `a' <= c'`
 /// - `b'^2 <= |delta|`
+/// - `(a', b', c')` is reduced or `b' > a'`
 ///
 /// As composition is presumably programmed to compose `b`-bit-length numbers, where composition
 /// outputs `2 * b`-bit-length numbers, this function intends to solely perform the necessary
@@ -335,6 +346,9 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
 /// again). While these forms are not reduced, they may still usable for composition _without_
 /// performing a full reduction (which would take roughly twice as long). This allows deferring a
 /// full reduction until one _needs_ a reduced form.
+///
+/// This third bound on the output, `(a', b', c')` is reduced or `b' > a'`, is critical as it
+/// enables the following corollary: `a'^2 < |delta|`.
 ///
 /// `b.0, b'.0` are `true` if the value is _positive_.
 ///
@@ -475,8 +489,17 @@ pub(crate) fn reduce<L: Limbs>(
 
       reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
 
-      if progress_in_limb == const { 1 + Limb::BITS } {
-        progress_in_limb = 1;
+      /*
+        `partial_reduce` is documented to need limbs corresponding to one extra bit, which is as
+        `ceil(log_2(b)) == ceil(log_2(a))` is a possible input and the function must then calculate
+        `2 m a`.
+
+        We provide one additional bit here as for a value `b <= a`, this will only be noticed on
+        the iteration _after_ the condition becomes true, so we need to defer when we move to the
+        smaller amount of limbs until after this later iteration.
+      */
+      if progress_in_limb == const { 2 + Limb::BITS } {
+        progress_in_limb = 2;
         limbs -= 1;
         b_value = b_value.leading_mut(limbs);
       }
