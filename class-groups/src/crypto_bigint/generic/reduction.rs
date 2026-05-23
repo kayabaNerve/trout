@@ -384,34 +384,68 @@ pub(crate) fn partial_reduce<L: Limbs>(
   /*
     Iterate from our bound on `b` to a `b'` which by bit-length, would satisfy `b'^2 < |delta|`.
     Each iteration will reduce the bit length of `b` by at least `1`, until `b <= a` and it is
-    reduced.
+    reduced (if given sufficient iterations to reach that point).
   */
   {
-    let mut limbs = original_limbs;
-    let mut progress_in_limb = Limb::BITS - (log_2_b_bound % Limb::BITS);
     let (b_sign, mut b_value) =
-      (&mut b.0, UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b.1)[.. limbs]));
+      (&mut b.0, UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b.1)[.. original_limbs]));
     let mut b_lte_a = Choice::FALSE;
-    for bits in ((discriminant_bits / 2) ..= log_2_b_bound).rev() {
-      a_lte_c(&mut a, b_sign, &mut c);
 
-      reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
+    let mut limbs = original_limbs;
+    /*
+      `reduce_to_next_bit` is documented to need limbs corresponding to one extra bit, which is
+      as `ceil(log_2(b)) == ceil(log_2(a))` is a possible input and the function must then
+      calculate `2 m a`.
 
-      /*
-        `reduce_to_next_bit` is documented to need limbs corresponding to one extra bit, which is
-        as `ceil(log_2(b)) == ceil(log_2(a))` is a possible input and the function must then
-        calculate `2 m a`.
+      We provide one additional bit here as for a value `b <= a`, this will only be noticed on
+      the iteration _after_ the condition becomes true, so we need to defer when we move to the
+      smaller amount of limbs until after this later iteration.
+    */
+    const DECREASE_LIMBS_AT: u32 = 2 + Limb::BITS;
 
-        We provide one additional bit here as for a value `b <= a`, this will only be noticed on
-        the iteration _after_ the condition becomes true, so we need to defer when we move to the
-        smaller amount of limbs until after this later iteration.
-      */
-      if progress_in_limb == const { 2 + Limb::BITS } {
-        progress_in_limb = 2;
-        limbs -= 1;
-        b_value = b_value.leading_mut(limbs);
+    // `RangeInclusive` doesn't implement `FixedSizeIterator`, so we use a `Range` instead
+    let mut bits = ((discriminant_bits / 2) .. (log_2_b_bound + 1)).rev();
+
+    // Handle the partial limb we inherently have by the bound not perfectly aligning to limbs
+    {
+      let progress_in_limb = Limb::BITS - (log_2_b_bound % Limb::BITS);
+      for bits in (&mut bits).take((DECREASE_LIMBS_AT - progress_in_limb) as usize) {
+        a_lte_c(&mut a, b_sign, &mut c);
+        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
       }
-      progress_in_limb += 1;
+      limbs -= 1;
+      b_value = b_value.leading_mut(limbs);
+    }
+
+    /*
+      Handle each remaining limb.
+
+      While we could use a single loop for both the partial limb and the full limbs, that would
+      have structure approximate to:
+
+      ```
+      for bit {
+        reduce_to_next_bit();
+        if limb {
+          limbs -= 1;
+        }
+      }
+      ```
+
+      and place a branch within every single loop body. This achieves a straight-line, other than
+      the loops' conditionals themselves (which the compiler appears to handle better, possibly as
+      we may use the constant `DECREASE_LIMBS_AT` for how many steps this inner loop takes).
+
+      `bits.len() != 0` is used as `bits.is_empty()` (`FixedSizeIterator::is_empty`) is
+      experimental.
+    */
+    while bits.len() != 0 {
+      for bits in (&mut bits).take(DECREASE_LIMBS_AT as usize) {
+        a_lte_c(&mut a, b_sign, &mut c);
+        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
+      }
+      limbs -= 1;
+      b_value = b_value.leading_mut(limbs);
     }
   }
 
@@ -479,22 +513,32 @@ pub(crate) fn reduce<L: Limbs>(
   let original_limbs = usize::try_from(log_2_b_bound.div_ceil(Limb::BITS)).unwrap();
 
   {
-    let mut limbs = original_limbs;
-    let mut progress_in_limb = Limb::BITS - (log_2_b_bound % Limb::BITS);
     let (b_sign, mut b_value) =
-      (&mut b.0, UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b.1)[.. limbs]));
+      (&mut b.0, UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b.1)[.. original_limbs]));
     let mut b_lte_a = Choice::FALSE;
-    for bits in (0 ..= log_2_b_bound).rev() {
-      a_lte_c(&mut a, b_sign, &mut c);
 
-      reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
+    let mut limbs = original_limbs;
+    const DECREASE_LIMBS_AT: u32 = 2 + Limb::BITS;
 
-      if progress_in_limb == const { 2 + Limb::BITS } {
-        progress_in_limb = 2;
-        limbs -= 1;
-        b_value = b_value.leading_mut(limbs);
+    let mut bits = (0 .. (log_2_b_bound + 1)).rev();
+
+    {
+      let progress_in_limb = Limb::BITS - (log_2_b_bound % Limb::BITS);
+      for bits in (&mut bits).take((DECREASE_LIMBS_AT - progress_in_limb) as usize) {
+        a_lte_c(&mut a, b_sign, &mut c);
+        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
       }
-      progress_in_limb += 1;
+      limbs -= 1;
+      b_value = b_value.leading_mut(limbs);
+    }
+
+    while bits.len() != 0 {
+      for bits in (&mut bits).take(DECREASE_LIMBS_AT as usize) {
+        a_lte_c(&mut a, b_sign, &mut c);
+        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
+      }
+      limbs -= 1;
+      b_value = b_value.leading_mut(limbs);
     }
   }
 
