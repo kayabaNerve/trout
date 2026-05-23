@@ -265,23 +265,19 @@ fn reduce_to_next_bit<L: Limbs>(
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
-/// - `|b| <= a`
-/// - `a, c < 2^(limbs * Limb::BITS)`
-/// - `limbs <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
-/// - `limbs <= <L as AsRef::<[Limb]>>::as_ref(&c).len())`
+/// - `|b| <= a <= c`
 ///
 /// Yield the reduced equivalent form `(a', b', c')` such that:
 /// - `|b'| <= a' <= c'`
-/// - `b' >= 0` if `(|b'| == a') || (|b'| == c')`
+/// - `b' >= 0` if `(|b'| == a') || (a' == c')`
 ///
 /// This is intended to correspond to steps 2 and 5 of Algorithm 1.
 #[inline(always)]
 fn normalize<L: Limbs>(mut a: L, mut b: (Choice, L), mut c: L) -> (L, (Choice, L), L) {
   a_lte_c(&mut a, &mut b.0, &mut c);
-  // Set `b` to be positive if `|b| == a'` (as `a' <= c`)
-  b.0 |= b.1.ct_eq(&a);
-  // Set `b` to be positive if `b == 0` (in order to not return -0)
-  b.0 |= b.1.is_zero();
+  // Set `b'` to be positive if `|b| == a` or `a == c`, or if `b == 0`
+  // (in order to not return `-0`)
+  b.0 |= b.1.ct_eq(&a) | a.ct_eq(&c) | b.1.is_zero();
   (a, b, c)
 }
 
@@ -323,7 +319,7 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
   L::wrapping_div(ac, a)
 }
 
-/// Partially reduce an element.
+/// Partially reduce a positive definite binary quadratic form.
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
@@ -440,7 +436,7 @@ pub(crate) fn partial_reduce<L: Limbs>(
 ///
 /// Yield the reduced equivalent form `(a', b', c')` such that:
 /// - `|b'| <= a' <= c'`
-/// - `b' >= 0` if `(|b'| == a') || (|b'| == c')`
+/// - `b' >= 0` if `(|b'| == a') || (a' == c')`
 ///
 /// `b.0, b'.0` are `true` if the value is _positive_.
 ///
