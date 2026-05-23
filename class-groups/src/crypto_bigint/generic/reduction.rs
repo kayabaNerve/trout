@@ -398,12 +398,16 @@ pub(crate) fn partial_reduce<L: Limbs>(
       reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
 
       /*
-        We set `b_lte_a` on the iteration _after_ the condition triggers, so we need to perform the
-        comparison using the _prior iteration's_ bounds. We do this by performing all iterations
-        with limbs for a single extra bit.
+        `reduce_to_next_bit` is documented to need limbs corresponding to one extra bit, which is
+        as `ceil(log_2(b)) == ceil(log_2(a))` is a possible input and the function must then
+        calculate `2 m a`.
+
+        We provide one additional bit here as for a value `b <= a`, this will only be noticed on
+        the iteration _after_ the condition becomes true, so we need to defer when we move to the
+        smaller amount of limbs until after this later iteration.
       */
-      if progress_in_limb == const { 1 + Limb::BITS } {
-        progress_in_limb = 1;
+      if progress_in_limb == const { 2 + Limb::BITS } {
+        progress_in_limb = 2;
         limbs -= 1;
         b_value = b_value.leading_mut(limbs);
       }
@@ -485,15 +489,6 @@ pub(crate) fn reduce<L: Limbs>(
 
       reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
 
-      /*
-        `partial_reduce` is documented to need limbs corresponding to one extra bit, which is as
-        `ceil(log_2(b)) == ceil(log_2(a))` is a possible input and the function must then calculate
-        `2 m a`.
-
-        We provide one additional bit here as for a value `b <= a`, this will only be noticed on
-        the iteration _after_ the condition becomes true, so we need to defer when we move to the
-        smaller amount of limbs until after this later iteration.
-      */
       if progress_in_limb == const { 2 + Limb::BITS } {
         progress_in_limb = 2;
         limbs -= 1;
