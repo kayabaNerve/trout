@@ -27,13 +27,6 @@ impl super::Limbs for BoxedUint {
     quotient.resize_unchecked(denom_bits)
   }
   #[inline(always)]
-  fn swap(&mut self, b: &mut Self, _limbs: usize, choice: Choice) {
-    let bits = self.bits_precision().max(b.bits_precision());
-    *self = self.clone().resize_unchecked(bits);
-    *b = b.clone().resize(bits);
-    <_ as crypto_bigint::CtSelect>::ct_swap(self, b, choice);
-  }
-  #[inline(always)]
   fn lt(&self, b: &Self, _limbs: usize) -> Choice {
     crypto_bigint::UintRef::new(self.as_ref()).ct_lt(crypto_bigint::UintRef::new(b.as_ref()))
   }

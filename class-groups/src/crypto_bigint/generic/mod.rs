@@ -52,10 +52,10 @@ trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOp
 
   /// Swap the values of `self` and `b` if `choice` is `true`.
   #[inline(always)]
-  fn swap(&mut self, b: &mut Self, limbs: usize, choice: Choice) {
+  fn swap(&mut self, b: &mut Self, choice: Choice) {
     let a = &mut <_ as AsMut<[Limb]>>::as_mut(self);
     let b = &mut <_ as AsMut<[Limb]>>::as_mut(b);
-    for (a, b) in a.iter_mut().zip(b.iter_mut()).take(limbs) {
+    for (a, b) in a.iter_mut().zip(b.iter_mut()) {
       <_>::ct_swap(a, b, choice);
     }
   }

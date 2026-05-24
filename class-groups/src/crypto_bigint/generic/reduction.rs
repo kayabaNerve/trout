@@ -11,9 +11,38 @@
 //! outputs of each function. This is done via brief proofs written in comments within each
 //! function.
 
-use crypto_bigint::{Choice, CtEq, CtGt, CtSelect, Zero, Limb, UintRef};
+use crypto_bigint::{Choice, CtEq, CtLt, CtGt, CtSelect, Zero, Limb, UintRef};
 
 use super::Limbs;
+
+/// Obtain the equivalent form `(a', b', c')` for which `floor(log_2(a')) <= floor(log_2(c'))`.
+///
+/// This assumes the values for `a` and `c` would each fit in each others' variables.
+///
+/// This corresponds to step 2 of Algorithm 1, albeit solely confirming the `floor(log_2(_))` is
+/// smaller, not the value itself. This is much cheaper to evaluate and `b'` is still able to
+/// reduce by at least one bit for as long it has a greater logarithm. If `b'` has an equal
+/// logarithm, then we are at the final iteration, for which `a_lte_c` MUST be used.
+#[inline(always)]
+fn approximate_a_lte_c<L: Limbs>(
+  a: (&mut u32, &mut L),
+  b_sign: &mut Choice,
+  c: (&mut u32, &mut L),
+) {
+  let c_lt_a = c.0.ct_lt(a.0);
+  c.0.ct_swap(a.0, c_lt_a);
+  L::swap(a.1, c.1, c_lt_a);
+
+  /*
+    This line differs from the paper, whose described algorithm has a some typos (as further
+    evidenced by the correctness proof transcribing line 6 as
+    "[C - epsilon m B + m^2 A]" as "[C, - epsilon m B + A^2]").
+
+    As this swaps `a, c`, and as it's known `(a, b, c) == (c, -b, a)`, we MUST negate `b` here
+    if we performed a swap.
+  */
+  *b_sign ^= c_lt_a;
+}
 
 /// Obtain the equivalent form `(a', b', c')` for which `a' <= c'`.
 ///
@@ -24,16 +53,7 @@ use super::Limbs;
 fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
   let limbs = <_ as AsRef<[Limb]>>::as_ref(c).len();
   let c_lt_a = c.lt(a, limbs);
-  L::swap(a, c, limbs, c_lt_a);
-
-  /*
-    This line differs from the paper, whose described algorithm has a some typos (as further
-    evidenced by the correctness proof transcribing line 6 as
-    "[C - epsilon m B + m^2 A]" as "[C, - epsilon m B + A^2]").
-
-    As this swaps `a, c`, and as it's known `(a, b, c) == (c, -b, a)`, we MUST negate `b` here
-    if we performed a swap.
-  */
+  L::swap(a, c, c_lt_a);
   *b_sign ^= c_lt_a;
 }
 
@@ -128,24 +148,12 @@ fn should_reduce_to_next_bit_final<L: Limbs>(
   !a_ref.borrowing_sub_assign(b.1, Limb::ZERO).is_zero()
 }
 
-fn negate_b(b: (&mut Choice, &mut UintRef), b_needs_negation: Choice) {
-  *b.0 ^= b_needs_negation;
-  // If this needs negation, apply the logical NOT and add `1` to take the absolute value
-  let mut overflow_carry = Limb::from(u8::from(b_needs_negation));
-  let mask = Limb::ZERO.wrapping_sub(overflow_carry);
-  for b_limb in b.1.iter_mut() {
-    let new_limb;
-    (new_limb, overflow_carry) = (*b_limb ^ mask).carrying_add(Limb::ZERO, overflow_carry);
-    *b_limb = new_limb;
-  }
-}
-
 /// Reduce the `b` coefficient by at least one bit or until reduced.
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
-/// - `a <= c` (such as forms output of `a_lte_c`)
+/// - `floor(log_2(a)) <= floor(log_2(c))` (such as forms output of `approximate_a_lte_c`)
 /// - `limbs <= <_ as AsRef<[Limb]>>(a).len()`
 /// - `limbs <= <_ as AsRef<[Limb]>>(b.1).len()`
 /// - The variable `c` does in fact contain the full representation of the `c` coefficient.
@@ -179,7 +187,7 @@ fn reduce_to_next_bit<L: Limbs>(
 ) {
   #[cfg(debug_assertions)]
   {
-    debug_assert!(bool::from(a.lt(c, <_ as AsRef<[Limb]>>::as_ref(c).len())));
+    debug_assert!(bool::from(a.bits().ct_lt(&c.bits()) | a.bits().ct_eq(&c.bits())));
     debug_assert!(limbs <= <_ as AsRef::<[Limb]>>::as_ref(a).len());
     debug_assert!(limbs <= <_ as AsRef::<[Limb]>>::as_ref(&b.1).len());
   }
@@ -335,6 +343,18 @@ fn reduce_to_next_bit<L: Limbs>(
   }
 }
 
+fn negate_b(b: (&mut Choice, &mut UintRef), b_needs_negation: Choice) {
+  *b.0 ^= b_needs_negation;
+  // If this needs negation, apply the logical NOT and add `1` to take the absolute value
+  let mut overflow_carry = Limb::from(u8::from(b_needs_negation));
+  let mask = Limb::ZERO.wrapping_sub(overflow_carry);
+  for b_limb in b.1.iter_mut() {
+    let new_limb;
+    (new_limb, overflow_carry) = (*b_limb ^ mask).carrying_add(Limb::ZERO, overflow_carry);
+    *b_limb = new_limb;
+  }
+}
+
 /// Normalize an almost-reduced element.
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
@@ -475,12 +495,14 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
     // `RangeInclusive` doesn't implement `FixedSizeIterator`, so we use a `Range` instead
     let mut bits = ((lower_bound + 1) .. (log_2_b_bound + 1)).rev();
 
+    let mut a_bits = a.bits();
+    let mut c_bits = c.bits();
+
     // Handle the partial limb we inherently have by the bound not perfectly aligning to limbs
     {
       let progress_in_limb = Limb::BITS - (log_2_b_bound % Limb::BITS);
       for bits in (&mut bits).take((DECREASE_LIMBS_AT - progress_in_limb) as usize) {
-        a_lte_c(&mut a, b_sign, &mut c);
-        let a_bits = a.bits();
+        approximate_a_lte_c((&mut a_bits, &mut a), b_sign, (&mut c_bits, &mut c));
         let should_reduce = should_reduce_to_next_bit_except_final(
           (b_sign, b_value),
           b_needs_negation,
@@ -498,6 +520,7 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
           a_bits,
           bits,
         );
+        c_bits = c.bits();
       }
 
       // Negate `b` if necessary, before crossing the limb boundary
@@ -532,8 +555,7 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
     */
     while bits.len() != 0 {
       for bits in (&mut bits).take(DECREASE_LIMBS_AT as usize) {
-        a_lte_c(&mut a, b_sign, &mut c);
-        let a_bits = a.bits();
+        approximate_a_lte_c((&mut a_bits, &mut a), b_sign, (&mut c_bits, &mut c));
         let should_reduce = should_reduce_to_next_bit_except_final(
           (b_sign, b_value),
           b_needs_negation,
@@ -551,6 +573,7 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
           a_bits,
           bits,
         );
+        c_bits = c.bits();
       }
 
       negate_b((b_sign, b_value), b_needs_negation);
