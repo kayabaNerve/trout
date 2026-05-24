@@ -193,10 +193,17 @@ fn reduce_to_next_bit<L: Limbs>(
 
   // Step 6
 
+
+  // This is a container of size `c` as we later operate on it with the bound the derivative is
+  // `<= c`, which means this has to be large enough to contain a number `<= c`
+  let mut m_a = <L as Zero>::zero_like(&*c);
   // When `should_reduce = true`, `((1 << log_2_m) * a) < b`, so this will fit in `limbs` limbs
-  let mut m_a = a.clone();
-  let m_a = UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut m_a)[.. limbs]);
-  m_a.shl_assign(log_2_m);
+  {
+    let m_a = UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut m_a)[.. limbs]);
+    m_a.copy_from_slice(&a.as_ref()[.. limbs]);
+    m_a.shl_assign(log_2_m);
+  }
+  let m_a = UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut m_a));
 
   /*
     The following does _not_ swap `c, a`, as we always perform any necessary swap during the next
@@ -230,14 +237,8 @@ fn reduce_to_next_bit<L: Limbs>(
     the `b_needs_negation` variable. Note the caller must handle `b_needs_negation` when shifting
     `b`'s limb boundaries.
   */
-  let b_diff_m_a = {
-    // This is a container of size `c` as we later operate on it with the bound the derivative is
-    // `<= c`, which means this has to be large enough to contain a number `<= c`
-    let mut b_diff_m_a = <L as Zero>::zero_like(&*c);
+  {
     {
-      let b_diff_m_a =
-        UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b_diff_m_a)[.. limbs]);
-
       *b.0 ^= *b_needs_negation;
       let b_negation_carry = Limb::from(u8::from(*b_needs_negation));
       let b_negation_mask = Limb::ZERO.wrapping_sub(b_negation_carry);
@@ -252,9 +253,7 @@ fn reduce_to_next_bit<L: Limbs>(
       */
       let mut b_diff_two_m_a_carry = Limb::from(u8::from(should_reduce)).wrapping_add(b_negation_carry);
 
-      for ((b_limb, m_a_limb), b_diff_m_a_limb) in
-        b.1.iter_mut().zip(m_a.iter()).zip(b_diff_m_a.iter_mut())
-      {
+      for (b_limb, m_a_limb) in b.1.iter_mut().zip(m_a.iter_mut()) {
         /*
           Set `b' = b - 2 m a`, while simultaneously negating `b_limb` (if necessary).
 
@@ -265,8 +264,8 @@ fn reduce_to_next_bit<L: Limbs>(
           `2 m a`, and summing `b, 2 m a`) can be so expressed and done simultaneously.
         */
         {
-          let two_m_a_limb = (m_a_limb << 1) | two_m_a_carry;
-          two_m_a_carry = m_a_limb >> const { Limb::BITS - 1 };
+          let two_m_a_limb = ((*m_a_limb) << 1) | two_m_a_carry;
+          two_m_a_carry = (*m_a_limb) >> const { Limb::BITS - 1 };
 
           /*
             `floor(log_2(|b|)) = floor(log_2(2 m a))`, so their difference `|b'|` has the property
@@ -281,12 +280,16 @@ fn reduce_to_next_bit<L: Limbs>(
           *b_limb = new_b_limb;
         }
 
-        // Calculate `b_diff_m_a` as `b' + m a` (where `b' = b - 2 m a`)
+        /*
+          Calculate `b_diff_m_a` as `b' + m a` (where `b' = b - 2 m a`).
+
+          This writes `b_diff_m_a` directly into `m_a`, as we have no further use for `m_a`.
+        */
         {
           let new_b_diff_m_a_limb;
           (new_b_diff_m_a_limb, b_diff_m_a_carry) =
             (*b_limb).carrying_add(*m_a_limb, b_diff_m_a_carry);
-          *b_diff_m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, should_reduce);
+          *m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, should_reduce);
         }
       }
 
@@ -298,8 +301,8 @@ fn reduce_to_next_bit<L: Limbs>(
       */
       *b_needs_negation = should_reduce & b_diff_two_m_a_carry.ct_eq(&Limb::ZERO);
     }
-    b_diff_m_a
-  };
+  }
+  let b_diff_m_a = m_a;
 
   // Calculate the new `c` coefficient
   {
