@@ -541,7 +541,6 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
 /// - `(a - delta) < 2^(<L as AsRef::<[Limb]>>::as_ref(&b.1).len() * Limb::BITS)`
 ///
 /// Yield an equivalent form `(a', b', c')` such that:
-/// - `a' <= c'`
 /// - `b'^2 <= |delta|`
 /// - `(a', b', c')` is reduced or `b' > a'`
 ///
@@ -552,7 +551,7 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
 /// performing a full reduction (which would take roughly twice as long). This allows deferring a
 /// full reduction until one _needs_ a reduced form.
 ///
-/// This third bound on the output, `(a', b', c')` is reduced or `b' > a'`, is critical as it
+/// This second bound on the output, `(a', b', c')` is reduced or `b' > a'`, is critical as it
 /// enables the following corollary: `a'^2 < |delta|`.
 ///
 /// `b.0, b'.0` are `true` if the value is _positive_.
@@ -577,7 +576,7 @@ pub(crate) fn partial_reduce<L: Limbs>(
     sqrt_discriminant_bits - 1,
   );
 
-  // Ensure `a' <= c'`, as we bound our output
+  // This is needed to ensure our second bound, "`(a', b', c')` is reduced or `b' > a'`"
   a_lte_c(&mut a, &mut b.0, &mut c);
 
   #[cfg(debug_assertions)]
