@@ -1,4 +1,4 @@
-use crypto_bigint::{Choice, CtEq, CtLt, Zero, BitOps, ShrVartime, Limb, UintRef};
+use crypto_bigint::{Choice, CtEq, CtLt, CtSelect, Zero, BitOps, ShrVartime, Limb, UintRef};
 
 mod uint;
 mod boxed_uint;
@@ -24,17 +24,6 @@ pub(crate) use reduction::{partial_reduce, reduce};
 //
 // TODO: Replace with `UintRef`.
 trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOps + ShrVartime {
-  /// Perform an addition, with carry.
-  ///
-  /// Callers MUST ensure the two values have an equivalent amount of limbs.
-  ///
-  /// Returns the sum value and the updated carry value.
-  fn carrying_add(&self, b: &Self, carry: Limb) -> (Self, Limb) {
-    let mut result = self.clone();
-    let carry = UintRef::new_mut(result.as_mut()).carrying_add_assign_slice(b.as_ref(), carry);
-    (result, carry)
-  }
-
   /// Square the value, returning the `(lo, hi)` terms.
   ///
   /// Implementations MUST ensure each part of the result has an amount of limbs equal to how many
@@ -67,22 +56,20 @@ trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOp
     let a = &mut <_ as AsMut<[Limb]>>::as_mut(self);
     let b = &mut <_ as AsMut<[Limb]>>::as_mut(b);
     for (a, b) in a.iter_mut().zip(b.iter_mut()).take(limbs) {
-      <_ as crypto_bigint::CtSelect>::ct_swap(a, b, choice);
+      <_>::ct_swap(a, b, choice);
     }
   }
 
   /// `true` if `self < b` and `false` otherwise.
   #[inline(always)]
   fn lt(&self, b: &Self, limbs: usize) -> Choice {
-    crypto_bigint::UintRef::new(&self.as_ref()[.. limbs])
-      .ct_lt(crypto_bigint::UintRef::new(&b.as_ref()[.. limbs]))
+    UintRef::new(&self.as_ref()[.. limbs]).ct_lt(UintRef::new(&b.as_ref()[.. limbs]))
   }
 
   /// `true` if `self == b` and `false` otherwise.
   #[cfg(debug_assertions)]
   #[inline(always)]
   fn eq(&self, b: &Self, limbs: usize) -> Choice {
-    crypto_bigint::UintRef::new(&self.as_ref()[.. limbs])
-      .ct_eq(crypto_bigint::UintRef::new(&b.as_ref()[.. limbs]))
+    UintRef::new(&self.as_ref()[.. limbs]).ct_eq(UintRef::new(&b.as_ref()[.. limbs]))
   }
 }

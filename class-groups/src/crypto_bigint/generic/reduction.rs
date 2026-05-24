@@ -316,13 +316,19 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
 
     This ensures we can calculate `c` in any container able to fit `a - delta`, where the
     container of `b` is so bounded.
+
+    TODO: The size of this is weird. It's... `4 + log_2(|delta|) + 1`?
   */
 
   let (b_lo, b_hi) = b.1.widening_square();
 
   // Subtracting the negative discriminant is equivalent to adding its absolute value
-  let (four_ac_lo, carry) = b_lo.carrying_add(negative_discriminant_abs, Limb::ZERO);
-  let (four_ac_hi, carry) = b_hi.carrying_add(&<L as Zero>::zero_like(a), carry);
+  let mut four_ac_lo = b_lo;
+  let carry = UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut four_ac_lo))
+    .carrying_add_assign_slice(negative_discriminant_abs.as_ref(), Limb::ZERO);
+  let mut four_ac_hi = b_hi;
+  let carry =
+    UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut four_ac_hi)).add_assign_limb(carry);
   debug_assert_eq!(carry, Limb::ZERO);
 
   let mut ac_lo = four_ac_lo.unbounded_shr_vartime(2);
