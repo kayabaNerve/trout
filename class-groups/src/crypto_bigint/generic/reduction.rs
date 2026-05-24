@@ -11,7 +11,7 @@
 //! outputs of each function. This is done via brief proofs written in comments within each
 //! function.
 
-use crypto_bigint::{Choice, CtEq, CtSelect, Zero, Limb, UintRef};
+use crypto_bigint::{Choice, CtEq, CtGt, CtSelect, Zero, Limb, UintRef};
 
 use super::Limbs;
 
@@ -37,36 +37,25 @@ fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
   *b_sign ^= c_lt_a;
 }
 
-/// Reduce the `b` coefficient by at least one bit or until reduced.
+/// If `reduce_to_next_bit` should actually apply, except possibly incorrect.
 ///
-/// For a positive definite binary quadratic form `(a, b, c)` such that:
-/// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
-/// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
-/// - `a <= c` (such as forms output of `a_lte_c`)
-/// - `ceil(1 + log_2(|b|)) <= (limbs * Limb::BITS)` when `b_lte_a == false`
-/// - `|b| < 2^b_bits_bound`
+/// This MAY yield `false` even when one final iteration should be ran, hence `except_final`. It is
+/// correct for all but the final iteration.
 ///
-/// Yield an equivalent form `(a', b', c')` such that:
-/// - `a' = a`
-/// - `floor(log_2(|b'|)) <= floor(log_2(|b|)) - 1` if `|b| > 2 a` and
-///   `(floor(log_2(|b|)) + 1) == b_bits_bound`, else `(a', b', c') = (a, b, c)`
-/// - `|b'| <= a'` if `a < |b| <= 2 a`.
+/// This simplifies `|b| > a` to `floor(log_2(|b|)) > floor(log_2(a))`, which is true whenever
+/// `|b| >= 2a`. See `should_reduce_to_next_bit_final` for why this is sufficient for all but the
+/// last iteration.
 ///
-/// This corresponds to steps 3, 4, and 6 of Algorithm 1, except as a NOP if `b <= a` (in which
-/// case the form is reduced, or reduced after normalizing the sign of `b`).
+/// This is optimized by only indicating the reduction algorithm should be run when
+/// `(floor(log_2(|b|)) + 1) == b_bits_bound` _not_ always if `|b| >= 2a`. This is done as:
 ///
-/// The steps of the reduction algorithm must run for however many iterations. As written, the
-/// iterations will always occur until they don't occur. This is distinct in that this function
-/// (representing a single iteration) only performs an operation _not_ if further iterations are
-/// necessary, but if `(floor(log_2(|b|)) + 1) == b_bits_bound`. This is done as:
-///
-/// 1) It is still correct. This function, if called correctly, must be called from the current
-///    bound to the minimal bound, the current bound decrementing by one bit with each call, as
-///    this function is only guaranteed to reduce `|b|` by a single bit (if it's reduced at all).
-///    Assuming the bound is properly decremented with each call, then we know `|b|` is within the
-///    bound with each call, as the iteration is either unnecessary (the current bound exceeding
-///    the actual `floor(log_2(|b|)) + 1`) or will be reduced by at least one (and therefore within
-///    the next iteration's bound).
+/// 1) It is still correct. `reduce_to_next_bit`, if called correctly, must be called from the
+///    current bound to the minimal bound, the current bound decrementing by one bit with each call,
+///    as `reduce_to_next_bit is only guaranteed to reduce `|b|` by a single bit (until `b` is
+///    reduced). Assuming the bound is properly decremented with each call, then we know `|b|` is
+///    within the bound for each call, as the iteration is either unnecessary (the current bound
+///    exceeding the actual `floor(log_2(|b|)) + 1`) or will be reduced by at least one bit (and
+///    therefore within the next iteration's bound) if not already reduced.
 ///
 /// 2) It is faster to check if `(floor(log_2(|b|)) + 1) == b_bits_bound` than to calculate
 ///    `floor(log_2(|b|))`, even with how cheap that operation is. Finding the leading bit is an
@@ -82,14 +71,95 @@ fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
 ///    iterations with the unnecessary, `|b|` is worked with at the bound itself, which more
 ///    aggressively requires the accuracy of the bounds. This itself helps to ensure the bounds are
 ///    accurate.
+///
+/// This function assumes `a_bits = floor(log_2(a)) + 1` and
+/// `b_bits_bound >= floor(log_2(|b|)) + 1` when `b_lte_a == false`. This function will update
+/// `b_lte_a`, but may be inaccurately set upon reaching the final necessary iteration.
+#[inline(always)]
+fn should_reduce_to_next_bit_except_final(
+  b: (&mut Choice, &mut UintRef),
+  b_lte_a: &mut Choice,
+  a_bits: u32,
+  b_bits_bound: u32,
+) -> Choice {
+  // Because this check is only valid `b_lte_a == false`, short-circuit if `b_lte_a == false`
+  let b_gt_a = (!*b_lte_a) & b_bits_bound.ct_gt(&a_bits);
+
+  /*
+    Update `b_lte_a`.
+
+    If `b_lte_a` is set, this will never unset it, as `b_gt_a` won't be set if `b_lte_a` was.
+  */
+  *b_lte_a = !b_gt_a;
+
+  // Only run this iteration if this specific bit of `b` is in fact set
+  b_gt_a & Choice::from(b.1.bit_vartime(b_bits_bound.saturating_sub(1)) as u8)
+}
+
+/// If `reduce_to_next_bit` should actually apply.
+///
+/// This uses an exact determination for if the function should apply, which is only necessary when
+/// `floor(log_2(|b|)) == floor(log_2(a))`. However, in this case, `b <= 2 a`. The paper itself
+/// establishes the bound the algorithm will run for at most two more iterations in this case, yet
+/// a tighter bound of just one more iteration is possible. This is as the `b == 2a` case will
+/// resolved with `b' = 0`, while the case `a < b < 2a` will result in `b' < a`.
+///
+/// That's why this is 'final', as while it works all of the time, it should only be used for one
+/// final iteration.
+///
+/// This function assumes:
+/// - `limbs == <_ as AsRef<[Limb]>>(b.1).len()`
+/// - `limbs <= <_ as AsRef<[Limb]>>(a).len()`
+/// - $a, b <= 2^{limbs * Limb::BITS}$
+///
+/// Comments within this function which would be duplicated with
+/// `should_reduce_to_next_bit_except_final` are omitted.
+#[inline(always)]
+fn should_reduce_to_next_bit_final<L: Limbs>(
+  a: &L,
+  b: (&mut Choice, &mut UintRef),
+  limbs: usize,
+) -> Choice {
+  // If `a - b.1` has a borrow afterwards, then `b.1 > a`
+  let mut a = a.clone();
+  let a_ref = UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut a)[.. limbs]);
+  !a_ref.borrowing_sub_assign(b.1, Limb::ZERO).is_zero()
+}
+
+/// Reduce the `b` coefficient by at least one bit or until reduced.
+///
+/// For a positive definite binary quadratic form `(a, b, c)` such that:
+/// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
+/// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
+/// - `a <= c` (such as forms output of `a_lte_c`)
+/// - `limbs <= <_ as AsRef<[Limb]>>(a).len()`
+/// - `limbs <= <_ as AsRef<[Limb]>>(b.1).len()`
+/// - The variable `c` does in fact contain the full representation of the `c` coefficient.
+///
+/// We require the following bounds when `should_reduce == true`:
+/// - `a < b`
+/// - `a_bits = floor(log_2(a)) + 1`
+/// - `b_bits = floor(log_2(|b|)) + 1`
+/// - `1 + b_bits <= (limbs * Limb::BITS)`
+///
+/// Yield an equivalent form `(a', b', c')` such that:
+/// - `a' = a`
+/// - `floor(log_2(|b'|)) <= floor(log_2(|b|)) - 1` if `|b| > 2 a` and `should_reduce == true`,
+///   else `(a', b', c') = (a, b, c)`
+/// - `|b'| <= a'` if `a < |b| <= 2 a` and `should_reduce == true`.
+///
+/// This corresponds to steps 3, 4, and 6 of Algorithm 1, except as a NOP if
+/// `should_reduce == false` (`b <= a`) (in which case the form is reduced, or reduced after
+/// normalizing the sign of `b`).
 #[inline(always)]
 fn reduce_to_next_bit<L: Limbs>(
   a: &L,
   b: (&mut Choice, &mut UintRef),
   c: &mut L,
-  b_lte_a: &mut Choice,
+  should_reduce: Choice,
   limbs: usize,
-  b_bits_bound: u32,
+  a_bits: u32,
+  b_bits: u32,
 ) {
   #[cfg(debug_assertions)]
   {
@@ -98,51 +168,17 @@ fn reduce_to_next_bit<L: Limbs>(
     debug_assert!(limbs <= <_ as AsRef::<[Limb]>>::as_ref(&b.1).len());
   }
 
-  // Step 3 conditional
-
-  /*
-    Because this check is only valid when `a, b` fit within `limbs` limbs, short-circuit if we know
-    know `b <= a`, in which case `limbs` may not be well-defined.
-  */
-  let b_gt_a = (!*b_lte_a) & {
-    // If `a - b.1` has a borrow afterwards, then `b.1 > a`
-    let mut a = a.clone();
-    let a_ref = UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut a)[.. limbs]);
-    !a_ref.borrowing_sub_assign(b.1, Limb::ZERO).is_zero()
-  };
-  /*
-    Update `b_lte_a`.
-
-    If `b_lte_a` is set, this will never unset it, as `b_gt_a` won't be set if `b_lte_a` was.
-  */
-  *b_lte_a = !b_gt_a;
-
-  /*
-    Only run this iteration if this specific bit of `b` is in fact set.
-
-    This is a correct optimization, as we run for all bits regardless. It also is an optimization
-    as it avoids having to determine the amount of bits in `b`, instead assuming it equal to the
-    bound (or performing a NOP).
-
-    This does slightly overload `b_gt_a` as a pseudo-`should_iterate`.
-  */
-  let b_gt_a = b_gt_a & Choice::from(b.1.bit_vartime(b_bits_bound.saturating_sub(1)) as u8);
-
-  // Step 3 body, Step 4
-
+  // Calculate `m` (the body of step 3's branch, step 4)
   let log_2_m = {
-    let a_bits = UintRef::new(&<_ as AsRef<[Limb]>>::as_ref(&a)[.. limbs]).bits();
-    // This is correct per the check this bit, the highest possible, was actually set
-    let b_bits = b_bits_bound;
     // This is only well-defined if `a_bits < b_bits`
     let log_2_m = b_bits.wrapping_sub(a_bits).wrapping_sub(1);
     // Set `m = 0` if `m` they have equal bit lengths or if `m` wouldn't be well-defined otherwise
-    <_ as CtSelect>::ct_select(&0, &log_2_m, (!a_bits.ct_eq(&b_bits)) & b_gt_a)
+    <_ as CtSelect>::ct_select(&0, &log_2_m, (!a_bits.ct_eq(&b_bits)) & should_reduce)
   };
 
   // Step 6
 
-  // When `b_gt_a = true`, `((1 << log_2_m) * a) < b`, so this will fit in `limbs` limbs
+  // When `should_reduce = true`, `((1 << log_2_m) * a) < b`, so this will fit in `limbs` limbs
   let mut m_a = a.clone();
   let m_a = UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut m_a)[.. limbs]);
   m_a.shl_assign(log_2_m);
@@ -161,11 +197,11 @@ fn reduce_to_next_bit<L: Limbs>(
   /*
     Instead of calculating `- epsilon m b + m m a`, we calculate `m (-|b| + m a)` to reduce the
     bit-length of the addition within the parentheses. As `m a < b` when `a < b`, the evaluation
-    of the parentheses is negative and has an absolute value `< |b|` (which fits in `limbs`
-    limbs) whenever `b_gt_a == true`.
+    of the parentheses is negative and has an absolute value `< |b|` (which fits in `limbs` limbs)
+    whenever `should_reduce == true`.
 
-    When `b_gt_a = false`, `b_diff_m_a` is set to `0` so we may unconditionally calculate the new
-    `c` coefficient as `c - m b_diff_m_a`.
+    When `should_reduce == false`, `b_diff_m_a` is set to `0` so we may unconditionally calculate
+    the new `c` coefficient as `c - m b_diff_m_a`.
 
     We simultaneously calculate $|b| - m a$ and $b - \epsilon 2 m a$ as we can merge their loops.
     While the resulting code is of non-trivially greater complexity, it saves ~8% of the time to
@@ -190,7 +226,7 @@ fn reduce_to_next_bit<L: Limbs>(
           let new_b_diff_m_a_limb;
           (new_b_diff_m_a_limb, b_diff_m_a_borrow) =
             b_limb.borrowing_sub(*m_a_limb, b_diff_m_a_borrow);
-          *b_diff_m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, b_gt_a);
+          *b_diff_m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, should_reduce);
         }
 
         /*
@@ -212,7 +248,7 @@ fn reduce_to_next_bit<L: Limbs>(
           */
           let new_b_limb;
           (new_b_limb, b_diff_two_m_a_borrow) = b_limb.borrowing_sub(
-            Limb::ct_select(&Limb::ZERO, &two_m_a_limb, b_gt_a),
+            Limb::ct_select(&Limb::ZERO, &two_m_a_limb, should_reduce),
             b_diff_two_m_a_borrow,
           );
           *b_limb = new_b_limb;
@@ -227,7 +263,7 @@ fn reduce_to_next_bit<L: Limbs>(
     /*
       We need to prove that `c >= (m b - m^2 a)`. We do so with the claim the output `c'` will be a
       positive integer, and therefore `c` MUST be greater than or equal to `m b - m^2 a` (when
-      `b_gt_a = true`), as else `c'` would be negative.
+      `should_reduce == true`), as else `c'` would be negative.
 
       We know each intermediate form is equivalent to the input form, and therefore as for input
       `(a, b, c)` satisfying `b^2 - (4 a c) = delta`, we have `b'^2 - (4 a' c') = delta`. As
@@ -242,13 +278,13 @@ fn reduce_to_next_bit<L: Limbs>(
     UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut m_b_diff_m_square_a)).shl_assign(log_2_m);
     let m_b_diff_m_square_a = m_b_diff_m_square_a;
 
-    // This subtraction is well-defined as `c >= m_b_diff_m_square_a` when `b_gt_a = true`
+    // This subtraction is well-defined as `c >= m_b_diff_m_square_a` when `should_reduce == true`
     let mut borrow = Limb::ZERO;
     for (c_limb, m_b_diff_m_square_a_limb) in <_ as AsMut<[Limb]>>::as_mut(c)
       .iter_mut()
       .zip(<_ as AsRef<[Limb]>>::as_ref(&m_b_diff_m_square_a))
     {
-      // When `b_gt_a = false`, `m_b_diff_m_square_a_limb = 0`, effecting a NOP
+      // When `should_reduce == false`, `m_b_diff_m_square_a_limb = 0`, effecting a NOP
       let new_limb;
       (new_limb, borrow) = c_limb.borrowing_sub(*m_b_diff_m_square_a_limb, borrow);
       *c_limb = new_limb;
@@ -340,6 +376,158 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
   L::wrapping_div(ac, a)
 }
 
+/// Reduce an element until either its reduced or $|b| < 2^{lower_bound}$.
+///
+/// For a positive definite binary quadratic form `(a, b, c)` such that:
+/// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
+/// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
+/// - `ceil(log_2(a)) <= log_2_a_bound`
+/// - `|b| < 2 a`
+/// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
+/// - `ceil(log_2_a_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
+/// - `(a - delta) < 2^(<L as AsRef::<[Limb]>>::as_ref(&b.1).len() * Limb::BITS)`
+///
+/// Yield an equivalent form `(a', b', c')` such that:
+/// - `(a', b', c')` is reduced or $|b| < 2^{lower_bound}$.
+/// - `(a', b', c')` is reduced or `b' > a'`
+///
+/// `b.0, b'.0` are `true` if the value is _positive_.
+///
+/// `delta` is bound to be negative and specified via its absolute value in
+/// `negative_discriminant_abs`.
+#[inline(always)]
+pub(crate) fn reduce_to_lower_bound<L: Limbs>(
+  log_2_a_bound: u32,
+  mut a: L,
+  mut b: (Choice, L),
+  negative_discriminant_abs: &L,
+  lower_bound: u32,
+) -> (L, (Choice, L), L) {
+  #[cfg(debug_assertions)]
+  {
+    debug_assert!(a.bits() <= log_2_a_bound);
+    debug_assert!(
+      usize::try_from(log_2_a_bound.div_ceil(Limb::BITS)).unwrap() <=
+        <_ as AsRef::<[Limb]>>::as_ref(&a).len()
+    );
+    debug_assert_eq!(
+      <_ as AsRef::<[Limb]>>::as_ref(&a).len(),
+      <_ as AsRef::<[Limb]>>::as_ref(&b.1).len()
+    );
+
+    let limbs = <_ as AsRef<[Limb]>>::as_ref(&a).len();
+    debug_assert!(bool::from(b.1.lt(&a.clone().double(limbs), limbs)));
+  }
+
+  let mut c = c(&a, &b, negative_discriminant_abs);
+
+  // From the bound that `b < 2 a`
+  let log_2_b_bound = log_2_a_bound + 1;
+  let original_limbs = usize::try_from(log_2_b_bound.div_ceil(Limb::BITS)).unwrap();
+
+  /*
+    Iterate from our bound on `b` to a `b'` which by bit-length, would satisfy `b'^2 < |delta|`.
+    Each iteration will reduce the bit length of `b` by at least `1`, until `b <= a` and it is
+    reduced (if given sufficient iterations to reach that point).
+  */
+  {
+    let (b_sign, mut b_value) =
+      (&mut b.0, UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b.1)[.. original_limbs]));
+    let mut b_lte_a = Choice::FALSE;
+
+    let mut limbs = original_limbs;
+    /*
+      `reduce_to_next_bit` is documented to need limbs corresponding to one extra bit, which is
+      as `ceil(log_2(b)) == ceil(log_2(a))` is a possible input and the function must then
+      calculate `2 m a`.
+
+      We provide one additional bit here as for a value `b <= a`, this will only be noticed on
+      the iteration _after_ the condition becomes true, so we need to defer when we move to the
+      smaller amount of limbs until after this later iteration.
+    */
+    const DECREASE_LIMBS_AT: u32 = 2 + Limb::BITS;
+
+    // `RangeInclusive` doesn't implement `FixedSizeIterator`, so we use a `Range` instead
+    let mut bits = ((lower_bound + 1) .. (log_2_b_bound + 1)).rev();
+
+    // Handle the partial limb we inherently have by the bound not perfectly aligning to limbs
+    {
+      let progress_in_limb = Limb::BITS - (log_2_b_bound % Limb::BITS);
+      for bits in (&mut bits).take((DECREASE_LIMBS_AT - progress_in_limb) as usize) {
+        a_lte_c(&mut a, b_sign, &mut c);
+        let a_bits = a.bits();
+        let should_reduce =
+          should_reduce_to_next_bit_except_final((b_sign, b_value), &mut b_lte_a, a_bits, bits);
+        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, should_reduce, limbs, a_bits, bits);
+      }
+      limbs -= 1;
+      b_value = b_value.leading_mut(limbs);
+    }
+
+    /*
+      Handle each remaining limb.
+
+      While we could use a single loop for both the partial limb and the full limbs, that would
+      have structure approximate to:
+
+      ```
+      for bit {
+        reduce_to_next_bit();
+        if limb {
+          limbs -= 1;
+        }
+      }
+      ```
+
+      and place a branch within every single loop body. This achieves a straight-line, other than
+      the loops' conditionals themselves (which the compiler appears to handle better, possibly as
+      we may use the constant `DECREASE_LIMBS_AT` for how many steps this inner loop takes).
+
+      `bits.len() != 0` is used as `bits.is_empty()` (`FixedSizeIterator::is_empty`) is
+      experimental.
+    */
+    while bits.len() != 0 {
+      for bits in (&mut bits).take(DECREASE_LIMBS_AT as usize) {
+        a_lte_c(&mut a, b_sign, &mut c);
+        let a_bits = a.bits();
+        let should_reduce =
+          should_reduce_to_next_bit_except_final((b_sign, b_value), &mut b_lte_a, a_bits, bits);
+        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, should_reduce, limbs, a_bits, bits);
+      }
+      limbs -= 1;
+      b_value = b_value.leading_mut(limbs);
+    }
+
+    /*
+      We apply the final reduction with a full width as we don't know when the above iterations
+      stopped, nor how far the number has been truncated since.
+    */
+    {
+      let (b_sign, b_value) = (
+        &mut b.0,
+        UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b.1)[.. original_limbs]),
+      );
+
+      a_lte_c(&mut a, b_sign, &mut c);
+      let a_bits = a.bits();
+      let b_bits = b_value.bits();
+      let should_reduce = should_reduce_to_next_bit_final(&a, (b_sign, b_value), original_limbs);
+      reduce_to_next_bit(
+        &a,
+        (b_sign, b_value),
+        &mut c,
+        should_reduce,
+        original_limbs,
+        a_bits,
+        b_bits,
+      );
+    }
+  }
+
+  (a, b, c)
+}
+
 /// Partially reduce a positive definite binary quadratic form.
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
@@ -375,100 +563,19 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
 #[inline(always)]
 pub(crate) fn partial_reduce<L: Limbs>(
   log_2_a_bound: u32,
-  mut a: L,
-  mut b: (Choice, L),
+  a: L,
+  b: (Choice, L),
   negative_discriminant_abs: &L,
 ) -> (L, (Choice, L), L) {
-  #[cfg(debug_assertions)]
-  {
-    debug_assert!(a.bits() <= log_2_a_bound);
-    debug_assert!(
-      usize::try_from(log_2_a_bound.div_ceil(Limb::BITS)).unwrap() <=
-        <_ as AsRef::<[Limb]>>::as_ref(&a).len()
-    );
-    debug_assert_eq!(
-      <_ as AsRef::<[Limb]>>::as_ref(&a).len(),
-      <_ as AsRef::<[Limb]>>::as_ref(&b.1).len()
-    );
-
-    let limbs = <_ as AsRef<[Limb]>>::as_ref(&a).len();
-    debug_assert!(bool::from(b.1.lt(&a.clone().double(limbs), limbs)));
-  }
-
-  let mut c = c(&a, &b, negative_discriminant_abs);
-
-  // From the bound that `b < 2 a`
-  let log_2_b_bound = log_2_a_bound + 1;
   let discriminant_bits = negative_discriminant_abs.bits_vartime();
-  let original_limbs = usize::try_from(log_2_b_bound.div_ceil(Limb::BITS)).unwrap();
-
-  /*
-    Iterate from our bound on `b` to a `b'` which by bit-length, would satisfy `b'^2 < |delta|`.
-    Each iteration will reduce the bit length of `b` by at least `1`, until `b <= a` and it is
-    reduced (if given sufficient iterations to reach that point).
-  */
-  {
-    let (b_sign, mut b_value) =
-      (&mut b.0, UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b.1)[.. original_limbs]));
-    let mut b_lte_a = Choice::FALSE;
-
-    let mut limbs = original_limbs;
-    /*
-      `reduce_to_next_bit` is documented to need limbs corresponding to one extra bit, which is
-      as `ceil(log_2(b)) == ceil(log_2(a))` is a possible input and the function must then
-      calculate `2 m a`.
-
-      We provide one additional bit here as for a value `b <= a`, this will only be noticed on
-      the iteration _after_ the condition becomes true, so we need to defer when we move to the
-      smaller amount of limbs until after this later iteration.
-    */
-    const DECREASE_LIMBS_AT: u32 = 2 + Limb::BITS;
-
-    // `RangeInclusive` doesn't implement `FixedSizeIterator`, so we use a `Range` instead
-    let mut bits = ((discriminant_bits / 2) .. (log_2_b_bound + 1)).rev();
-
-    // Handle the partial limb we inherently have by the bound not perfectly aligning to limbs
-    {
-      let progress_in_limb = Limb::BITS - (log_2_b_bound % Limb::BITS);
-      for bits in (&mut bits).take((DECREASE_LIMBS_AT - progress_in_limb) as usize) {
-        a_lte_c(&mut a, b_sign, &mut c);
-        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
-      }
-      limbs -= 1;
-      b_value = b_value.leading_mut(limbs);
-    }
-
-    /*
-      Handle each remaining limb.
-
-      While we could use a single loop for both the partial limb and the full limbs, that would
-      have structure approximate to:
-
-      ```
-      for bit {
-        reduce_to_next_bit();
-        if limb {
-          limbs -= 1;
-        }
-      }
-      ```
-
-      and place a branch within every single loop body. This achieves a straight-line, other than
-      the loops' conditionals themselves (which the compiler appears to handle better, possibly as
-      we may use the constant `DECREASE_LIMBS_AT` for how many steps this inner loop takes).
-
-      `bits.len() != 0` is used as `bits.is_empty()` (`FixedSizeIterator::is_empty`) is
-      experimental.
-    */
-    while bits.len() != 0 {
-      for bits in (&mut bits).take(DECREASE_LIMBS_AT as usize) {
-        a_lte_c(&mut a, b_sign, &mut c);
-        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
-      }
-      limbs -= 1;
-      b_value = b_value.leading_mut(limbs);
-    }
-  }
+  let sqrt_discriminant_bits = discriminant_bits.div_ceil(2);
+  let (mut a, mut b, mut c) = reduce_to_lower_bound(
+    log_2_a_bound,
+    a,
+    b,
+    negative_discriminant_abs,
+    sqrt_discriminant_bits - 1,
+  );
 
   // Ensure `a' <= c'`, as we bound our output
   a_lte_c(&mut a, &mut b.0, &mut c);
@@ -501,67 +608,16 @@ pub(crate) fn partial_reduce<L: Limbs>(
 ///
 /// `delta` is bound to be negative and specified via its absolute value in
 /// `negative_discriminant_abs`.
-//
-// As this function is a derivative of `partial_reduce`, it lacks internal comments which would be
-// identical between the two.
 #[expect(private_bounds)]
 #[inline(always)]
 pub(crate) fn reduce<L: Limbs>(
   log_2_a_bound: u32,
-  mut a: L,
-  mut b: (Choice, L),
+  a: L,
+  b: (Choice, L),
   negative_discriminant_abs: &L,
 ) -> (L, (Choice, L), L) {
-  #[cfg(debug_assertions)]
-  {
-    debug_assert!(a.bits() <= log_2_a_bound);
-    debug_assert!(
-      usize::try_from(log_2_a_bound.div_ceil(Limb::BITS)).unwrap() <=
-        <_ as AsRef::<[Limb]>>::as_ref(&a).len()
-    );
-    debug_assert_eq!(
-      <_ as AsRef::<[Limb]>>::as_ref(&a).len(),
-      <_ as AsRef::<[Limb]>>::as_ref(&b.1).len()
-    );
-
-    let limbs = <_ as AsRef<[Limb]>>::as_ref(&a).len();
-    debug_assert!(bool::from(b.1.lt(&a.clone().double(limbs), limbs)));
-  }
-
-  let mut c = c(&a, &b, negative_discriminant_abs);
-
-  let log_2_b_bound = log_2_a_bound + 1;
-  let original_limbs = usize::try_from(log_2_b_bound.div_ceil(Limb::BITS)).unwrap();
-
-  {
-    let (b_sign, mut b_value) =
-      (&mut b.0, UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b.1)[.. original_limbs]));
-    let mut b_lte_a = Choice::FALSE;
-
-    let mut limbs = original_limbs;
-    const DECREASE_LIMBS_AT: u32 = 2 + Limb::BITS;
-
-    let mut bits = (0 .. (log_2_b_bound + 1)).rev();
-
-    {
-      let progress_in_limb = Limb::BITS - (log_2_b_bound % Limb::BITS);
-      for bits in (&mut bits).take((DECREASE_LIMBS_AT - progress_in_limb) as usize) {
-        a_lte_c(&mut a, b_sign, &mut c);
-        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
-      }
-      limbs -= 1;
-      b_value = b_value.leading_mut(limbs);
-    }
-
-    while bits.len() != 0 {
-      for bits in (&mut bits).take(DECREASE_LIMBS_AT as usize) {
-        a_lte_c(&mut a, b_sign, &mut c);
-        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, &mut b_lte_a, limbs, bits);
-      }
-      limbs -= 1;
-      b_value = b_value.leading_mut(limbs);
-    }
-  }
+  let (mut a, mut b, mut c) =
+    reduce_to_lower_bound(log_2_a_bound, a, b, negative_discriminant_abs, 0);
 
   a_lte_c(&mut a, &mut b.0, &mut c);
   let (a, b, c) = normalize(a, b, c);
