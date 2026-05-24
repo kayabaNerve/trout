@@ -58,16 +58,8 @@ impl crypto_bigint::CtSelect for CryptoBigintHeapElement {
 
 impl CryptoBigintHeapElement {
   fn max_bits_for_a(&self) -> u32 {
-    /*
-      Immediately prior to lemma 5.4.4 of A Course in Computational Algebraic Number Theory,
-      "Hence, after at most `ceil(log_2(a / sqrt(abs(D))))` steps, we obtain at the beginning of
-      step 3 a form with `a < sqrt(abs(D))`".
-
-      Lemma 5.4.4 proceeds to state this form is either reduced as `(a, b, c)`, `(a, -b, a)`, or
-      `(c, r, s)` where `c < a`. This means that the reduction algorithm always terminates with
-      the result's `a` being less than `sqrt(abs(D))`.
-    */
-    self.discriminant.abs().0.bits_vartime().div_ceil(2) + 1
+    // Lemma 5.3.4 of A Course in Computational Algebraic Number Theory
+    self.discriminant.abs().0.bits_vartime().div_ceil(2) - 1
   }
 
   fn max_bits_for_b(&self) -> u32 {
@@ -82,10 +74,10 @@ impl CryptoBigintHeapElement {
     discriminant: Arc<Integer>,
   ) -> Self {
     let mut b_decomposed = (b.positive(), b.into_abs().0);
-    // Resize `a` to the size of the discriminant, plus some spare bits
-    let a = a.0.resize(discriminant.abs().0.bits_vartime() + 8);
+    // Resize `a, b` to the size of the discriminant
+    let a = a.0.resize(discriminant.abs().0.bits_precision());
     // Resize `b` to be the size of `a`
-    b_decomposed.1 = b_decomposed.1.resize(discriminant.abs().0.bits_vartime() + 8);
+    b_decomposed.1 = b_decomposed.1.resize(discriminant.abs().0.bits_precision());
     let (a, mut b_decomposed, _c) =
       super::reduce(log_2_a_bound, a, b_decomposed, &discriminant.abs().0);
     // Resize `a` to equal length to the square root of the discriminant
