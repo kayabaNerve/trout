@@ -78,6 +78,7 @@ fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
 #[inline(always)]
 fn should_reduce_to_next_bit_except_final(
   b: (&mut Choice, &mut UintRef),
+  b_needs_negation: Choice,
   b_lte_a: &mut Choice,
   a_bits: u32,
   b_bits_bound: u32,
@@ -93,7 +94,8 @@ fn should_reduce_to_next_bit_except_final(
   *b_lte_a = !b_gt_a;
 
   // Only run this iteration if this specific bit of `b` is in fact set
-  b_gt_a & Choice::from(b.1.bit_vartime(b_bits_bound.saturating_sub(1)) as u8)
+  b_gt_a &
+    Choice::from(b.1.bit_vartime(b_bits_bound.saturating_sub(1)) as u8).ct_eq(&!b_needs_negation)
 }
 
 /// If `reduce_to_next_bit` should actually apply.
@@ -126,6 +128,18 @@ fn should_reduce_to_next_bit_final<L: Limbs>(
   !a_ref.borrowing_sub_assign(b.1, Limb::ZERO).is_zero()
 }
 
+fn negate_b(b: (&mut Choice, &mut UintRef), b_needs_negation: Choice) {
+  *b.0 ^= b_needs_negation;
+  // If this needs negation, apply the logical NOT and add `1` to take the absolute value
+  let mut overflow_carry = Limb::from(u8::from(b_needs_negation));
+  let mask = Limb::ZERO.wrapping_sub(overflow_carry);
+  for b_limb in b.1.iter_mut() {
+    let new_limb;
+    (new_limb, overflow_carry) = (*b_limb ^ mask).carrying_add(Limb::ZERO, overflow_carry);
+    *b_limb = new_limb;
+  }
+}
+
 /// Reduce the `b` coefficient by at least one bit or until reduced.
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
@@ -155,6 +169,7 @@ fn should_reduce_to_next_bit_final<L: Limbs>(
 fn reduce_to_next_bit<L: Limbs>(
   a: &L,
   b: (&mut Choice, &mut UintRef),
+  b_needs_negation: &mut Choice,
   c: &mut L,
   should_reduce: Choice,
   limbs: usize,
@@ -206,8 +221,15 @@ fn reduce_to_next_bit<L: Limbs>(
     We simultaneously calculate $|b| - m a$ and $b - \epsilon 2 m a$ as we can merge their loops.
     While the resulting code is of non-trivially greater complexity, it saves ~8% of the time to
     execute.
+
+    Note $b - \epsilon 2 m a$ may underflow, causing `b'` to have a distinct sign from `b`. In
+    order to ensure the variable `b.1` remains the absolute value, this would require the logical
+    NOT operator combined with a carrying addition of `1` _after_ calculating $b - \epsilon 2 m a$.
+    To avoid another loop, we instead defer performing the negation to the next iteration's
+    instance of _this_ loop, reducing the amount of times we introduce flow control/branching, via
+    the `b_needs_negation` variable. Note the caller must handle `b_needs_negation` when shifting
+    `b`'s limb boundaries.
   */
-  let mut b_diff_two_m_a_borrow = Limb::ZERO;
   let b_diff_m_a = {
     // This is a container of size `c` as we later operate on it with the bound the derivative is
     // `<= c`, which means this has to be large enough to contain a number `<= c`
@@ -216,26 +238,31 @@ fn reduce_to_next_bit<L: Limbs>(
       let b_diff_m_a =
         UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b_diff_m_a)[.. limbs]);
 
-      let mut b_diff_m_a_borrow = Limb::ZERO;
+      *b.0 ^= *b_needs_negation;
+      let b_negation_carry = Limb::from(u8::from(*b_needs_negation));
+      let b_negation_mask = Limb::ZERO.wrapping_sub(b_negation_carry);
+
+      let mut b_diff_m_a_carry = Limb::ZERO;
+
       let mut two_m_a_carry = Limb::ZERO;
+      /*
+        We express `b - 2 m a` as `b + -(2 m a)`, where the negation requires a carry of `1`
+        (hence why this is initialized to `1` when `should_reduce == true`). We simultaneously
+        apply the deferred negation to `b`, hence why we also sum `b_negation_carry`.
+      */
+      let mut b_diff_two_m_a_carry = Limb::from(u8::from(should_reduce)).wrapping_add(b_negation_carry);
+
       for ((b_limb, m_a_limb), b_diff_m_a_limb) in
         b.1.iter_mut().zip(m_a.iter()).zip(b_diff_m_a.iter_mut())
       {
-        // Calculate `b_diff_m_a`
-        {
-          let new_b_diff_m_a_limb;
-          (new_b_diff_m_a_limb, b_diff_m_a_borrow) =
-            b_limb.borrowing_sub(*m_a_limb, b_diff_m_a_borrow);
-          *b_diff_m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, should_reduce);
-        }
-
         /*
-          Set `b' = b - 2 m a`.
+          Set `b' = b - 2 m a`, while simultaneously negating `b_limb` (if necessary).
 
-          This writes to the `b` variable, which is needed to calculate `b_diff_m_a` (to calculate
-          the new `c` coefficient). However, we've already used this limb of `b` as needed to
-          calculate `b_diff_m_a`, and won't read from it again, allowing us to now write to it its
-          updated value.
+          Negating `b'` is expressed as the logical NOT combined with a carrying addition of `1`.
+          This is incompatible with needing to perform a borrowing subtraction of `2 m a`. Instead,
+          we rewrite it as `b + -(2 m a)`, where `2 m a`'s negation can be expressed with a
+          carrying addition. This means all three aspects (negating `b` if necessary, negating
+          `2 m a`, and summing `b, 2 m a`) can be so expressed and done simultaneously.
         */
         {
           let two_m_a_limb = (m_a_limb << 1) | two_m_a_carry;
@@ -247,13 +274,29 @@ fn reduce_to_next_bit<L: Limbs>(
             which fits `|b|`.
           */
           let new_b_limb;
-          (new_b_limb, b_diff_two_m_a_borrow) = b_limb.borrowing_sub(
-            Limb::ct_select(&Limb::ZERO, &two_m_a_limb, should_reduce),
-            b_diff_two_m_a_borrow,
+          (new_b_limb, b_diff_two_m_a_carry) = ((*b_limb) ^ b_negation_mask).carrying_add(
+            Limb::ct_select(&Limb::ZERO, &(two_m_a_limb ^ Limb::MAX), should_reduce),
+            b_diff_two_m_a_carry,
           );
           *b_limb = new_b_limb;
         }
+
+        // Calculate `b_diff_m_a` as `b' + m a` (where `b' = b - 2 m a`)
+        {
+          let new_b_diff_m_a_limb;
+          (new_b_diff_m_a_limb, b_diff_m_a_carry) =
+            (*b_limb).carrying_add(*m_a_limb, b_diff_m_a_carry);
+          *b_diff_m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, should_reduce);
+        }
       }
+
+      /*
+        Finish calculating `b'`, handling if `b < 2 m a`.
+
+        Because we expressed `b'` as `b + -(2 m a)`, there is _no_ carry if `2 m a > b`. This means
+        `b'` needs negation if there was _no_ carry.
+      */
+      *b_needs_negation = should_reduce & b_diff_two_m_a_carry.ct_eq(&Limb::ZERO);
     }
     b_diff_m_a
   };
@@ -288,26 +331,6 @@ fn reduce_to_next_bit<L: Limbs>(
       let new_limb;
       (new_limb, borrow) = c_limb.borrowing_sub(*m_b_diff_m_square_a_limb, borrow);
       *c_limb = new_limb;
-    }
-  }
-
-  // Finish calculating the new `b` coefficient, handling if it underflowed
-  {
-    let borrow = b_diff_two_m_a_borrow;
-    // If this underflowed (`2 m a > |b|`) and `borrow != 0`, apply the logical NOT to take the
-    // absolute value
-    let mut overflow_carry = Limb::ONE & borrow;
-    // If `2 m a > |b|`, flip the sign of the result
-    // $overflow_carry \in {0, 1}$, making this cast safe, and is `1` if `2 m a > |b|`
-    #[expect(clippy::as_conversions, clippy::cast_possible_truncation)]
-    {
-      *b.0 ^= Choice::from(overflow_carry.0 as u8);
-    }
-    for b_limb in b.1.iter_mut() {
-      *b_limb ^= borrow;
-      let new_limb;
-      (new_limb, overflow_carry) = b_limb.carrying_add(Limb::ZERO, overflow_carry);
-      *b_limb = new_limb;
     }
   }
 }
@@ -435,6 +458,7 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
     let (b_sign, mut b_value) =
       (&mut b.0, UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut b.1)[.. original_limbs]));
     let mut b_lte_a = Choice::FALSE;
+    let mut b_needs_negation = Choice::FALSE;
 
     let mut limbs = original_limbs;
     /*
@@ -457,10 +481,29 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
       for bits in (&mut bits).take((DECREASE_LIMBS_AT - progress_in_limb) as usize) {
         a_lte_c(&mut a, b_sign, &mut c);
         let a_bits = a.bits();
-        let should_reduce =
-          should_reduce_to_next_bit_except_final((b_sign, b_value), &mut b_lte_a, a_bits, bits);
-        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, should_reduce, limbs, a_bits, bits);
+        let should_reduce = should_reduce_to_next_bit_except_final(
+          (b_sign, b_value),
+          b_needs_negation,
+          &mut b_lte_a,
+          a_bits,
+          bits,
+        );
+        reduce_to_next_bit(
+          &a,
+          (b_sign, b_value),
+          &mut b_needs_negation,
+          &mut c,
+          should_reduce,
+          limbs,
+          a_bits,
+          bits,
+        );
       }
+
+      // Negate `b` if necessary, before crossing the limb boundary
+      negate_b((b_sign, b_value), b_needs_negation);
+      b_needs_negation = Choice::FALSE;
+
       limbs -= 1;
       b_value = b_value.leading_mut(limbs);
     }
@@ -491,10 +534,28 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
       for bits in (&mut bits).take(DECREASE_LIMBS_AT as usize) {
         a_lte_c(&mut a, b_sign, &mut c);
         let a_bits = a.bits();
-        let should_reduce =
-          should_reduce_to_next_bit_except_final((b_sign, b_value), &mut b_lte_a, a_bits, bits);
-        reduce_to_next_bit(&a, (b_sign, b_value), &mut c, should_reduce, limbs, a_bits, bits);
+        let should_reduce = should_reduce_to_next_bit_except_final(
+          (b_sign, b_value),
+          b_needs_negation,
+          &mut b_lte_a,
+          a_bits,
+          bits,
+        );
+        reduce_to_next_bit(
+          &a,
+          (b_sign, b_value),
+          &mut b_needs_negation,
+          &mut c,
+          should_reduce,
+          limbs,
+          a_bits,
+          bits,
+        );
       }
+
+      negate_b((b_sign, b_value), b_needs_negation);
+      b_needs_negation = Choice::FALSE;
+
       limbs -= 1;
       b_value = b_value.leading_mut(limbs);
     }
@@ -516,12 +577,15 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
       reduce_to_next_bit(
         &a,
         (b_sign, b_value),
+        &mut b_needs_negation,
         &mut c,
         should_reduce,
         original_limbs,
         a_bits,
         b_bits,
       );
+
+      negate_b((b_sign, b_value), b_needs_negation);
     }
   }
 
