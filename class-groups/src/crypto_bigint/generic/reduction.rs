@@ -165,6 +165,7 @@ fn negate_b(b: (&mut Choice, &mut UintRef), b_needs_negation: Choice) {
 /// This corresponds to steps 3, 4, and 6 of Algorithm 1, except as a NOP if
 /// `should_reduce == false` (`b <= a`) (in which case the form is reduced, or reduced after
 /// normalizing the sign of `b`).
+#[expect(clippy::too_many_arguments)]
 #[inline(always)]
 fn reduce_to_next_bit<L: Limbs>(
   a: &L,
@@ -192,7 +193,6 @@ fn reduce_to_next_bit<L: Limbs>(
   };
 
   // Step 6
-
 
   // This is a container of size `c` as we later operate on it with the bound the derivative is
   // `<= c`, which means this has to be large enough to contain a number `<= c`
@@ -238,73 +238,72 @@ fn reduce_to_next_bit<L: Limbs>(
     `b`'s limb boundaries.
   */
   {
-    {
-      *b.0 ^= *b_needs_negation;
-      let b_negation_carry = Limb::from(u8::from(*b_needs_negation));
-      let b_negation_mask = Limb::ZERO.wrapping_sub(b_negation_carry);
+    *b.0 ^= *b_needs_negation;
+    let b_negation_carry = Limb::from(u8::from(*b_needs_negation));
+    let b_negation_mask = Limb::ZERO.wrapping_sub(b_negation_carry);
 
-      let mut b_diff_m_a_carry = Limb::ZERO;
+    let mut b_diff_m_a_carry = Limb::ZERO;
 
-      let mut two_m_a_carry = Limb::ZERO;
+    let mut two_m_a_carry = Limb::ZERO;
+    /*
+      We express `b - 2 m a` as `b + -(2 m a)`, where the negation requires a carry of `1`
+      (hence why this is initialized to `1` when `should_reduce == true`). We simultaneously
+      apply the deferred negation to `b`, hence why we also sum `b_negation_carry`.
+    */
+    let mut b_diff_two_m_a_carry =
+      Limb::from(u8::from(should_reduce)).wrapping_add(b_negation_carry);
+
+    for (b_limb, m_a_limb) in b.1.iter_mut().zip(m_a.iter_mut()) {
       /*
-        We express `b - 2 m a` as `b + -(2 m a)`, where the negation requires a carry of `1`
-        (hence why this is initialized to `1` when `should_reduce == true`). We simultaneously
-        apply the deferred negation to `b`, hence why we also sum `b_negation_carry`.
+        Set `b' = b - 2 m a`, while simultaneously negating `b_limb` (if necessary).
+
+        Negating `b'` is expressed as the logical NOT combined with a carrying addition of `1`.
+        This is incompatible with needing to perform a borrowing subtraction of `2 m a`. Instead,
+        we rewrite it as `b + -(2 m a)`, where `2 m a`'s negation can be expressed with a
+        carrying addition. This means all three aspects (negating `b` if necessary, negating
+        `2 m a`, and summing `b, 2 m a`) can be so expressed and done simultaneously.
       */
-      let mut b_diff_two_m_a_carry = Limb::from(u8::from(should_reduce)).wrapping_add(b_negation_carry);
-
-      for (b_limb, m_a_limb) in b.1.iter_mut().zip(m_a.iter_mut()) {
-        /*
-          Set `b' = b - 2 m a`, while simultaneously negating `b_limb` (if necessary).
-
-          Negating `b'` is expressed as the logical NOT combined with a carrying addition of `1`.
-          This is incompatible with needing to perform a borrowing subtraction of `2 m a`. Instead,
-          we rewrite it as `b + -(2 m a)`, where `2 m a`'s negation can be expressed with a
-          carrying addition. This means all three aspects (negating `b` if necessary, negating
-          `2 m a`, and summing `b, 2 m a`) can be so expressed and done simultaneously.
-        */
-        {
-          let two_m_a_limb = ((*m_a_limb) << 1) | two_m_a_carry;
-          two_m_a_carry = (*m_a_limb) >> const { Limb::BITS - 1 };
-
-          /*
-            `floor(log_2(|b|)) = floor(log_2(2 m a))`, so their difference `|b'|` has the property
-            `floor(log_2(|b'|)) < floor(log_2(|b|))`. Therefore, `|b'|` will fit in any container
-            which fits `|b|`.
-          */
-          let new_b_limb;
-          (new_b_limb, b_diff_two_m_a_carry) = ((*b_limb) ^ b_negation_mask).carrying_add(
-            Limb::ct_select(&Limb::ZERO, &(two_m_a_limb ^ Limb::MAX), should_reduce),
-            b_diff_two_m_a_carry,
-          );
-          *b_limb = new_b_limb;
-        }
+      {
+        let two_m_a_limb = ((*m_a_limb) << 1) | two_m_a_carry;
+        two_m_a_carry = (*m_a_limb) >> const { Limb::BITS - 1 };
 
         /*
-          Calculate `b_diff_m_a` as `b' + m a` (where `b' = b - 2 m a`).
-
-          This writes `b_diff_m_a` directly into `m_a`, as we have no further use for `m_a`.
+          `floor(log_2(|b|)) = floor(log_2(2 m a))`, so their difference `|b'|` has the property
+          `floor(log_2(|b'|)) < floor(log_2(|b|))`. Therefore, `|b'|` will fit in any container
+          which fits `|b|`.
         */
-        {
-          let new_b_diff_m_a_limb;
-          (new_b_diff_m_a_limb, b_diff_m_a_carry) =
-            (*b_limb).carrying_add(*m_a_limb, b_diff_m_a_carry);
-          *m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, should_reduce);
-        }
+        let new_b_limb;
+        (new_b_limb, b_diff_two_m_a_carry) = ((*b_limb) ^ b_negation_mask).carrying_add(
+          Limb::ct_select(&Limb::ZERO, &(two_m_a_limb ^ Limb::MAX), should_reduce),
+          b_diff_two_m_a_carry,
+        );
+        *b_limb = new_b_limb;
       }
 
       /*
-        Finish calculating `b'`, handling if `b < 2 m a`.
+        Calculate `b_diff_m_a` as `b' + m a` (where `b' = b - 2 m a`).
 
-        Because we expressed `b'` as `b + -(2 m a)`, there is _no_ carry if `2 m a > b`. This means
-        `b'` needs negation if there was _no_ carry.
+        This writes `b_diff_m_a` directly into `m_a`, as we have no further use for `m_a`.
       */
-      *b_needs_negation = should_reduce & b_diff_two_m_a_carry.ct_eq(&Limb::ZERO);
+      {
+        let new_b_diff_m_a_limb;
+        (new_b_diff_m_a_limb, b_diff_m_a_carry) =
+          (*b_limb).carrying_add(*m_a_limb, b_diff_m_a_carry);
+        *m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, should_reduce);
+      }
     }
+
+    /*
+      Finish calculating `b'`, handling if `b < 2 m a`.
+
+      Because we expressed `b'` as `b + -(2 m a)`, there is _no_ carry if `2 m a > b`. This means
+      `b'` needs negation if there was _no_ carry.
+    */
+    *b_needs_negation = should_reduce & b_diff_two_m_a_carry.ct_eq(&Limb::ZERO);
   }
   let b_diff_m_a = m_a;
 
-  // Calculate the new `c` coefficient
+  // Calculate `c'`
   {
     /*
       We need to prove that `c >= (m b - m^2 a)`. We do so with the claim the output `c'` will be a
@@ -320,15 +319,13 @@ fn reduce_to_next_bit<L: Limbs>(
       fits `c`, where `b_diff_m_a` is a container of size equal to `c`'s container (making this
       `shl` call well-defined).
     */
-    let mut m_b_diff_m_square_a = b_diff_m_a;
-    UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut m_b_diff_m_square_a)).shl_assign(log_2_m);
-    let m_b_diff_m_square_a = m_b_diff_m_square_a;
+    let m_b_diff_m_square_a = b_diff_m_a;
+    m_b_diff_m_square_a.shl_assign(log_2_m);
 
     // This subtraction is well-defined as `c >= m_b_diff_m_square_a` when `should_reduce == true`
     let mut borrow = Limb::ZERO;
-    for (c_limb, m_b_diff_m_square_a_limb) in <_ as AsMut<[Limb]>>::as_mut(c)
-      .iter_mut()
-      .zip(<_ as AsRef<[Limb]>>::as_ref(&m_b_diff_m_square_a))
+    for (c_limb, m_b_diff_m_square_a_limb) in
+      <_ as AsMut<[Limb]>>::as_mut(c).iter_mut().zip(m_b_diff_m_square_a.as_limbs())
     {
       // When `should_reduce == false`, `m_b_diff_m_square_a_limb = 0`, effecting a NOP
       let new_limb;
@@ -362,7 +359,7 @@ fn normalize<L: Limbs>(a: L, mut b: (Choice, L), c: L) -> (L, (Choice, L), L) {
 ///
 /// The following bounds are present:
 /// - `delta < 0`
-/// - `ceil(log_2(a)) <= log_2_a_bound`
+/// - `floor(log_2(a)) + 1 <= log_2_a_bound`
 /// - `|b| < 2 a`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
 /// - `(a - delta) < 2^(<L as AsRef::<[Limb]>>::as_ref(&b.1).len() * Limb::BITS)`
@@ -406,8 +403,8 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
-/// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
-/// - `ceil(log_2(a)) <= log_2_a_bound`
+/// - `0 <= a` (`a` isn't negative, as enforced by the type system)
+/// - `floor(log_2(a)) + 1 <= log_2_a_bound`
 /// - `|b| < 2 a`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
 /// - `ceil(log_2_a_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
@@ -466,8 +463,8 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
     let mut limbs = original_limbs;
     /*
       `reduce_to_next_bit` is documented to need limbs corresponding to one extra bit, which is
-      as `ceil(log_2(b)) == ceil(log_2(a))` is a possible input and the function must then
-      calculate `2 m a`.
+      as `floor(log_2(b)) + 1 == floor(log_2(a)) + 1` is a possible input and the function must
+      then calculate `2 m a`.
 
       We provide one additional bit here as for a value `b <= a`, this will only be noticed on
       the iteration _after_ the condition becomes true, so we need to defer when we move to the
@@ -599,8 +596,8 @@ pub(crate) fn reduce_to_lower_bound<L: Limbs>(
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
-/// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
-/// - `ceil(log_2(a)) <= log_2_a_bound`
+/// - `0 <= a` (`a` isn't negative, as enforced by the type system)
+/// - `floor(log_2(a)) + 1 <= log_2_a_bound`
 /// - `|b| < 2 a`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
 /// - `ceil(log_2_a_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
@@ -658,8 +655,8 @@ pub(crate) fn partial_reduce<L: Limbs>(
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
-/// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
-/// - `ceil(log_2(a)) <= log_2_a_bound`
+/// - `0 <= a` (`a` isn't negative, as enforced by the type system)
+/// - `floor(log_2(a)) + 1 <= log_2_a_bound`
 /// - `|b| < 2 a`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
 /// - `ceil(log_2_a_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
