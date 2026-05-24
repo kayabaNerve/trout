@@ -16,7 +16,8 @@ rug = { version = "1", default-features = false, features = ["std", "integer"], 
 
 group = { version = "0.13", default-features = false, features = ["alloc"] }
 multiexp = { version = "0.4", default-features = false, features = ["std"] }
-dkg = { git = "https://github.com/serai-dex/serai", rev = "865e351f96bb90f05ad3f9966b631232192778ef", default-features = false, features = ["std"] }
+ciphersuite = { version = "=0.4.2", git = "https://github.com/serai-dex/serai", rev = "d48325c69b787b37731a97d5707f48c9c3b962a3", default-features = false, features = ["std"] }
+dkg = { git = "https://github.com/serai-dex/serai", rev = "d48325c69b787b37731a97d5707f48c9c3b962a3", default-features = false, features = ["std"] }
 
 class-groups = { path = "../class-groups" }
 
