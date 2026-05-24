@@ -168,6 +168,8 @@ fn reduce_to_next_bit<L: Limbs>(
     `c` coefficient as `c - m b_diff_m_a`.
 
     We simultaneously calculate $|b| - m a$ and $b - \epsilon 2 m a$ as we can merge their loops.
+    While the resulting code is of non-trivially greater complexity, it saves ~8% of the time to
+    execute.
   */
   let mut b_diff_two_m_a_borrow = Limb::ZERO;
   let b_diff_m_a = {
@@ -183,24 +185,38 @@ fn reduce_to_next_bit<L: Limbs>(
       for ((b_limb, m_a_limb), b_diff_m_a_limb) in
         b.1.iter_mut().zip(m_a.iter()).zip(b_diff_m_a.iter_mut())
       {
-        let new_b_diff_m_a_limb;
-        (new_b_diff_m_a_limb, b_diff_m_a_borrow) =
-          b_limb.borrowing_sub(*m_a_limb, b_diff_m_a_borrow);
-        *b_diff_m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, b_gt_a);
-
-        let two_m_a_limb = (m_a_limb << 1) | two_m_a_carry;
-        two_m_a_carry = m_a_limb >> const { Limb::BITS - 1 };
+        // Calculate `b_diff_m_a`
+        {
+          let new_b_diff_m_a_limb;
+          (new_b_diff_m_a_limb, b_diff_m_a_borrow) =
+            b_limb.borrowing_sub(*m_a_limb, b_diff_m_a_borrow);
+          *b_diff_m_a_limb = Limb::ct_select(&Limb::ZERO, &new_b_diff_m_a_limb, b_gt_a);
+        }
 
         /*
-          `m a < |b| <= 2 m a`, so `||b| - 2 m a| < m a < |b|`, and `||b| - 2 m a|` will fit in any
-          container `|b|` does.
+          Set `b' = b - 2 m a`.
+
+          This writes to the `b` variable, which is needed to calculate `b_diff_m_a` (to calculate
+          the new `c` coefficient). However, we've already used this limb of `b` as needed to
+          calculate `b_diff_m_a`, and won't read from it again, allowing us to now write to it its
+          updated value.
         */
-        let new_b_limb;
-        (new_b_limb, b_diff_two_m_a_borrow) = b_limb.borrowing_sub(
-          Limb::ct_select(&Limb::ZERO, &two_m_a_limb, b_gt_a),
-          b_diff_two_m_a_borrow,
-        );
-        *b_limb = new_b_limb;
+        {
+          let two_m_a_limb = (m_a_limb << 1) | two_m_a_carry;
+          two_m_a_carry = m_a_limb >> const { Limb::BITS - 1 };
+
+          /*
+            `floor(log_2(|b|)) = floor(log_2(2 m a))`, so their difference `|b'|` has the property
+            `floor(log_2(|b'|)) < floor(log_2(|b|))`. Therefore, `|b'|` will fit in any container
+            which fits `|b|`.
+          */
+          let new_b_limb;
+          (new_b_limb, b_diff_two_m_a_borrow) = b_limb.borrowing_sub(
+            Limb::ct_select(&Limb::ZERO, &two_m_a_limb, b_gt_a),
+            b_diff_two_m_a_borrow,
+          );
+          *b_limb = new_b_limb;
+        }
       }
     }
     b_diff_m_a
@@ -273,8 +289,7 @@ fn reduce_to_next_bit<L: Limbs>(
 ///
 /// This is intended to correspond to steps 2 and 5 of Algorithm 1.
 #[inline(always)]
-fn normalize<L: Limbs>(mut a: L, mut b: (Choice, L), mut c: L) -> (L, (Choice, L), L) {
-  a_lte_c(&mut a, &mut b.0, &mut c);
+fn normalize<L: Limbs>(a: L, mut b: (Choice, L), c: L) -> (L, (Choice, L), L) {
   // Set `b'` to be positive if `|b| == a` or `a == c`, or if `b == 0`
   // (in order to not return `-0`)
   b.0 |= b.1.ct_eq(&a) | a.ct_eq(&c) | b.1.is_zero();

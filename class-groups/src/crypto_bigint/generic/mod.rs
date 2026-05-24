@@ -54,6 +54,7 @@ trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOp
   /// Double the current value.
   ///
   /// The result is undefined on overflow.
+  #[cfg(debug_assertions)]
   #[inline(always)]
   fn double(mut self, limbs: usize) -> Self {
     UintRef::new_mut(&mut <_ as AsMut<[Limb]>>::as_mut(&mut self)[.. limbs]).shl1_assign();
@@ -63,12 +64,10 @@ trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOp
   /// Swap the values of `self` and `b` if `choice` is `true`.
   #[inline(always)]
   fn swap(&mut self, b: &mut Self, limbs: usize, choice: Choice) {
-    for l in 0 .. limbs {
-      <_ as crypto_bigint::CtSelect>::ct_swap(
-        &mut <_ as AsMut<[Limb]>>::as_mut(self)[l],
-        &mut <_ as AsMut<[Limb]>>::as_mut(b)[l],
-        choice,
-      );
+    let a = &mut <_ as AsMut<[Limb]>>::as_mut(self);
+    let b = &mut <_ as AsMut<[Limb]>>::as_mut(b);
+    for (a, b) in a.iter_mut().zip(b.iter_mut()).take(limbs) {
+      <_ as crypto_bigint::CtSelect>::ct_swap(a, b, choice);
     }
   }
 
@@ -80,6 +79,7 @@ trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOp
   }
 
   /// `true` if `self == b` and `false` otherwise.
+  #[cfg(debug_assertions)]
   #[inline(always)]
   fn eq(&self, b: &Self, limbs: usize) -> Choice {
     crypto_bigint::UintRef::new(&self.as_ref()[.. limbs])
