@@ -13,7 +13,8 @@
 
 use crypto_bigint::{Choice, CtEq, CtLt, CtGt, CtSelect, Limb, UintRef};
 
-use super::Limbs;
+mod limbs;
+pub(super) use limbs::Limbs;
 
 /// Obtain the equivalent form `(a', b', c')` for which `floor(log_2(a')) <= floor(log_2(c'))`.
 ///
@@ -418,50 +419,6 @@ fn normalize<L: Limbs>(a: L, mut b: (Choice, L), c: L) -> (L, (Choice, L), L) {
   (a, b, c)
 }
 
-/// Calculate `c` such that `b^2 - 4ac = delta`.
-///
-/// The following bounds are present:
-/// - `delta < 0`
-/// - `floor(log_2(a)) + 1 <= log_2_a_bound`
-/// - `|b| < 2 a`
-/// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
-/// - `(a - delta) < 2^(<L as AsRef::<[Limb]>>::as_ref(&b.1).len() * Limb::BITS)`
-///
-/// `delta` is specified via its absolute value in `negative_discriminant_abs`.
-#[inline(always)]
-pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L) -> L {
-  /*
-    We bound our input `b` to be `< 2 a`, so at most `b^2 = (2 (a - 1))^2`, ensuring
-    `b^2 < (2 a)^2` (or rather that `b^2 < 4 a^2`). As `(b^2 - delta) / (4 a) = c`, where
-    `b^2 < (4 a^2)`, we know `c < ((4 a^2 - delta) / (4 a))` (or rather that
-    `c < a - (delta / 4a)`).
-
-    This ensures we can calculate `c` in any container able to fit `a - delta`, where the
-    container of `b` is so bounded.
-
-    TODO: The size of this is weird. It's... `4 + log_2(|delta|) + 1`?
-  */
-
-  let (b_lo, b_hi) = b.1.widening_square();
-
-  // Subtracting the negative discriminant is equivalent to adding its absolute value
-  let mut four_ac_lo = b_lo;
-  let carry = UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut four_ac_lo))
-    .carrying_add_assign_slice(negative_discriminant_abs.as_ref(), Limb::ZERO);
-  let mut four_ac_hi = b_hi;
-  let carry =
-    UintRef::new_mut(<_ as AsMut<[Limb]>>::as_mut(&mut four_ac_hi)).add_assign_limb(carry);
-  debug_assert_eq!(carry, Limb::ZERO);
-
-  let mut ac_lo = four_ac_lo.unbounded_shr_vartime(2);
-  ac_lo.set_bit_vartime(ac_lo.bits_precision() - 2, four_ac_hi.bit_vartime(0));
-  ac_lo.set_bit_vartime(ac_lo.bits_precision() - 1, four_ac_hi.bit_vartime(1));
-  let ac_hi = four_ac_hi.unbounded_shr_vartime(2);
-  let ac = (ac_lo, ac_hi);
-
-  L::wrapping_div(ac, a)
-}
-
 /// Reduce an element until either its reduced or $|b| < 2^{upper_bound}$.
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
@@ -488,7 +445,7 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
   log_2_a_bound: u32,
   mut a: L,
   mut b: (Choice, L),
-  negative_discriminant_abs: &L,
+  mut c: L,
   upper_bound: u32,
 ) -> (L, (Choice, L), L) {
   #[cfg(debug_assertions)]
@@ -504,13 +461,11 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
     );
 
     // Check `|b| < 2a`
-    debug_assert!(bool::from(super::first_lt_2_second(
+    debug_assert!(bool::from(limbs::first_lt_2_second(
       <_ as AsRef<[Limb]>>::as_ref(&b.1),
       <_ as AsRef<[Limb]>>::as_ref(&a)
     )));
   }
-
-  let mut c = c(&a, &b, negative_discriminant_abs);
 
   // From the bound that `b < 2 a`
   let log_2_b_bound = log_2_a_bound + 1;
@@ -695,7 +650,7 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 /// `negative_discriminant_abs`.
 #[expect(private_bounds)]
 #[inline(always)]
-pub(crate) fn partial_reduce<L: Limbs>(
+pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
   log_2_a_bound: u32,
   a: L,
   b: (Choice, L),
@@ -703,13 +658,9 @@ pub(crate) fn partial_reduce<L: Limbs>(
 ) -> (L, (Choice, L), L) {
   let discriminant_bits = negative_discriminant_abs.bits_vartime();
   let sqrt_discriminant_bits = discriminant_bits.div_ceil(2);
-  let (mut a, mut b, mut c) = reduce_to_upper_bound(
-    log_2_a_bound,
-    a,
-    b,
-    negative_discriminant_abs,
-    sqrt_discriminant_bits - 1,
-  );
+  let c = super::c(&a, &b, negative_discriminant_abs);
+  let (mut a, mut b, mut c) =
+    reduce_to_upper_bound(log_2_a_bound, a, b, c, sqrt_discriminant_bits - 1);
 
   // This is needed to ensure our second bound, "`(a', b', c')` is reduced or `b' > a'`"
   a_lte_c(&mut a, &mut b.0, &mut c);
@@ -745,14 +696,14 @@ pub(crate) fn partial_reduce<L: Limbs>(
 /// `negative_discriminant_abs`.
 #[expect(private_bounds)]
 #[inline(always)]
-pub(crate) fn reduce<L: Limbs>(
+pub(crate) fn reduce<L: super::c::Limbs + Limbs>(
   log_2_a_bound: u32,
   a: L,
   b: (Choice, L),
   negative_discriminant_abs: &L,
 ) -> (L, (Choice, L), L) {
-  let (mut a, mut b, mut c) =
-    reduce_to_upper_bound(log_2_a_bound, a, b, negative_discriminant_abs, 0);
+  let c = super::c(&a, &b, negative_discriminant_abs);
+  let (mut a, mut b, mut c) = reduce_to_upper_bound(log_2_a_bound, a, b, c, 0);
 
   a_lte_c(&mut a, &mut b.0, &mut c);
   let (a, b, c) = normalize(a, b, c);

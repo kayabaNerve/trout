@@ -1,6 +1,6 @@
 use crypto_bigint::{ConstZero, Concat, SplitEven, Uint};
 
-impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::Limbs for Uint<LIMBS>
+impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where
   Self: Concat<LIMBS, Output = Uint<WIDE_LIMBS>>,
   Uint<WIDE_LIMBS>: SplitEven<Output = Self>,
@@ -17,6 +17,9 @@ where
       .unwrap_or(<<Self as Concat<LIMBS>>::Output as ConstZero>::ZERO);
     quotient.split().0
   }
+}
+
+impl<const LIMBS: usize> super::reduction::Limbs for Uint<LIMBS> {
   #[inline(always)]
   fn like_zero(&self) -> Self {
     Self::ZERO

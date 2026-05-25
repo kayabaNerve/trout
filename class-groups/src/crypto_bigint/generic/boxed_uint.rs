@@ -1,6 +1,6 @@
 use crypto_bigint::{Choice, CtSelect, CtLt, Resize, Zero, ConcatenatingSquare, UintRef, BoxedUint};
 
-impl super::Limbs for BoxedUint {
+impl super::c::Limbs for BoxedUint {
   #[inline(always)]
   fn widening_square(&self) -> (Self, Self) {
     let size = self.bits_precision();
@@ -28,6 +28,9 @@ impl super::Limbs for BoxedUint {
     );
     quotient.resize_unchecked(denom_bits)
   }
+}
+
+impl super::reduction::Limbs for BoxedUint {
   #[inline(always)]
   fn like_zero(&self) -> Self {
     Zero::zero_like(self)
