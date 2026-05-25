@@ -17,4 +17,8 @@ where
       .unwrap_or(<<Self as Concat<LIMBS>>::Output as ConstZero>::ZERO);
     quotient.split().0
   }
+  #[inline(always)]
+  fn like_zero(&self) -> Self {
+    Self::ZERO
+  }
 }

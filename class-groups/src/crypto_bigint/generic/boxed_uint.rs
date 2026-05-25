@@ -1,6 +1,7 @@
-use crypto_bigint::{Choice, CtSelect, CtLt, Resize, ConcatenatingSquare, BoxedUint};
+use crypto_bigint::{Choice, CtSelect, CtLt, Resize, Zero, ConcatenatingSquare, UintRef, BoxedUint};
 
 impl super::Limbs for BoxedUint {
+  #[inline(always)]
   fn widening_square(&self) -> (Self, Self) {
     let size = self.bits_precision();
     let square = self.concatenating_square().clone();
@@ -8,6 +9,7 @@ impl super::Limbs for BoxedUint {
     let lo = square.resize_unchecked(size);
     (lo, hi)
   }
+  #[inline(always)]
   fn wrapping_div(num: (Self, Self), denom: &Self) -> Self {
     let denom_bits = denom.bits_precision();
     let num =
@@ -27,7 +29,11 @@ impl super::Limbs for BoxedUint {
     quotient.resize_unchecked(denom_bits)
   }
   #[inline(always)]
+  fn like_zero(&self) -> Self {
+    Zero::zero_like(self)
+  }
+  #[inline(always)]
   fn lt(&self, b: &Self, _limbs: usize) -> Choice {
-    crypto_bigint::UintRef::new(self.as_ref()).ct_lt(crypto_bigint::UintRef::new(b.as_ref()))
+    UintRef::new(self.as_ref()).ct_lt(UintRef::new(b.as_ref()))
   }
 }
