@@ -92,9 +92,9 @@ fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
 ///    aggressively requires the accuracy of the bounds. This itself helps to ensure the bounds are
 ///    accurate.
 ///
-/// This function assumes `a_bits = floor(log_2(a)) + 1` and
+/// This function assumes $|delta| \cong 1 \mod 2$, `a_bits = floor(log_2(a)) + 1`, and
 /// `b_bits_bound >= floor(log_2(|b|)) + 1` when `b_lte_a == false`. This function will update
-/// `b_lte_a`, but may be inaccurately set upon reaching the final necessary iteration.
+/// `b_lte_a`, but may inaccurately set it to `true` upon reaching the final necessary iteration.
 #[inline(always)]
 fn should_reduce_to_next_bit_except_final(
   b: (&mut Choice, &mut UintRef),
@@ -113,7 +113,27 @@ fn should_reduce_to_next_bit_except_final(
   */
   *b_lte_a = !b_gt_a;
 
-  // Only run this iteration if this specific bit of `b` is in fact set
+  /*
+    Only run this iteration if this specific bit of `b` is in fact set.
+
+    If `b` needs to be negated, we check if the bit is _not_ set, which is immediately an
+    _incorrect optimization_. The negation process is defined as the logical NOT and a carrying
+    addition of `1`.
+
+    As an immediate counterexample, `1` has negative representation `0xFF`, which _should_ be
+    considered as having its trailing bit set (as when negated, it's `1`) but would not be
+    considered so here.
+
+    We bound `|delta|` to be odd, so as `b^2 - 4ac = delta`, taking the expression modulo `4`, it's
+    obvious `b` must be odd for any valid form (even if unreduced). This means we know the addition
+    of `1` will always set the trailing bit, making this optimization correct _for all but the
+    trailing bit_.
+
+    That makes this correct _except_ when `b_bits_bound = 1`, but any form with a 1-bit `b`
+    coefficient is already reduced (potentially after normalizing its sign). Accordingly, the fact
+    we incorrectly consider `-1` as not having its trailing bit set, still leads to a correct
+    result that no further reduction should occur.
+  */
   b_gt_a &
     Choice::from(b.1.bit_vartime(b_bits_bound.saturating_sub(1)) as u8).ct_eq(&!b_needs_negation)
 }
@@ -149,6 +169,7 @@ fn should_reduce_to_next_bit_final<L: Limbs>(a: &L, b: (&Choice, &UintRef)) -> C
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
+/// - $delta \cong 1 \mod 2$
 /// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
 /// - `floor(log_2(a)) <= floor(log_2(c))` (such as forms output of `approximate_a_lte_c`)
 /// - `limbs <= <_ as AsRef<[Limb]>>(a).len()`
@@ -280,7 +301,7 @@ fn reduce_to_next_bit<L: Limbs>(
         `2 m a`, and summing `b, 2 m a`) can be so expressed and done simultaneously.
       */
       {
-        let two_m_a_limb = ((*m_a_limb) << 1) | two_m_a_carry;
+        let two_m_a_limb: Limb = ((*m_a_limb) << 1) | two_m_a_carry;
         two_m_a_carry = (*m_a_limb) >> const { Limb::BITS - 1 };
 
         /*
@@ -290,7 +311,7 @@ fn reduce_to_next_bit<L: Limbs>(
         */
         let new_b_limb;
         (new_b_limb, b_diff_two_m_a_carry) = ((*b_limb) ^ b_negation_mask).carrying_add(
-          Limb::ct_select(&Limb::ZERO, &(two_m_a_limb ^ Limb::MAX), should_reduce),
+          Limb::ct_select(&Limb::ZERO, &!two_m_a_limb, should_reduce),
           b_diff_two_m_a_carry,
         );
         *b_limb = new_b_limb;
@@ -351,16 +372,30 @@ fn reduce_to_next_bit<L: Limbs>(
   }
 }
 
+/// Conditionally negate the `b` coefficient for a binary quadratic form of odd discriminant.
+///
+/// Negation is defined as flipping the sign bit, before taking the negative of the `UintRef`
+/// (considered a ring of 2^`k`, for some `k`). The latter process is via taking the logical NOT
+/// before applying a carrying addition of `1`.
 fn negate_b(b: (&mut Choice, &mut UintRef), b_needs_negation: Choice) {
   *b.0 ^= b_needs_negation;
-  // If this needs negation, apply the logical NOT and add `1` to take the absolute value
-  let mut overflow_carry = Limb::from(u8::from(b_needs_negation));
-  let mask = Limb::ZERO.wrapping_sub(overflow_carry);
+  // If this needs negation, apply the logical NOT
+  let mask = Limb::ZERO.wrapping_sub(Limb::from(u8::from(b_needs_negation)));
   for b_limb in b.1.iter_mut() {
-    let new_limb;
-    (new_limb, overflow_carry) = (*b_limb ^ mask).carrying_add(Limb::ZERO, overflow_carry);
-    *b_limb = new_limb;
+    *b_limb ^= mask;
   }
+  /*
+    If this needs negation, complete the process by adding 1.
+
+    As the discriminant is odd, we know `b` is odd. This means, when negated, its trailing bit will
+    will be set, and after the above logical NOT, its trailing bit _will not_ be set. This means
+    the carrying addition is actually solely a regular addition, due to observing there won't be a
+    carry.
+
+    In the case this should not be negated, its trailing bit should be set regardless, so we can
+    simplify this to unilaterally ensuring the trailing bit is set.
+  */
+  b.1[0] |= Limb::ONE;
 }
 
 /// Normalize an almost-reduced element.
@@ -431,6 +466,7 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
+/// - $delta \cong 1 \mod 2$
 /// - `0 <= a` (`a` isn't negative, as enforced by the type system)
 /// - `floor(log_2(a)) + 1 <= log_2_a_bound`
 /// - `|b| < 2 a`
@@ -630,6 +666,7 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
+/// - $delta \cong 1 \mod 2$
 /// - `0 <= a` (`a` isn't negative, as enforced by the type system)
 /// - `floor(log_2(a)) + 1 <= log_2_a_bound`
 /// - `|b| < 2 a`
@@ -689,6 +726,7 @@ pub(crate) fn partial_reduce<L: Limbs>(
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
+/// - $delta \cong 1 \mod 2$
 /// - `0 <= a` (`a` isn't negative, as enforced by the type system)
 /// - `floor(log_2(a)) + 1 <= log_2_a_bound`
 /// - `|b| < 2 a`
