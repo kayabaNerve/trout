@@ -1,23 +1,11 @@
-use crypto_bigint::{Choice, BitOps, ShrVartime, Limb, UintRef};
+use crypto_bigint::{Choice, ShrVartime, Limb, UintRef};
 
-/// A collection of limbs and associated helper methods.
-///
-/// The provided algorithms frequentally dance along `Limb` boundaries, performance requiring
-/// correct decision of when to terminate execution of a given function. This API unifies `Uint`
-/// and `BoxedUint` (in a way `Integer` appeared ineligible for) while providing the niche methods
-/// required for performance.
-///
-/// Implementations MAY iterate up to the `limbs` argument (for performance) or MAY ignore it.
-/// Callers MUST NOT expect that if they specify a `limbs` argument, operations will only occur to
-/// that subset of limbs, and any results are undefined when any non-included limbs are non-zero.
-/// Callers MUST NOT specify more `limbs` than the value has.
+/// The required view over a collection of limbs to calculate the `c` coefficient.
 ///
 /// Implementations MUST implement all functions in time constant to the value of the inputs,
 /// except for the amount of limbs, unless otherwise stated. Implementations MUST NOT panic for any
 /// input which the caller MAY pass.
-//
-// TODO: Replace with `UintRef`.
-pub(super) trait Limbs: AsRef<[Limb]> + AsMut<[Limb]> + BitOps + ShrVartime {
+pub(super) trait Limbs: AsRef<[Limb]> + AsMut<[Limb]> + ShrVartime {
   /// Square the value, returning the `(lo, hi)` terms.
   ///
   /// Implementations MUST ensure each part of the result has an amount of limbs equal to how many
@@ -26,9 +14,8 @@ pub(super) trait Limbs: AsRef<[Limb]> + AsMut<[Limb]> + BitOps + ShrVartime {
 
   /// Divide `num`  by `denom`, returning the low bits.
   ///
-  /// Callers MUST ensure all parts of the numerator have an equivalent amount of limbs.
-  ///
-  /// Implementations MUST return `0` if passed `0` for the denominator.
+  /// Callers MUST ensure all parts of the numerator have an equivalent amount of limbs. Callers
+  /// MUST NOT request a division by `0`.
   ///
   /// Implementations MUST ensure the result has an amount of limbs equal to how many limbs each
   /// part of the input has.
@@ -71,10 +58,15 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
   debug_assert_eq!(carry, Limb::ZERO);
 
   let mut ac_lo = four_ac_lo.unbounded_shr_vartime(2);
-  ac_lo.set_bit_vartime(ac_lo.bits_precision() - 2, four_ac_hi.bit_vartime(0));
-  ac_lo.set_bit_vartime(ac_lo.bits_precision() - 1, four_ac_hi.bit_vartime(1));
+  // Shift the lowest two bits from `four_ac_hi` into the highest two bits of `ac_lo`
+  *<_ as AsMut<[Limb]>>::as_mut(&mut ac_lo).last_mut().unwrap() |=
+    <_ as AsRef<[Limb]>>::as_ref(&four_ac_hi)[0] << (Limb::BITS - 2);
   let ac_hi = four_ac_hi.unbounded_shr_vartime(2);
   let ac = (ac_lo, ac_hi);
 
+  /*
+    As `b^2` is positive yet `delta < 0`, `4ac` must be non-zero. Therefore, `a` must be non-zero
+    if this is a valid form, making this division safe.
+  */
   L::wrapping_div(ac, a)
 }

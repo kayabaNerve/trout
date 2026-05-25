@@ -53,7 +53,7 @@ fn approximate_a_lte_c<L: Limbs>(
 #[inline(always)]
 fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
   let limbs = <_ as AsRef<[Limb]>>::as_ref(c).len();
-  let c_lt_a = c.lt(a, limbs);
+  let c_lt_a = UintRef::new(&c.as_ref()[.. limbs]).ct_lt(UintRef::new(&a.as_ref()[.. limbs]));
   L::swap(a, c, c_lt_a);
   *b_sign ^= c_lt_a;
 }
@@ -710,12 +710,13 @@ pub(crate) fn reduce<L: super::c::Limbs + Limbs>(
 
   #[cfg(debug_assertions)]
   {
-    debug_assert!(bool::from(
-      b.1.lt(&a, AsRef::<[Limb]>::as_ref(&a).len()) | b.1.eq(&a, AsRef::<[Limb]>::as_ref(&a).len())
-    ));
-    debug_assert!(bool::from(
-      a.lt(&c, AsRef::<[Limb]>::as_ref(&a).len()) | a.lt(&c, AsRef::<[Limb]>::as_ref(&a).len())
-    ));
+    let a = UintRef::new(AsRef::<[Limb]>::as_ref(&a));
+    let b_abs = UintRef::new(AsRef::<[Limb]>::as_ref(&b.1));
+    let c = UintRef::new(AsRef::<[Limb]>::as_ref(&c));
+    debug_assert!(bool::from(b_abs.ct_lt(a) | b_abs.ct_eq(&a)));
+    debug_assert!(bool::from(a.ct_lt(c) | a.ct_eq(&c)));
+    let b_eq_a_or_a_eq_c = a.ct_eq(&b_abs) | a.ct_eq(&c);
+    debug_assert!(bool::from((!b_eq_a_or_a_eq_c) | b.0));
   }
 
   (a, b, c)

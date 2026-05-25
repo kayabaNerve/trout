@@ -1,8 +1,8 @@
-use crypto_bigint::{Choice, CtEq, CtLt, CtSelect, Zero, BitOps, Limb, UintRef};
+use crypto_bigint::{Choice, CtEq, CtSelect, Zero, BitOps, Limb};
 
 /// A collection of limbs and associated helper methods.
 ///
-/// The provided algorithms frequentally dance along `Limb` boundaries, performance requiring
+/// The provided reduction algorithm dances along the `Limb` boundaries, performance requiring
 /// correct decision of when to terminate execution of a given function. This API unifies `Uint`
 /// and `BoxedUint` (in a way `Integer` appeared ineligible for) while providing the niche methods
 /// required for performance.
@@ -15,11 +15,10 @@ use crypto_bigint::{Choice, CtEq, CtLt, CtSelect, Zero, BitOps, Limb, UintRef};
 /// Implementations MUST implement all functions in time constant to the value of the inputs,
 /// except for the amount of limbs, unless otherwise stated. Implementations MUST NOT panic for any
 /// input which the caller MAY pass.
-//
-// TODO: Replace with `UintRef`.
-pub(crate) trait Limbs:
-  Sized + AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOps
-{
+///
+/// A long-term goal is to replace this entirely for just `UintRef`. Currently, the reduction
+/// algorithm still requires allocating one scratch variable however, making this non-immediate.
+pub(crate) trait Limbs: AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOps {
   /// The number but with precision equal to `self`.
   ///
   /// This is equivalent to [`crypto_bigint::Zero::zero_like`] but avoids requiring `Self: Clone`.
@@ -29,6 +28,8 @@ pub(crate) trait Limbs:
   fn like_zero(&self) -> Self;
 
   /// Swap the values of `self` and `b` if `choice` is `true`.
+  ///
+  /// This is a basic helper as there is no `UintRef::ct_swap`.
   #[inline(always)]
   fn swap(&mut self, b: &mut Self, choice: Choice) {
     let a = &mut <_ as AsMut<[Limb]>>::as_mut(self);
@@ -36,19 +37,6 @@ pub(crate) trait Limbs:
     for (a, b) in a.iter_mut().zip(b.iter_mut()) {
       <_>::ct_swap(a, b, choice);
     }
-  }
-
-  /// `true` if `self < b` and `false` otherwise.
-  #[inline(always)]
-  fn lt(&self, b: &Self, limbs: usize) -> Choice {
-    UintRef::new(&self.as_ref()[.. limbs]).ct_lt(UintRef::new(&b.as_ref()[.. limbs]))
-  }
-
-  /// `true` if `self == b` and `false` otherwise.
-  #[cfg(debug_assertions)]
-  #[inline(always)]
-  fn eq(&self, b: &Self, limbs: usize) -> Choice {
-    UintRef::new(&self.as_ref()[.. limbs]).ct_eq(UintRef::new(&b.as_ref()[.. limbs]))
   }
 }
 

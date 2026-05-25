@@ -1,4 +1,4 @@
-use crypto_bigint::{ConstZero, Concat, SplitEven, Uint};
+use crypto_bigint::{Concat, SplitEven, Uint};
 
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where
@@ -12,9 +12,7 @@ where
   #[inline(always)]
   fn wrapping_div(num: (Self, Self), denom: &Self) -> Self {
     let concatenated = num.0.concat(&num.1);
-    let quotient = concatenated
-      .checked_div(denom)
-      .unwrap_or(<<Self as Concat<LIMBS>>::Output as ConstZero>::ZERO);
+    let quotient = concatenated / *denom;
     quotient.split().0
   }
 }
