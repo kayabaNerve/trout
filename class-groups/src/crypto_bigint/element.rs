@@ -283,6 +283,7 @@ impl<U: Limbs> CryptoBigintElement<U> {
 
 impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   const MAX_TABLE_BITS: u32 = 12;
+
   /// This MAY return an incorrect result when the form doesn't have an odd, negative discriminant.
   fn is_identity(&self) -> subtle::Choice {
     /*
@@ -392,26 +393,31 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     res.unwrap_or_else(|| identity.clone())
   }
 
+  /// `abs_value_of_neg_discriminant_cong_1_mod_4` MUST be congruent to 3 modulo 4 (the
+  /// discriminant itself congruent to 1 modulo 4, as `abs_value_of_neg_discriminant_cong_1_mod_4`
+  /// represents its negative (absolute) value).
+  ///
+  /// This function MAY run in time variable to the amount of leading zeroes in its inputs.
   fn from_be_abc_discriminant_tess_root_unchecked(
     a: &[u8],
     b_positive: subtle::Choice,
     b: &[u8],
     c: &[u8],
-    mut abs_value_of_neg_odd_discriminant: &[u8],
+    mut abs_value_of_neg_discriminant_cong_1_mod_4: &[u8],
     // We do not use `_tess_root` as we do not implement `PARTEUCL` (or similar)
     _tess_root: &[u8],
   ) -> Self {
-    while abs_value_of_neg_odd_discriminant.first() == Some(&0) {
-      abs_value_of_neg_odd_discriminant = &abs_value_of_neg_odd_discriminant[1 ..];
+    while abs_value_of_neg_discriminant_cong_1_mod_4.first() == Some(&0) {
+      abs_value_of_neg_discriminant_cong_1_mod_4 = &abs_value_of_neg_discriminant_cong_1_mod_4[1 ..];
     }
 
     let discriminant_abs = {
-      let discriminant_bits = u32::try_from(8 * abs_value_of_neg_odd_discriminant.len()).unwrap();
+      let discriminant_bits = u32::try_from(8 * abs_value_of_neg_discriminant_cong_1_mod_4.len()).unwrap();
       if let Some(max_bits) = U::max_bits() {
         assert!(discriminant_bits <= ((2 * max_bits) - 2), "too large of a discriminant");
       }
 
-      U::wide_from_be_slice(abs_value_of_neg_odd_discriminant, discriminant_bits)
+      U::wide_from_be_slice(abs_value_of_neg_discriminant_cong_1_mod_4, discriminant_bits)
     };
 
     let discriminant_bits = discriminant_abs.bits_vartime();
@@ -424,6 +430,7 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   }
 
   // TODO: Rewrite the API to be non-allocating, and to yield both coefficients at once
+  /// This function MAY run in time variable to the amount of leading zeroes in its output.
   fn a(&self) -> Vec<u8> {
     let reduced = self.clone().reduce();
     let bytes = reduced.a.to_be_bytes();
@@ -435,6 +442,7 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     bytes[start ..].to_vec()
   }
 
+  /// This function MAY run in time variable to the amount of leading zeroes in its output.
   fn b(&self) -> (subtle::Choice, Vec<u8>) {
     let reduced = self.clone().reduce();
     let bytes = reduced.b.1.to_be_bytes();
