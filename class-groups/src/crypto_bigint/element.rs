@@ -408,11 +408,18 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     _tess_root: &[u8],
   ) -> Self {
     while abs_value_of_neg_discriminant_cong_1_mod_4.first() == Some(&0) {
-      abs_value_of_neg_discriminant_cong_1_mod_4 = &abs_value_of_neg_discriminant_cong_1_mod_4[1 ..];
+      abs_value_of_neg_discriminant_cong_1_mod_4 =
+        &abs_value_of_neg_discriminant_cong_1_mod_4[1 ..];
     }
+    assert_eq!(
+      abs_value_of_neg_discriminant_cong_1_mod_4.last().unwrap_or(&0) % 4,
+      3,
+      "absolute value of discriminant wasn't congruent to 3 modulo 4"
+    );
 
     let discriminant_abs = {
-      let discriminant_bits = u32::try_from(8 * abs_value_of_neg_discriminant_cong_1_mod_4.len()).unwrap();
+      let discriminant_bits =
+        u32::try_from(8 * abs_value_of_neg_discriminant_cong_1_mod_4.len()).unwrap();
       if let Some(max_bits) = U::max_bits() {
         assert!(discriminant_bits <= ((2 * max_bits) - 2), "too large of a discriminant");
       }
