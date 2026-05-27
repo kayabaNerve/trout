@@ -21,6 +21,10 @@ impl super::c::Limbs for BoxedUint {
     let quotient = num / denom.to_nz().unwrap();
     quotient.resize_unchecked(denom_bits)
   }
+  #[inline(always)]
+  fn rem(num: Self, denom: &Self) -> Self {
+    num.div_rem(&NonZero::new(denom.clone()).unwrap()).1
+  }
 }
 
 impl super::reduction::Limbs for BoxedUint {
@@ -95,22 +99,27 @@ impl super::composition::Limbs for BoxedUint {
 
     super::composition::Xgcd { d: gcd.get(), u: (Choice::TRUE, u), v: (v_sign, v) }
   }
+  #[inline(always)]
   fn div(self, denom: &Self) -> Self {
     self.div_rem(&NonZero::new(denom.clone()).unwrap()).0
   }
+  #[inline(always)]
   fn mul_mod(&self, other: &Self, modulus: &Self) -> Self {
     let product = self.mul_mod(other, &NonZero::new(modulus.clone()).unwrap());
     product.resize_unchecked(modulus.bits_precision())
   }
+  #[inline(always)]
   fn mul(&self, other: &Self) -> Self::Wide {
     self.concatenating_mul(other)
   }
+  #[inline(always)]
   fn square(&self) -> Self::Wide {
     self.concatenating_square()
   }
 }
 
 impl super::composition::WideLimbs<BoxedUint> for BoxedUint {
+  #[inline(always)]
   fn rem(self, denom: &BoxedUint) -> Self {
     let remainder = self.div_rem(&NonZero::new(denom.clone()).unwrap()).1;
     remainder.resize_unchecked(denom.bits_precision())
@@ -118,28 +127,33 @@ impl super::composition::WideLimbs<BoxedUint> for BoxedUint {
 }
 
 impl super::element::Limbs for BoxedUint {
+  #[inline(always)]
   fn max_bits() -> Option<u32> {
     None
   }
 
+  #[inline(always)]
   fn truncate(wide: Self::Wide, bits: u32) -> Self {
     wide.resize_unchecked(bits)
   }
+  #[inline(always)]
   fn widen(thin: Self, wide_bits: u32) -> Self::Wide {
     thin.resize_unchecked(wide_bits)
   }
 
+  #[inline(always)]
   fn to_be_bytes(self) -> impl AsRef<[u8]> {
     BoxedUint::to_be_bytes(&self)
   }
 
+  #[inline(always)]
   fn from_be_slice(mut bytes: &[u8], max_bits: u32) -> Self {
     while bytes.first() == Some(&0) {
       bytes = &bytes[1 ..];
     }
     Self::from_be_slice(bytes, max_bits).unwrap()
   }
-
+  #[inline(always)]
   fn wide_from_be_slice(mut bytes: &[u8], max_bits: u32) -> Self::Wide {
     while bytes.first() == Some(&0) {
       bytes = &bytes[1 ..];

@@ -5,7 +5,7 @@ use crypto_bigint::{Choice, Limb};
 /// Implementations MUST implement all functions in time constant to the value of the inputs,
 /// except for the amount of limbs, unless otherwise stated. Implementations MUST NOT panic for any
 /// input which the caller MAY pass.
-pub(super) trait Limbs: Sized + AsRef<[Limb]> + AsMut<[Limb]> {
+pub(super) trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> {
   /// Square the value, returning the `(lo, hi)` terms.
   ///
   /// Implementations MUST ensure each part of the result has an amount of limbs equal to how many
@@ -14,12 +14,17 @@ pub(super) trait Limbs: Sized + AsRef<[Limb]> + AsMut<[Limb]> {
 
   /// Divide `num`  by `denom`, returning the low bits.
   ///
-  /// Callers MUST ensure all parts of the numerator have an equivalent amount of limbs. Callers
+  /// Callers MUST ensure both parts of the numerator have an equivalent amount of limbs. Callers
   /// MUST NOT request a division by `0`.
   ///
   /// Implementations MUST ensure the result has an amount of limbs equal to how many limbs each
   /// part of the input has.
   fn wrapping_div(num: (Self, Self), denom: &Self) -> Self;
+
+  /// Calculate the remainder of `num % denom`.
+  ///
+  /// Callers MUST NOT specify `denom = 0`.
+  fn rem(num: Self, denom: &Self) -> Self;
 }
 
 /// Calculate `c` such that `b^2 - 4ac = delta`.
@@ -27,8 +32,12 @@ pub(super) trait Limbs: Sized + AsRef<[Limb]> + AsMut<[Limb]> {
 /// The following bounds are present:
 /// - `delta < 0`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
+/// - `<_ as AsRef<[Limb]>>::as_ref(a).len() <= <_ as AsRef<[Limb]>>::as_ref(&b.1).len()`
 /// - `<_ as AsRef<[Limb]>>::as_ref(negative_discriminant_abs).len() <=
 ///      2 * <_ as AsRef<[Limb]>>::as_ref(&b.1).len()`
+/// - `b < 2a`
+/// - $floor(log_2(|delta|)) + 1 <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
+/// - $floor(log_2(|a|)) + 1 < <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
 ///
 /// `delta` is specified via its absolute value in `negative_discriminant_abs`.
 #[inline(always)]
@@ -76,6 +85,14 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
   /*
     As `b^2` is positive yet `delta < 0`, `4ac` must be non-zero. Therefore, `a` must be non-zero
     if this is a valid form, making this division safe.
+
+    We also know `c < |delta|`, and will fit in the same container as `b_lo`  does, due to
+    requiring `b < 2a`. Substituting `b` for its bound `2a`, we have:
+    `(2a)^2 + |delta| = 4ac`
+    `(4a^2 + |delta|) / 4a = c`
+    `a + |delta| = c`
+    where the sum of `a + |delta|` is bound to fit in the container for `a`, which is of less than
+    or equal capacity to the container for `b.1` (itself of equal capacity to `b_lo, b_hi`).
   */
   L::wrapping_div(ac, a)
 }

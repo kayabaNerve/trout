@@ -311,6 +311,27 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   }
 
   fn add(&self, other: &Self) -> Self {
+    /*
+      TODO: We additionally need an argument this form is primitive. Presumably, we argue the
+      result of composition is primitive if the inputs are, and then require
+      `from_be_abc_discriminant_tess_root_unchecked` check the form is primitive upon its
+      deserialization?
+
+      This is still complete to all use-cases if any algorithms to sample elements of the class
+      group explicitly sample primitive forms. We just need to:
+      1) Find a citation/proof that the composition of two primitive forms is itself primitive (an
+         exercise Cohen left to the reader)
+      2) Add such a check to `from_be_abc_discriminant_tess_root_unchecked`, and propagate the
+         documentation on it/correct the other backends and use-cases
+
+      We can also reduce one of these two forms, claiming the reduced form primitive, except that
+      never appears to be quite stated by Cohen. Proposition 5.3.3 says the class number is equal
+      to the number of primitive reduced forms.
+
+      The class number of a non-fundamental discriminant of form `-(p^3 q)` (as we have) is
+      equivalent to the class number of the fundamental discriminant `-(p q)` times `p`. Is that
+      the necessary part to argue all forms for discriminants we work with as primitive?
+    */
     let (a3, b3) =
       super::add(self.a.clone(), self.b.clone(), other.a.clone(), other.b.clone(), other.c.clone());
     Self::partial_reduce(a3, b3, self.discriminant_abs.clone())

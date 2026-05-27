@@ -469,9 +469,9 @@ fn normalize<L: Limbs>(a: L, mut b: (Choice, L), c: L) -> (L, (Choice, L), L) {
 /// - `0 <= a, c` (`a, c` aren't negative, as enforced by the type system)
 /// - `floor(log_2(a)) + 1 <= log_2_bound`
 /// - `floor(log_2(|b|)) + 1 <= log_2_bound`
-/// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
-/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
-/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) == <L as AsRef::<[Limb]>>::as_ref(&c).len())`
+/// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len()`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len() <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len()`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len() == <L as AsRef::<[Limb]>>::as_ref(&c).len()`
 ///
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `(a', b', c')` is reduced or $|b| < 2^{upper_bound}$.
@@ -656,10 +656,12 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 /// - `floor(log_2(a)) + 1 <= log_2_bound`
 /// - `floor(log_2(|b|)) + 1 <= log_2_bound`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
-/// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
-/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
-/// - `<L as AsRef::<[Limb]>>::as_ref(&negative_discriminant_abs).len()) <=
-///      2 * <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
+/// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len()`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len() == <L as AsRef::<[Limb]>>::as_ref(&b.1).len()`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&negative_discriminant_abs).len() <=
+///      2 * <L as AsRef::<[Limb]>>::as_ref(&b.1).len()`
+/// - $floor(log_2(|delta|)) + 1 <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
+/// - $floor(log_2(a)) + 1 < <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
 ///
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `b'^2 <= |delta|`
@@ -684,11 +686,42 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
   log_2_bound: u32,
   a: L,
-  b: (Choice, L),
+  mut b: (Choice, L),
   negative_discriminant_abs: &L,
 ) -> (L, (Choice, L), L) {
   let discriminant_bits = negative_discriminant_abs.bits_vartime();
   let sqrt_discriminant_bits = discriminant_bits.div_ceil(2);
+
+  #[cfg(debug_assertions)]
+  {
+    debug_assert!(
+      negative_discriminant_abs.bits_vartime() <
+        (u32::try_from(a.as_ref().len()).unwrap() * Limb::BITS)
+    );
+    debug_assert!(bool::from(
+      a.bits().ct_lt(&(u32::try_from(a.as_ref().len()).unwrap() * Limb::BITS))
+    ));
+    debug_assert_eq!(
+      <L as AsRef::<[Limb]>>::as_ref(&a).len(),
+      <L as AsRef::<[Limb]>>::as_ref(&b.1).len()
+    );
+  }
+
+  b.1 = {
+    /*
+      This is safe as `a` is the same bit-length as `|delta|`, at most, and `|delta|` has a spare
+      bit of capacity. `a` is bounded to be in a container of size equal to `b.1`, and `|delta|`
+      is bound to be in a container of size less than or equal in size.
+
+      TODO: `clone` :/
+    */
+    let mut two_a = a.clone();
+    UintRef::new_mut(two_a.as_mut()).shl1_assign();
+
+    // Ensure $|b| < 2a$, as required to calculate `c`
+    L::rem(b.1, &two_a)
+  };
+
   let c = super::c(&a, &b, negative_discriminant_abs);
   let (mut a, mut b, mut c) =
     reduce_to_upper_bound(log_2_bound, a, b, c, sqrt_discriminant_bits - 1);
@@ -719,9 +752,9 @@ pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
 /// - `0 <= a, c` (`a, c` aren't negative, as enforced by the type system)
 /// - `floor(log_2(a)) + 1 <= log_2_bound`
 /// - `floor(log_2(|b|)) + 1 <= log_2_bound`
-/// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
-/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
-/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) == <L as AsRef::<[Limb]>>::as_ref(&c).len())`
+/// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len()`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len() <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len()`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len() == <L as AsRef::<[Limb]>>::as_ref(&c).len()`
 ///
 /// Yield the reduced equivalent form `(a', b', c')` such that:
 /// - `|b'| <= a' <= c'`
