@@ -116,3 +116,34 @@ impl super::composition::WideLimbs<BoxedUint> for BoxedUint {
     remainder.resize_unchecked(denom.bits_precision())
   }
 }
+
+impl super::element::Limbs for BoxedUint {
+  fn max_bits() -> Option<u32> {
+    None
+  }
+
+  fn truncate(wide: Self::Wide, bits: u32) -> Self {
+    wide.resize_unchecked(bits)
+  }
+  fn widen(thin: Self, wide_bits: u32) -> Self::Wide {
+    thin.resize_unchecked(wide_bits)
+  }
+
+  fn to_be_bytes(self) -> impl AsRef<[u8]> {
+    BoxedUint::to_be_bytes(&self)
+  }
+
+  fn from_be_slice(mut bytes: &[u8], max_bits: u32) -> Self {
+    while bytes.first() == Some(&0) {
+      bytes = &bytes[1 ..];
+    }
+    Self::from_be_slice(bytes, max_bits).unwrap()
+  }
+
+  fn wide_from_be_slice(mut bytes: &[u8], max_bits: u32) -> Self::Wide {
+    while bytes.first() == Some(&0) {
+      bytes = &bytes[1 ..];
+    }
+    Self::from_be_slice(bytes, max_bits).unwrap()
+  }
+}

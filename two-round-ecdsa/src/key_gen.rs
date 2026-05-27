@@ -23,7 +23,7 @@ use crate::{UnsignedInteger, Parameters};
 pub enum SecurityLevel {
   /// An 1827-bit discriminant with 128-bits of security per popular convention.
   ///
-  /// This has a 2**-14.3 chance of being weaker than the targetted 128-bit security level.
+  /// This has a 2**-14.3 chance of being weaker than the targeted 128-bit security level.
   OneHundredTwentyEightBit = 0,
   /// A 2048-bit discriminant which should have 128-bits of security even with marginally improved
   /// attacks against class-groups.

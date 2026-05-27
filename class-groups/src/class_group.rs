@@ -708,12 +708,14 @@ fn bench_class_group<E: Element>(mut rng: impl CryptoRng) {
 fn malachite_class_group() {
   test_class_group::<crate::MalachiteElement>(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
 }
+#[expect(deprecated)]
 #[test]
 fn crypto_bigint_stack_class_group() {
   test_class_group::<crate::CryptoBigintStackElement>(&mut rand::rand_core::UnwrapErr(
     rand::rngs::SysRng,
   ));
 }
+#[expect(deprecated)]
 #[test]
 fn crypto_bigint_heap_class_group() {
   test_class_group::<crate::CryptoBigintHeapElement>(&mut rand::rand_core::UnwrapErr(
@@ -726,6 +728,7 @@ fn gmp_class_group() {
   test_class_group::<crate::GmpElement>(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
 }
 
+#[expect(deprecated)]
 #[test]
 fn bench() {
   use rand::SeedableRng;

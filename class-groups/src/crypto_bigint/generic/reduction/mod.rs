@@ -429,12 +429,12 @@ fn normalize<L: Limbs>(a: L, mut b: (Choice, L), c: L) -> (L, (Choice, L), L) {
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - $delta \cong 1 \mod 2$
-/// - `0 <= a` (`a` isn't negative, as enforced by the type system)
+/// - `0 <= a, c` (`a, c` aren't negative, as enforced by the type system)
 /// - `floor(log_2(a)) + 1 <= log_2_bound`
 /// - `floor(log_2(|b|)) + 1 <= log_2_bound`
-/// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
 /// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
 /// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) == <L as AsRef::<[Limb]>>::as_ref(&c).len())`
 ///
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `(a', b', c')` is reduced or $|b| < 2^{upper_bound}$.
@@ -679,14 +679,12 @@ pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - $delta \cong 1 \mod 2$
-/// - `0 <= a` (`a` isn't negative, as enforced by the type system)
+/// - `0 <= a, c` (`a, c` aren't negative, as enforced by the type system)
 /// - `floor(log_2(a)) + 1 <= log_2_bound`
 /// - `floor(log_2(|b|)) + 1 <= log_2_bound`
-/// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
 /// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
 /// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
-/// - `<L as AsRef::<[Limb]>>::as_ref(&negative_discriminant_abs).len()) <=
-///      2 * <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) == <L as AsRef::<[Limb]>>::as_ref(&c).len())`
 ///
 /// Yield the reduced equivalent form `(a', b', c')` such that:
 /// - `|b'| <= a' <= c'`
@@ -696,15 +694,13 @@ pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
 ///
 /// `delta` is bound to be negative and specified via its absolute value in
 /// `negative_discriminant_abs`.
-#[expect(private_bounds)]
 #[inline(always)]
-pub(crate) fn reduce<L: super::c::Limbs + Limbs>(
+pub(crate) fn reduce<L: Limbs>(
   log_2_bound: u32,
   a: L,
   b: (Choice, L),
-  negative_discriminant_abs: &L,
+  c: L,
 ) -> (L, (Choice, L), L) {
-  let c = super::c(&a, &b, negative_discriminant_abs);
   let (mut a, mut b, mut c) = reduce_to_upper_bound(log_2_bound, a, b, c, 0);
 
   a_lte_c(&mut a, &mut b.0, &mut c);

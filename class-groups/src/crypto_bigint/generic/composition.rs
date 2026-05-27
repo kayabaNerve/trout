@@ -12,6 +12,8 @@
 
 use crypto_bigint::{CtEq, CtSelect, CtAssign, Choice, Limb};
 
+use super::I;
+
 /// Calculate half the sum of two signed integers which are congruent modulo two.
 ///
 /// This is equivalent to `(a + b) / 2`, which only has an integer solution when
@@ -162,13 +164,6 @@ fn diff_assign(a: (Choice, &mut [Limb]), b: (Choice, &[Limb])) -> Choice {
     Choice::ct_select(&if_add, &if_sub, sub)
   }
 }
-
-/// A signed integer type.
-///
-/// The `Choice` represents if the number is positive. The other term represents the absolute
-/// value of the number. When the number is zero, whether or not the number is considered positive
-/// is undefined.
-type I<U> = (Choice, U);
 
 /// The result of an extended GCD algorithm.
 pub(super) struct Xgcd<U> {

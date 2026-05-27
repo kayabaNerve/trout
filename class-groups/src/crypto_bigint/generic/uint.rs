@@ -1,4 +1,4 @@
-use crypto_bigint::{Concat, SplitEven, NonZero, Uint};
+use crypto_bigint::{Encoding, Concat, SplitEven, NonZero, Uint};
 
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where
@@ -60,5 +60,48 @@ where
 {
   fn rem(self, denom: &<Self as SplitEven>::Output) -> <Self as SplitEven>::Output {
     self.div_rem(&NonZero::new(*denom).unwrap()).1
+  }
+}
+
+impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::element::Limbs for Uint<LIMBS>
+where
+  Self: Encoding<Repr: Default> + Concat<LIMBS, Output = Uint<WIDE_LIMBS>>,
+  Uint<WIDE_LIMBS>: Encoding<Repr: Default> + SplitEven<Output = Self> + super::c::Limbs,
+{
+  fn max_bits() -> Option<u32> {
+    Some(Self::BITS)
+  }
+
+  fn truncate(wide: Self::Wide, _bits: u32) -> Self {
+    wide.split().0
+  }
+  fn widen(thin: Self, _wide_bits: u32) -> Self::Wide {
+    thin.concat(&Uint::ZERO)
+  }
+
+  fn to_be_bytes(self) -> impl AsRef<[u8]> {
+    Self::to_be_bytes(&self)
+  }
+
+  fn from_be_slice(mut bytes: &[u8], _max_bits: u32) -> Self {
+    while bytes.first() == Some(&0) {
+      bytes = &bytes[1 ..];
+    }
+
+    let mut fixed_bytes = <Self as Encoding>::Repr::default();
+    fixed_bytes.as_mut()[(Self::BYTES - bytes.len()) ..].copy_from_slice(bytes);
+
+    Self::from_be_bytes(fixed_bytes)
+  }
+
+  fn wide_from_be_slice(mut bytes: &[u8], _max_bits: u32) -> Self::Wide {
+    while bytes.first() == Some(&0) {
+      bytes = &bytes[1 ..];
+    }
+
+    let mut fixed_bytes = <Uint<WIDE_LIMBS> as Encoding>::Repr::default();
+    fixed_bytes.as_mut()[(Uint::<WIDE_LIMBS>::BYTES - bytes.len()) ..].copy_from_slice(bytes);
+
+    Self::Wide::from_be_bytes(fixed_bytes)
   }
 }

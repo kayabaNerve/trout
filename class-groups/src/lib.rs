@@ -12,6 +12,8 @@ mod malachite;
 pub use malachite::MalachiteElement;
 
 mod crypto_bigint;
+pub use crypto_bigint::CryptoBigintElement;
+#[expect(deprecated)]
 pub use crypto_bigint::{CryptoBigintStackElement, CryptoBigintHeapElement};
 
 #[cfg(feature = "gmp")]
