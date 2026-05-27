@@ -30,12 +30,6 @@ impl<I: Copy + BitOps + Integer> IStruct<I> {
     &self.value
   }
   #[must_use]
-  pub(crate) fn half(mut self) -> Self {
-    self.value = self.value.overflowing_shr_vartime(1u32).unwrap();
-    self.positive = Choice::ct_select(&self.positive, &1.into(), self.value.ct_eq(&I::zero()));
-    self
-  }
-  #[must_use]
   pub(crate) fn ct_neg(mut self, neg: Choice) -> Self {
     self.positive = <_>::ct_select(&self.positive, &!self.positive, neg);
     self

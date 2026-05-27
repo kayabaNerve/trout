@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use zeroize::Zeroize;
 
-use crypto_bigint::{CtEq, CtSelect, Resize, BoxedUint};
+use crypto_bigint::{Choice, CtEq, CtSelect, Resize, BoxedUint};
 
 use crate::Table;
 
@@ -20,6 +20,7 @@ use numbers::*;
 pub struct CryptoBigintHeapElement {
   a: UnsignedInteger,
   b: Integer,
+  c: UnsignedInteger,
   discriminant: Arc<Integer>,
 }
 
@@ -36,11 +37,16 @@ impl Zeroize for CryptoBigintHeapElement {
     // Zeroize
     self.a.zeroize();
     self.b.zeroize();
+    self.c.zeroize();
 
     // Set to the identity
     self.a = UnsignedInteger::from(BoxedUint::one_with_precision(self.max_bits_for_a()));
     self.b =
       Integer::from(UnsignedInteger::from(BoxedUint::one_with_precision(self.max_bits_for_b())));
+    self.c = UnsignedInteger::from(
+      BoxedUint::one().concatenating_add(&self.discriminant.abs().0).wrapping_shr(2),
+    );
+    self.c.0 = self.c.0.clone().resize(self.discriminant.abs().0.bits_precision());
   }
 }
 
@@ -49,6 +55,7 @@ impl crypto_bigint::CtSelect for CryptoBigintHeapElement {
     Self {
       a: UnsignedInteger::ct_select(&self.a, &b.a, choice),
       b: Integer::ct_select(&self.b, &b.b, choice),
+      c: UnsignedInteger::ct_select(&self.c, &b.c, choice),
       // Safe since `Element` is documented to have undefined behavior when mixed across class
       // groups
       discriminant: self.discriminant.clone(),
@@ -59,11 +66,11 @@ impl crypto_bigint::CtSelect for CryptoBigintHeapElement {
 impl CryptoBigintHeapElement {
   fn max_bits_for_a(&self) -> u32 {
     // Lemma 5.3.4 of A Course in Computational Algebraic Number Theory
-    self.discriminant.abs().0.bits_vartime().div_ceil(2) - 1
+    self.discriminant.abs().0.bits_vartime().div_ceil(2)
   }
 
   fn max_bits_for_b(&self) -> u32 {
-    // For reduced elements, `|b| <= a`
+    // For reduced elements (as we have), `|b| <= a`
     self.max_bits_for_a()
   }
 
@@ -73,19 +80,37 @@ impl CryptoBigintHeapElement {
     b: Integer,
     discriminant: Arc<Integer>,
   ) -> Self {
-    let mut b_decomposed = (b.positive(), b.into_abs().0);
-    // Resize `a, b` to the size of the discriminant
-    let a = a.0.resize(discriminant.abs().0.bits_precision());
-    // Resize `b` to be the size of `a`
-    b_decomposed.1 = b_decomposed.1.resize(discriminant.abs().0.bits_precision());
-    let (a, mut b_decomposed, _c) =
-      super::reduce(log_2_a_bound, a, b_decomposed, &discriminant.abs().0);
-    // Resize `a` to equal length to the square root of the discriminant
-    let a = a.resize(discriminant.abs().0.bits_vartime().div_ceil(2) + 1);
-    // Resize `b` to the size of `a`
-    b_decomposed.1 = b_decomposed.1.resize(discriminant.abs().0.bits_vartime().div_ceil(2) + 1);
+    // Reduce `b % 2a` to obtain a bound on the size of `b`
+    // TODO: Remove this. We do it here to obtain a bound on the size of `b`, but we should have
+    // better ways to determine this bound
+    let b = &b % &(&a << 1);
+
+    /*
+      Resize `a, b` to their bounds
+
+      We resize `a` to a slightly larger bound, as this is the bound used on both variables by the
+      reduction algorithm. The reduction algorithm requires both variables have capacity capable of
+      storing this bound.
+    */
+    let a = a.0.resize(1 + log_2_a_bound);
+    let b = b.0.resize(1 + log_2_a_bound);
+
+    let (a, b, c) = super::reduce(1 + log_2_a_bound, a, (Choice::TRUE, b), &discriminant.abs().0);
+    let b_decomposed = b;
+
+    // `b_decomposed` -> `b`, the integer
     let b = Integer::from(UnsignedInteger::from(b_decomposed.1));
-    Self { a: UnsignedInteger(a), b: <_>::ct_select(&-b.clone(), &b, b_decomposed.0), discriminant }
+    let b = <_>::ct_select(&-b.clone(), &b, b_decomposed.0);
+
+    let mut res = Self { a: UnsignedInteger(a), b, c: UnsignedInteger(c), discriminant };
+
+    // Resize `a, b, c`
+    res.a.resize(res.max_bits_for_a());
+    let max_bits_for_b = res.max_bits_for_b();
+    res.b.abs_mut().resize(max_bits_for_b);
+    res.c.resize(res.discriminant.abs().0.bits_precision());
+
+    res
   }
 }
 
@@ -93,158 +118,63 @@ impl crate::Element for CryptoBigintHeapElement {
   const MAX_TABLE_BITS: u32 = 8;
 
   fn is_identity(&self) -> subtle::Choice {
-    (self.a.is_one() & self.b.positive() & self.b.abs().is_one()).into()
+    // If `a == b`, as this is a reduced form, we know `b == |b|`, so we don't need to check `b`'s
+    // sign
+    (self.a.is_one() & self.b.abs().is_one()).into()
   }
 
-  // Allegedly, Arndt's method, as specified on the Wikipedia page for binary quadratic forms
   fn add(&self, other: &Self) -> CryptoBigintHeapElement {
-    let B_mu = (&self.b + &other.b).half();
+    let mut a1 = self.a.clone();
+    let mut b1 = self.b.clone();
+    let mut a2 = other.a.clone();
+    let mut b2 = other.b.clone();
+    let c2 = other.c.clone();
 
-    let e = self.a.gcd(&other.a).gcd(B_mu.abs());
-    let (A1_div_e, _) = &self.a / &e;
-    let (A2_div_e, _) = &other.a / &e;
-    let A = &A1_div_e * &A2_div_e;
+    // `generic::add` requires `a1, a2` have a spare bit of capacity in their containers
+    a1.resize(self.max_bits_for_a() + 1);
+    a2.resize(self.max_bits_for_a() + 1);
+    // and that the capacity of the `a` coefficients is equal the `b` coefficients' capacity
+    b1.abs_mut().resize(self.max_bits_for_a() + 1);
+    b2.abs_mut().resize(self.max_bits_for_a() + 1);
 
-    let mod_1 = &A1_div_e << 1;
-    let mod_2 = &A2_div_e << 1;
-    let two_A = &A << 1;
-    let mut mod_3 = two_A.clone();
+    let (a3, b3) = super::generic::add(
+      a1.0,
+      (b1.positive(), b1.into_abs().0),
+      a2.0,
+      (b2.positive(), b2.into_abs().0),
+      c2.0,
+    );
 
-    let congruence_1 = &self.b % &mod_1;
-    let congruence_2 = &other.b % &mod_2;
-    let congruence_3 = {
-      let congruence_3_rhs = &{
-        let congruence_3_rhs_numerator = &*self.discriminant + &(&self.b * &other.b);
-        let (congruence_3_rhs_mul_2, rem) = &congruence_3_rhs_numerator / &e;
-        debug_assert!(bool::from(rem.is_zero()));
-        congruence_3_rhs_mul_2.half()
-      } % &mod_3;
+    let b3_abs = Integer::from(UnsignedInteger::from(b3.1));
+    let b3 = <_>::ct_select(&-b3_abs.clone(), &b3_abs, b3.0);
 
-      // We drop the remainder here because `e` is explicitly a divisor of `B_mu`
-      let congruence_3_lhs_factor = &(&B_mu / &e).0 % &mod_3;
-
-      /*
-        We have `ax congruent to b mod c`.
-
-        We can't scale `b` by `a**-1` as `a` may not have a multiplicative inverse `mod c`. We
-        instead scale `a` by `u` where for `g = 1`, `a * u congruent to 1 mod c` (so `u` would be
-        the multiplicative inverse of `a` if `g = 1`). When `g != 1`, this generalizes as
-        `a * u congruent to g mod c`. Scaling `a` by `u` accordingly produces `a * a**-1 * g`,
-        which we convert to `a * a**-1` via integer division by `g`.
-      */
-      let (g, u) = congruence_3_lhs_factor.extended_gcd_part(&mod_3);
-      let (res, rem) = &(&congruence_3_rhs * &u) / &g;
-      debug_assert!(bool::from(rem.is_zero()));
-      mod_3 = (&mod_3 / &g).0;
-      &res % &mod_3
-    };
-
-    // CRT generalized for coprime moduli
-    let crt = |congruence_1: &UnsignedInteger,
-               mod_1: &UnsignedInteger,
-               congruence_2: &UnsignedInteger,
-               mod_2: &UnsignedInteger|
-     -> (UnsignedInteger, UnsignedInteger) {
-      let (g, u, v) = mod_1.extended_gcd(mod_2);
-      debug_assert!(bool::from((congruence_1 % &g).ct_eq(&(congruence_2 % &g))));
-      let M = &(mod_1 / &g).0 * mod_2;
-      let x =
-        &(&Integer::from(congruence_1 * mod_2) * &v) + &(&Integer::from(congruence_2 * mod_1) * &u);
-      let (x, rem) = &x / &g;
-      debug_assert!(bool::from(rem.0.is_zero()));
-      debug_assert!(bool::from((&x % mod_1).ct_eq(congruence_1)));
-      debug_assert!(bool::from((&x % mod_2).ct_eq(congruence_2)));
-      (&x % &M, M)
-    };
-
-    let (congruence_12, mod_12) = crt(&congruence_1, &mod_1, &congruence_2, &mod_2);
-    let (x, _mod_123) = crt(&congruence_12, &mod_12, &congruence_3, &mod_3);
-
-    let B = &x % &two_A;
-
-    debug_assert!(bool::from(congruence_1.ct_eq(&(&B % &mod_1))));
-    debug_assert!(bool::from(congruence_2.ct_eq(&(&B % &mod_2))));
-    debug_assert!(bool::from(congruence_3.ct_eq(&(&B % &mod_3))));
-
-    let max_bits_for_a = self.max_bits_for_a();
-    let log_2_a_1_bound = max_bits_for_a;
-    let log_2_a_2_bound = max_bits_for_a;
-    // Since `A = (A_1 / e) * (A_2 / e)`, where `e = gcd(A_1, A_2, B_mu)`, we assume `e = 1` and
-    // the bound on `log_2(A)` becomes `log_2(A_1 * A_2)`
-    let log_2_a_bound = log_2_a_1_bound + log_2_a_2_bound;
-    Self::reduce(log_2_a_bound, A, Integer::from(B), self.discriminant.clone())
+    Self::reduce(
+      2 * self.max_bits_for_a(),
+      UnsignedInteger::from(a3),
+      b3,
+      self.discriminant.clone(),
+    )
   }
 
-  // A copy/paste of `Self::add` which removes the duplicated congruence for this specialization
   fn double(&self) -> CryptoBigintHeapElement {
-    let B_mu = &self.b;
+    let mut a = self.a.clone();
+    let mut b = self.b.clone();
+    let c = self.c.clone();
 
-    let e = self.a.gcd(B_mu.abs());
-    let (A_div_e, _) = &self.a / &e;
-    let A = &A_div_e * &A_div_e;
+    a.resize(self.max_bits_for_a() + 1);
+    b.abs_mut().resize(self.max_bits_for_a() + 1);
 
-    let mod_1 = &A_div_e << 1;
-    let two_A = &A << 1;
-    let mut mod_3 = two_A.clone();
+    let (a3, b3) = super::generic::double(a.0, (b.positive(), b.into_abs().0), c.0);
 
-    let congruence_1 = &self.b % &mod_1;
-    let congruence_3 = {
-      let congruence_3_rhs = &{
-        let congruence_3_rhs_numerator = &*self.discriminant + &(&self.b * &self.b);
-        let (congruence_3_rhs_mul_2, rem) = &congruence_3_rhs_numerator / &e;
-        debug_assert!(bool::from(rem.is_zero()));
-        congruence_3_rhs_mul_2.half()
-      } % &mod_3;
+    let b3_abs = Integer::from(UnsignedInteger::from(b3.1));
+    let b3 = <_>::ct_select(&-b3_abs.clone(), &b3_abs, b3.0);
 
-      // We drop the remainder here because `e` is explicitly a divisor of `B_mu`
-      let congruence_3_lhs_factor = &(B_mu / &e).0 % &mod_3;
-
-      /*
-        We have `ax congruent to b mod c`.
-
-        We can't scale `b` by `a**-1` as `a` may not have a multiplicative inverse `mod c`. We
-        instead scale `a` by `u` where for `g = 1`, `a * u congruent to 1 mod c` (so `u` would be
-        the multiplicative inverse of `a` if `g = 1`). When `g != 1`, this generalizes as
-        `a * u congruent to g mod c`. Scaling `a` by `u` accordingly produces `a * a**-1 * g`,
-        which we convert to `a * a**-1` via integer division by `g`.
-      */
-      let (g, u) = congruence_3_lhs_factor.extended_gcd_part(&mod_3);
-      let (res, rem) = &(&congruence_3_rhs * &u) / &g;
-      debug_assert!(bool::from(rem.is_zero()));
-      mod_3 = (&mod_3 / &g).0;
-      &res % &mod_3
-    };
-
-    // CRT generalized for coprime moduli
-    let crt = |congruence_1: &UnsignedInteger,
-               mod_1: &UnsignedInteger,
-               congruence_2: &UnsignedInteger,
-               mod_2: &UnsignedInteger|
-     -> (UnsignedInteger, UnsignedInteger) {
-      let (g, u, v) = mod_1.extended_gcd(mod_2);
-      debug_assert!(bool::from((congruence_1 % &g).ct_eq(&(congruence_2 % &g))));
-      let M = &(mod_1 / &g).0 * mod_2;
-      let x =
-        &(&Integer::from(congruence_1 * mod_2) * &v) + &(&Integer::from(congruence_2 * mod_1) * &u);
-      let (x, rem) = &x / &g;
-      debug_assert!(bool::from(rem.0.is_zero()));
-      debug_assert!(bool::from((&x % mod_1).ct_eq(congruence_1)));
-      debug_assert!(bool::from((&x % mod_2).ct_eq(congruence_2)));
-      (&x % &M, M)
-    };
-
-    let (x, _mod_123) = crt(&congruence_1, &mod_1, &congruence_3, &mod_3);
-
-    let B = x;
-
-    debug_assert!(bool::from(congruence_1.ct_eq(&(&B % &mod_1))));
-    debug_assert!(bool::from(congruence_3.ct_eq(&(&B % &mod_3))));
-
-    let max_bits_for_a = self.max_bits_for_a();
-    let log_2_a_1_bound = max_bits_for_a;
-    let log_2_a_2_bound = max_bits_for_a;
-    let log_2_a_bound = log_2_a_1_bound + log_2_a_2_bound;
-    Self::reduce(log_2_a_bound, A, Integer::from(B), self.discriminant.clone())
+    Self::reduce(
+      2 * self.max_bits_for_a(),
+      UnsignedInteger::from(a3),
+      b3,
+      self.discriminant.clone(),
+    )
   }
 
   fn sub(&self, other: CryptoBigintHeapElement) -> CryptoBigintHeapElement {
@@ -316,7 +246,7 @@ impl crate::Element for CryptoBigintHeapElement {
     a: &[u8],
     b_positive: subtle::Choice,
     b: &[u8],
-    _c: &[u8],
+    c: &[u8],
     abs_value_of_neg_discriminant: &[u8],
     _tess_root: &[u8],
   ) -> Self {
@@ -327,6 +257,7 @@ impl crate::Element for CryptoBigintHeapElement {
     let mut res = Self {
       a: UnsignedInteger::from_be_slice(a),
       b,
+      c: UnsignedInteger::from_be_slice(c),
       discriminant: Arc::new(-Integer::from(UnsignedInteger::from_be_slice(
         abs_value_of_neg_discriminant,
       ))),
@@ -334,6 +265,7 @@ impl crate::Element for CryptoBigintHeapElement {
     res.a.resize(res.max_bits_for_a());
     let max_bits_for_b = res.max_bits_for_b();
     res.b.abs_mut().resize(max_bits_for_b);
+    res.c.resize(res.discriminant.abs().0.bits_vartime());
     res
   }
 

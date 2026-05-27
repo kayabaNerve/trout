@@ -2,7 +2,7 @@ use core::ops::Neg;
 
 use zeroize::Zeroize;
 
-use crypto_bigint::{CtEq, CtSelect, NonZero, Uint};
+use crypto_bigint::{CtEq, CtSelect, Uint};
 
 use crate::Table;
 
@@ -84,9 +84,20 @@ impl crypto_bigint::CtSelect for CryptoBigintStackElement {
 
 impl CryptoBigintStackElement {
   fn partial_reduce(a: WideU, b: WideI, discriminant: WideI) -> Self {
-    let b_decomposed = (b.positive(), *b.abs());
-    let (a, b_decomposed, c) =
-      super::partial_reduce(discriminant.abs().bits_vartime(), a, b_decomposed, discriminant.abs());
+    /*
+      `partial_reduce` yields `a, b` coefficients which are bounded by the square root of delta, so
+      the `a` from composition will be bounded by delta. The `b` coefficient is bound to be
+      within one bit of twice the resulting `a` coefficient or within one bit of the `b2`
+      coefficient used for composition, whichever is greater. As `b2` was also bounded by the
+      square root of delta, we know the bound from `a` to be the greater (and therefore relevant)
+      bound.
+    */
+    let (a, b_decomposed, c) = super::partial_reduce(
+      2 + discriminant.abs().bits_vartime(),
+      a,
+      (b.positive(), *b.abs()),
+      discriminant.abs(),
+    );
     let (a, a_hi) = a.split();
     debug_assert!(bool::from(a_hi.is_zero()));
     let (b_abs, b_abs_hi) = b_decomposed.1.split();
@@ -95,10 +106,7 @@ impl CryptoBigintStackElement {
     Self { a, b, c, discriminant }
   }
   fn reduce(a: U, b: I, discriminant: WideI) -> Self {
-    let mut b_decomposed = (b.positive(), *b.abs());
-    // Our reduction methods require this, but the output of `partial_reduce` doesn't guarantee it
-    let two_a_mod = NonZero::new(a.overflowing_shl_vartime(1).unwrap()).unwrap();
-    b_decomposed.1 = b_decomposed.1.rem(&two_a_mod);
+    let b_decomposed = (b.positive(), *b.abs());
     let (a, b_decomposed, c) = super::reduce(
       discriminant.abs().bits_vartime().div_ceil(2),
       a.concat(&Uint::ZERO),
@@ -120,8 +128,6 @@ impl crate::Element for CryptoBigintStackElement {
     (a.a.ct_eq(&U::ONE) & a.b.ct_eq(&I::from(U::ONE))).into()
   }
 
-  // Algorithm 5.4.7 Composition of Positive Definite Forms from
-  // "A Course in Computational Algebraic Number Theory"
   fn add(&self, other: &Self) -> CryptoBigintStackElement {
     let a1 = self.a;
     let b1 = self.b;
@@ -129,89 +135,20 @@ impl crate::Element for CryptoBigintStackElement {
     let b2 = other.b;
     let c2 = other.c;
 
-    let s: I = (b1 + b2).half();
-    let n: I = b2 - s;
+    let (a3, b3) =
+      super::generic::add(a1, (b1.positive(), *b1.abs()), a2, (b2.positive(), *b2.abs()), c2);
 
-    let (d1, x2, y1, y2) = {
-      let (d, y1) = {
-        let xgcd = a2.xgcd(&a1);
-        (xgcd.gcd, xgcd.x)
-      };
-
-      let xgcd = s.abs().xgcd(&d);
-
-      let (y2_abs, y2_is_negative) = xgcd.y.abs_sign();
-      (xgcd.gcd, xgcd.x, y1, -I::from(y2_abs).ct_neg(y2_is_negative))
-    };
-
-    let v1: U = a1 / d1;
-    let v2: U = a2 / d1;
-
-    let r = {
-      // `a` is guaranteed to be non-zero for negative discriminants, so `v1` will be
-      let modulus = NonZero::new(v1).unwrap();
-      let r1 = y1.abs().mul_mod(y2.abs(), &modulus).mul_mod(n.abs(), &modulus);
-      let r1_is_negative = y1.is_negative() ^ (!y2.positive()) ^ (!n.positive());
-      let r1 = <_>::ct_select(&r1, &r1.neg_mod(&modulus), r1_is_negative);
-      let c2_reduced = c2.rem(&modulus);
-      let r2 = x2.abs().mul_mod(&c2_reduced, &modulus);
-      let r2 = <_>::ct_select(&r2.neg_mod(&modulus), &r2, x2.is_positive().ct_eq(&s.positive()));
-
-      r1.sub_mod(&r2, &modulus)
-    };
-
-    let a3: WideU = v1.concatenating_mul(&v2);
-
-    // We explicitly calculate `b3 % 2 a3` in order to ensure the bound on `b3`'s size
-    let b3 = {
-      let two_a3: WideU = a3.overflowing_shl_vartime(1).unwrap();
-      // `a3` is guaranteed to be non-zero as its an `a`, which are guaranteed to be non-zero for
-      // negative discriminants
-      let modulus = NonZero::new(two_a3).unwrap();
-      let b2_abs = b2.abs().rem(&modulus);
-      let b2 = <_>::ct_select(&b2_abs.neg_mod(&modulus), &b2_abs, b2.positive());
-      b2.add_mod(&v2.concatenating_mul(&r).overflowing_shl_vartime(1).unwrap(), &modulus)
-    };
-
-    Self::partial_reduce(a3, IStruct::from(b3), self.discriminant)
+    Self::partial_reduce(a3, IStruct::from(b3.1).ct_neg(!b3.0), self.discriminant)
   }
 
-  // Algorithm 5.4.7 Composition of Positive Definite Forms from
-  // "A Course in Computational Algebraic Number Theory", specialized for when `self == other`
   fn double(&self) -> CryptoBigintStackElement {
-    let a1 = self.a;
-    let b1 = self.b;
-    let c1 = self.c;
+    let a = self.a;
+    let b = self.b;
+    let c = self.c;
 
-    let s: I = b1;
+    let (a3, b3) = super::generic::double(a, (b.positive(), *b.abs()), c);
 
-    let d = a1;
-    let (x2, v1) = {
-      let xgcd = s.abs().xgcd(&d);
-      (xgcd.x, xgcd.rhs_on_gcd)
-    };
-
-    let r = {
-      // `a` is guaranteed to be non-zero for negative discriminants, so `v1` will be
-      let modulus = NonZero::new(v1).unwrap();
-      let c1_reduced = c1.rem(&modulus);
-      let r2 = x2.abs().mul_mod(&c1_reduced, &modulus);
-      <_>::ct_select(&r2, &((*modulus) - r2), x2.is_positive().ct_eq(&s.positive()))
-    };
-
-    let a3: WideU = v1.concatenating_square();
-
-    let b3 = {
-      let two_a3: WideU = a3.overflowing_shl_vartime(1).unwrap();
-      // `a3` is guaranteed to be non-zero as its an `a`, which are guaranteed to be non-zero for
-      // negative discriminants
-      let modulus = NonZero::new(two_a3).unwrap();
-      let b1_abs = b1.abs().rem(&modulus);
-      let b1 = <_>::ct_select(&((*modulus) - b1_abs), &b1_abs, b1.positive());
-      b1.add_mod(&v1.concatenating_mul(&r).overflowing_shl_vartime(1).unwrap(), &modulus)
-    };
-
-    Self::partial_reduce(a3, IStruct::from(b3), self.discriminant)
+    Self::partial_reduce(a3, IStruct::from(b3.1).ct_neg(!b3.0), self.discriminant)
   }
 
   fn sub(&self, other: CryptoBigintStackElement) -> CryptoBigintStackElement {

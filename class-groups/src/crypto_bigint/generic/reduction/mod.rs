@@ -172,7 +172,7 @@ fn should_reduce_to_next_bit_final<L: Limbs>(a: &L, b: (&Choice, &UintRef)) -> C
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - $delta \cong 1 \mod 2$
 /// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
-/// - `floor(log_2(a)) <= floor(log_2(c))` (such as forms output of `approximate_a_lte_c`)
+/// - `floor(log_2(a)) <= floor(log_2(c))` (such as forms output of `(approximate_)a_lte_c`)
 /// - `limbs <= <_ as AsRef<[Limb]>>(a).len()`
 /// - `limbs <= <_ as AsRef<[Limb]>>(b.1).len()`
 /// - The variable `c` does in fact contain the full representation of the `c` coefficient.
@@ -403,6 +403,7 @@ fn negate_b(b: (&mut Choice, &mut UintRef), b_needs_negation: Choice) {
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
+/// - $delta \cong 1 \mod 2$
 /// - `0 <= a, c` (`a` and `c` aren't negative, as enforced by the type system)
 /// - `|b| <= a <= c`
 ///
@@ -413,9 +414,13 @@ fn negate_b(b: (&mut Choice, &mut UintRef), b_needs_negation: Choice) {
 /// This is intended to correspond to steps 2 and 5 of Algorithm 1.
 #[inline(always)]
 fn normalize<L: Limbs>(a: L, mut b: (Choice, L), c: L) -> (L, (Choice, L), L) {
-  // Set `b'` to be positive if `|b| == a` or `a == c`, or if `b == 0`
-  // (in order to not return `-0`)
-  b.0 |= b.1.ct_eq(&a) | a.ct_eq(&c) | b.1.is_zero();
+  /*
+    Set `b` to be positive if `|b| == a` or `a == c`.
+
+    We do not consider normalizing if `b == 0` to positive as we bound an odd discriminant, meaning
+    `b` will be odd and therefore non-zero.
+  */
+  b.0 |= b.1.ct_eq(&a) | a.ct_eq(&c);
   (a, b, c)
 }
 
@@ -425,24 +430,20 @@ fn normalize<L: Limbs>(a: L, mut b: (Choice, L), c: L) -> (L, (Choice, L), L) {
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - $delta \cong 1 \mod 2$
 /// - `0 <= a` (`a` isn't negative, as enforced by the type system)
-/// - `floor(log_2(a)) + 1 <= log_2_a_bound`
-/// - `|b| < 2 a`
+/// - `floor(log_2(a)) + 1 <= log_2_bound`
+/// - `floor(log_2(|b|)) + 1 <= log_2_bound`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
-/// - `ceil(log_2_a_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
+/// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
 /// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
-/// - `(a - delta) < 2^(<L as AsRef::<[Limb]>>::as_ref(&b.1).len() * Limb::BITS)`
 ///
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `(a', b', c')` is reduced or $|b| < 2^{upper_bound}$.
 /// - `(a', b', c')` is reduced or `b' > a'`
 ///
 /// `b.0, b'.0` are `true` if the value is _positive_.
-///
-/// `delta` is bound to be negative and specified via its absolute value in
-/// `negative_discriminant_abs`.
 #[inline(always)]
 pub(crate) fn reduce_to_upper_bound<L: Limbs>(
-  log_2_a_bound: u32,
+  log_2_bound: u32,
   mut a: L,
   mut b: (Choice, L),
   mut c: L,
@@ -450,26 +451,18 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 ) -> (L, (Choice, L), L) {
   #[cfg(debug_assertions)]
   {
-    debug_assert!(a.bits() <= log_2_a_bound);
+    debug_assert!(bool::from(a.bits().ct_lt(&log_2_bound) | a.bits().ct_eq(&log_2_bound)));
+    debug_assert!(bool::from(b.1.bits().ct_lt(&log_2_bound) | b.1.bits().ct_eq(&log_2_bound)));
     debug_assert!(
-      usize::try_from(log_2_a_bound.div_ceil(Limb::BITS)).unwrap() <=
+      usize::try_from(log_2_bound.div_ceil(Limb::BITS)).unwrap() <=
         <_ as AsRef::<[Limb]>>::as_ref(&a).len()
     );
-    debug_assert_eq!(
-      <_ as AsRef::<[Limb]>>::as_ref(&a).len(),
-      <_ as AsRef::<[Limb]>>::as_ref(&b.1).len()
+    debug_assert!(
+      <_ as AsRef::<[Limb]>>::as_ref(&a).len() <= <_ as AsRef::<[Limb]>>::as_ref(&b.1).len()
     );
-
-    // Check `|b| < 2a`
-    debug_assert!(bool::from(limbs::first_lt_2_second(
-      <_ as AsRef<[Limb]>>::as_ref(&b.1),
-      <_ as AsRef<[Limb]>>::as_ref(&a)
-    )));
   }
 
-  // From the bound that `b < 2 a`
-  let log_2_b_bound = log_2_a_bound + 1;
-  let original_limbs = usize::try_from(log_2_b_bound.div_ceil(Limb::BITS)).unwrap();
+  let original_limbs = usize::try_from(log_2_bound.div_ceil(Limb::BITS)).unwrap();
 
   /*
     Iterate from our bound on `b` to a `b'` which by bit-length, would satisfy `upper_bound`.
@@ -485,24 +478,24 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
     let mut limbs = original_limbs;
     /*
       `reduce_to_next_bit` is documented to need limbs corresponding to one extra bit, which is
-      as `floor(log_2(b)) + 1 == floor(log_2(a)) + 1` is a possible input and the function must
+      as `floor(log_2(|b|)) + 1 == floor(log_2(a)) + 1` is a possible input and the function must
       then calculate `2 m a`.
 
-      We provide one additional bit here as for a value `b <= a`, this will only be noticed on
+      We provide one additional bit here as for a value `|b| <= a`, this will only be noticed on
       the iteration _after_ the condition becomes true, so we need to defer when we move to the
       smaller amount of limbs until after this later iteration.
     */
     const DECREASE_LIMBS_AT: u32 = 2 + Limb::BITS;
 
     // `RangeInclusive` doesn't implement `FixedSizeIterator`, so we use a `Range` instead
-    let mut bits = ((upper_bound + 1) .. (log_2_b_bound + 1)).rev();
+    let mut bits = ((upper_bound + 1) .. (log_2_bound + 1)).rev();
 
     let mut a_bits = a.bits();
     let mut c_bits = c.bits();
 
     // Handle the partial limb we inherently have by the bound not perfectly aligning to limbs
     {
-      let progress_in_limb = Limb::BITS - (log_2_b_bound % Limb::BITS);
+      let progress_in_limb = Limb::BITS - (log_2_bound % Limb::BITS);
       for bits in (&mut bits).take((DECREASE_LIMBS_AT - progress_in_limb) as usize) {
         approximate_a_lte_c((&mut a_bits, &mut a), b_sign, (&mut c_bits, &mut c));
         let should_reduce = should_reduce_to_next_bit_except_final(
@@ -623,12 +616,13 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - $delta \cong 1 \mod 2$
 /// - `0 <= a` (`a` isn't negative, as enforced by the type system)
-/// - `floor(log_2(a)) + 1 <= log_2_a_bound`
-/// - `|b| < 2 a`
+/// - `floor(log_2(a)) + 1 <= log_2_bound`
+/// - `floor(log_2(|b|)) + 1 <= log_2_bound`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
-/// - `ceil(log_2_a_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
+/// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
 /// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
-/// - `(a - delta) < 2^(<L as AsRef::<[Limb]>>::as_ref(&b.1).len() * Limb::BITS)`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&negative_discriminant_abs).len()) <=
+///      2 * <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
 ///
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `b'^2 <= |delta|`
@@ -651,7 +645,7 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 #[expect(private_bounds)]
 #[inline(always)]
 pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
-  log_2_a_bound: u32,
+  log_2_bound: u32,
   a: L,
   b: (Choice, L),
   negative_discriminant_abs: &L,
@@ -660,14 +654,21 @@ pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
   let sqrt_discriminant_bits = discriminant_bits.div_ceil(2);
   let c = super::c(&a, &b, negative_discriminant_abs);
   let (mut a, mut b, mut c) =
-    reduce_to_upper_bound(log_2_a_bound, a, b, c, sqrt_discriminant_bits - 1);
+    reduce_to_upper_bound(log_2_bound, a, b, c, sqrt_discriminant_bits - 1);
 
   // This is needed to ensure our second bound, "`(a', b', c')` is reduced or `b' > a'`"
   a_lte_c(&mut a, &mut b.0, &mut c);
 
   #[cfg(debug_assertions)]
   {
-    debug_assert!(b.1.bits() <= discriminant_bits.div_ceil(2));
+    debug_assert!(bool::from(
+      a.bits().ct_lt(&discriminant_bits.div_ceil(2)) |
+        a.bits().ct_eq(&discriminant_bits.div_ceil(2))
+    ));
+    debug_assert!(bool::from(
+      b.1.bits().ct_lt(&discriminant_bits.div_ceil(2)) |
+        b.1.bits().ct_eq(&discriminant_bits.div_ceil(2))
+    ));
   }
 
   (a, b, c)
@@ -679,12 +680,13 @@ pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
 /// - `b^2 - 4ac = delta` where `delta < 0` (the form is well-defined for a negative discriminant)
 /// - $delta \cong 1 \mod 2$
 /// - `0 <= a` (`a` isn't negative, as enforced by the type system)
-/// - `floor(log_2(a)) + 1 <= log_2_a_bound`
-/// - `|b| < 2 a`
+/// - `floor(log_2(a)) + 1 <= log_2_bound`
+/// - `floor(log_2(|b|)) + 1 <= log_2_bound`
 /// - There is an integer solution for `c` in `b^2 - 4 a c = delta`.
-/// - `ceil(log_2_a_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
+/// - `ceil(log_2_bound / Limb::BITS) <= <L as AsRef::<[Limb]>>::as_ref(&a).len())`
 /// - `<L as AsRef::<[Limb]>>::as_ref(&a).len()) <= <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
-/// - `(a - delta) < 2^(<L as AsRef::<[Limb]>>::as_ref(&b.1).len() * Limb::BITS)`
+/// - `<L as AsRef::<[Limb]>>::as_ref(&negative_discriminant_abs).len()) <=
+///      2 * <L as AsRef::<[Limb]>>::as_ref(&b.1).len())`
 ///
 /// Yield the reduced equivalent form `(a', b', c')` such that:
 /// - `|b'| <= a' <= c'`
@@ -697,13 +699,13 @@ pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
 #[expect(private_bounds)]
 #[inline(always)]
 pub(crate) fn reduce<L: super::c::Limbs + Limbs>(
-  log_2_a_bound: u32,
+  log_2_bound: u32,
   a: L,
   b: (Choice, L),
   negative_discriminant_abs: &L,
 ) -> (L, (Choice, L), L) {
   let c = super::c(&a, &b, negative_discriminant_abs);
-  let (mut a, mut b, mut c) = reduce_to_upper_bound(log_2_a_bound, a, b, c, 0);
+  let (mut a, mut b, mut c) = reduce_to_upper_bound(log_2_bound, a, b, c, 0);
 
   a_lte_c(&mut a, &mut b.0, &mut c);
   let (a, b, c) = normalize(a, b, c);

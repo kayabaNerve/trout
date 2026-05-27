@@ -1,4 +1,7 @@
-use crypto_bigint::{Resize, Zero, ConcatenatingSquare, BoxedUint};
+use crypto_bigint::{
+  CtAssign, Resize, Zero, One, ConcatenatingSquare, ConcatenatingMul, Gcd, Choice, NonZero,
+  BoxedUint,
+};
 
 impl super::c::Limbs for BoxedUint {
   #[inline(always)]
@@ -24,5 +27,92 @@ impl super::reduction::Limbs for BoxedUint {
   #[inline(always)]
   fn like_zero(&self) -> Self {
     Zero::zero_like(self)
+  }
+}
+
+impl super::composition::Limbs for BoxedUint {
+  type Wide = BoxedUint;
+  #[expect(private_interfaces)]
+  fn xgcd(self, other: Self) -> super::composition::Xgcd<Self> {
+    // The documentation on the `trait` allows us to make these bounds
+    debug_assert!(bool::from(!self.is_zero()));
+    debug_assert!(bool::from(!other.is_zero()));
+
+    // `BoxedUint` has a `gcd` method but not an `xgcd` method, so we calculate `u, v` ourselves
+    // We know the `gcd` is non-zero as the inputs are non-zero
+    let gcd = NonZero::new(self.gcd(&other)).unwrap();
+
+    // Calculate `u` as the modular inverse of `self % other`
+    let u = {
+      let self_div_gcd = &self / &gcd;
+      let other_div_gcd = &other / &gcd;
+      /*
+        This has a modular inverse as these are coprime, which will be true UNLESS `self` is itself
+        a factor (or multiple) of `other`. In this case, the coefficients are `0, 1` or `1, 0`.
+      */
+      let u = self_div_gcd.invert_mod(&NonZero::new(other_div_gcd).unwrap());
+      let u_if_divisible =
+        BoxedUint::from(u8::from(self_div_gcd.is_one())).resize_unchecked(other.bits_precision());
+      u.unwrap_or(u_if_divisible)
+    };
+
+    /*
+      Calculate `v` as `(ua - d) / b`.
+
+      We explicitly use a `wrapping_sub` as `ua = 0` occurs when `b | a`. This causes an invalid
+      value to be assigned to `v`, but we then correct it to `1` if so.
+    */
+    /*
+      TODO: The composition algorithm doesn't need this coefficient for one of its two calls to
+      `xgcd`. If we split the `xgcd` function into one which returns the `u` coefficient and one
+      which returns the `u` and `v` coefficients, we can optimize this out.
+    */
+    let v =
+      ((u.concatenating_mul(&self)).wrapping_sub(&*gcd)) / NonZero::new(other.clone()).unwrap();
+    let mut v = v.resize_unchecked(self.bits_precision());
+    // If `u = 0` because `b` is a factor of `a`, correct the `v` coefficient to `1`
+    v.ct_assign(&BoxedUint::one_like(&v), u.is_zero());
+
+    /*
+      Return `u` as the positive coefficient, `v` as the negative coefficient, as it's our choice
+      when we know the inputs are non-zero EXCEPT when one is a factor of the other. In this case,
+      both are positive as one coefficient will be zero.
+    */
+    let v_sign = u.is_zero();
+
+    #[cfg(debug_assertions)]
+    {
+      use crypto_bigint::{CtEq, CtSelect};
+      let eq1 = u.concatenating_mul(&self);
+      let eq2 = v.concatenating_mul(&other);
+      let lhs = <_>::ct_select(
+        &(eq1.wrapping_sub(&eq2).concatenating_add(BoxedUint::zero())),
+        &eq1.concatenating_add(&eq2),
+        v_sign,
+      );
+      debug_assert!(bool::from(lhs.ct_eq(&*gcd)));
+    }
+
+    super::composition::Xgcd { d: gcd.get(), u: (Choice::TRUE, u), v: (v_sign, v) }
+  }
+  fn div(self, denom: &Self) -> Self {
+    self.div_rem(&NonZero::new(denom.clone()).unwrap()).0
+  }
+  fn mul_mod(&self, other: &Self, modulus: &Self) -> Self {
+    let product = self.mul_mod(other, &NonZero::new(modulus.clone()).unwrap());
+    product.resize_unchecked(modulus.bits_precision())
+  }
+  fn mul(&self, other: &Self) -> Self::Wide {
+    self.concatenating_mul(other)
+  }
+  fn square(&self) -> Self::Wide {
+    self.concatenating_square()
+  }
+}
+
+impl super::composition::WideLimbs<BoxedUint> for BoxedUint {
+  fn rem(self, denom: &BoxedUint) -> Self {
+    let remainder = self.div_rem(&NonZero::new(denom.clone()).unwrap()).1;
+    remainder.resize_unchecked(denom.bits_precision())
   }
 }

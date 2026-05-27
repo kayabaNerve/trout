@@ -5,9 +5,8 @@ use core::ops::{Add, Neg, Sub, Mul, Div, Rem, Shl, Shr};
 
 use zeroize::Zeroize;
 
-use crypto_bigint::{
-  Choice, CtEq, CtSelect, CtLt, CtGt, NonZero, Resize, ConcatenatingMul, Gcd, BoxedUint,
-};
+#[rustfmt::skip]
+use crypto_bigint::{Choice, CtEq, CtSelect, CtLt, CtGt, NonZero, Resize, ConcatenatingMul, BoxedUint};
 
 enum Cow<'a, B> {
   Borrowed(&'a B),
@@ -63,10 +62,6 @@ fn boxed_uint_div_rem(numerator: &BoxedUint, denominator: &BoxedUint) -> (BoxedU
   (d, e)
 }
 
-fn boxed_uint_div(numerator: &BoxedUint, denominator: &BoxedUint) -> BoxedUint {
-  boxed_uint_div_rem(numerator, denominator).0
-}
-
 // Calculate the difference of two `BoxedUint`s, returning it and if `b` was greater
 fn difference(a: &BoxedUint, b: &BoxedUint) -> (BoxedUint, Choice) {
   let b_is_greater = b.ct_gt(a);
@@ -99,7 +94,7 @@ impl UnsignedInteger {
   }
 
   pub(crate) fn resize(&mut self, bits: u32) {
-    self.0 = self.0.clone().resize_unchecked(bits.max(self.0.bits_precision()));
+    self.0 = self.0.clone().resize_unchecked(bits);
   }
 
   pub(crate) fn is_zero(&self) -> Choice {
@@ -196,12 +191,6 @@ impl Integer {
   }
   pub(crate) fn into_abs(self) -> UnsignedInteger {
     self.value
-  }
-  #[must_use]
-  pub(crate) fn half(mut self) -> Integer {
-    self.value = self.value >> 1;
-    self.positive = Choice::ct_select(&self.positive, &1.into(), self.value.is_zero());
-    self
   }
 }
 impl From<UnsignedInteger> for Integer {
@@ -348,114 +337,6 @@ impl Zeroize for Integer {
   }
 }
 
-impl UnsignedInteger {
-  pub(crate) fn gcd(&self, other: &Self) -> UnsignedInteger {
-    let self_precision = self.0.bits_precision();
-    let other_precision = other.0.bits_precision();
-    let self_is_zero = self.is_zero();
-    // Choose the precision of the non-zero element
-    let precision = u32::ct_select(&self_precision, &other_precision, self_is_zero);
-    // Choose the smallest precision of both elements if both are non-zero
-    let precision = u32::ct_select(
-      &precision,
-      &self_precision.min(other_precision),
-      (!self_is_zero) & (!other.is_zero()),
-    );
-
-    let (a, b) = resize(&self.0, &other.0);
-    // Calculate the gcd via the method provided by crypto-bigint
-    let gcd = a.as_ref().gcd(b.as_ref());
-    UnsignedInteger(gcd.resize_unchecked(precision))
-  }
-
-  pub(crate) fn extended_gcd_part(&self, other: &Self) -> (UnsignedInteger, UnsignedInteger) {
-    debug_assert!(bool::from((!self.0.is_zero()) | (!other.0.is_zero())));
-
-    let a = &self.0;
-    let b = &other.0;
-    let gcd = self.gcd(other).0;
-
-    let a_is_zero = a.is_zero();
-    let b_is_zero = b.is_zero();
-    let a_eq_b = a.ct_eq(b);
-    let special_case = a_is_zero | b_is_zero | a_eq_b;
-
-    // Calculate the multiplicative inverse of `(a / g) % (b / g)`, which is `u`
-    let u = |a: BoxedUint, b: BoxedUint, gcd: BoxedUint| {
-      let a_div_g = boxed_uint_div(&a, &gcd);
-      let b_div_g = boxed_uint_div(&b, &gcd);
-
-      let a_div_g = (&UnsignedInteger(a_div_g) % &UnsignedInteger(b_div_g.clone())).0;
-      UnsignedInteger(
-        a_div_g
-          .invert_mod(&NonZero::new(b_div_g).unwrap())
-          // Happens when `a` is a multiple of `b`
-          .unwrap_or(BoxedUint::zero_with_precision(a_div_g.bits_precision())),
-      )
-    };
-
-    // Call with `a, b, gcd` if not a special case and `1, 2, 1` if a special case
-    let u = u(
-      boxed_uint_ct_select(a, &BoxedUint::one(), special_case),
-      boxed_uint_ct_select(b, &BoxedUint::from(2u8), special_case),
-      boxed_uint_ct_select(&gcd, &BoxedUint::one(), special_case),
-    );
-
-    // Correct for the cases `a == 0`, `b == 0`
-    let u = UnsignedInteger::ct_select(&u, &UnsignedInteger(BoxedUint::zero()), a_is_zero);
-    let u = UnsignedInteger::ct_select(&u, &UnsignedInteger(BoxedUint::one()), b_is_zero);
-
-    // Correct for the case `a == b`
-    let u = UnsignedInteger::ct_select(&u, &UnsignedInteger(BoxedUint::one()), a_eq_b);
-
-    let gcd = UnsignedInteger(gcd);
-    (gcd, u)
-  }
-
-  pub(crate) fn extended_gcd(&self, other: &Self) -> (UnsignedInteger, UnsignedInteger, Integer) {
-    debug_assert!(bool::from((!self.0.is_zero()) | (!other.0.is_zero())));
-
-    let (gcd, u) = self.extended_gcd_part(other);
-    let gcd = gcd.0;
-    let a = &self.0;
-    let b = &other.0;
-
-    let b_is_zero = b.is_zero();
-
-    // Calculate `v` for `ua + vb = g`
-    let v = |b: BoxedUint| {
-      let ua = u.0.concatenating_mul(&a);
-      let (difference, _gcd_is_greater) = difference(&ua, &gcd);
-      let (v, rem) = boxed_uint_div_rem(&difference, &b);
-      debug_assert!(bool::from(rem.is_zero()));
-
-      let v = Integer::from(UnsignedInteger(v));
-      // We prefer `u` to be positive and `v` to be negative, yet `v` will be positive if `u` is
-      // zero
-      // TODO: ct_neg
-      Integer::ct_select(&v, &-v.clone(), !u.is_zero())
-    };
-
-    // Call with `b` if not a special case and `1` if `b == 0`
-    let v = v(boxed_uint_ct_select(b, &BoxedUint::one(), b_is_zero));
-
-    // Correct for the case `b == 0`
-    let v = Integer::ct_select(&v, &Integer::from(UnsignedInteger(BoxedUint::zero())), b_is_zero);
-
-    let gcd = UnsignedInteger(gcd);
-
-    {
-      let recovered = &Integer::from(self * &u) + &(&v * other);
-      debug_assert!(bool::from(recovered.positive));
-      debug_assert_eq!(recovered.value.0, gcd.0);
-      debug_assert!(bool::from((!u.0.ct_gt(&boxed_uint_div(b, &gcd.0))) | b_is_zero));
-      debug_assert!(bool::from((!v.value.0.ct_gt(&boxed_uint_div(a, &gcd.0))) | a.is_zero()));
-    }
-
-    (gcd, u, v)
-  }
-}
-
 #[test]
 fn test_integer_sub() {
   // Positive minus smaller positive
@@ -567,56 +448,5 @@ fn test_integer_div() {
     assert!(bool::from(res.positive.ct_eq(&1.into())));
     assert_eq!(res.value.0, BoxedUint::one());
     assert_eq!(rem.0, BoxedUint::one());
-  }
-}
-
-#[test]
-fn gcd() {
-  // Ensure the underlying crypto-bigint handles the case where one is zero correctly
-  assert_eq!(BoxedUint::one().gcd(&BoxedUint::zero()), BoxedUint::one());
-
-  {
-    let (gcd, u, v) =
-      UnsignedInteger(BoxedUint::one()).extended_gcd(&UnsignedInteger(BoxedUint::zero()));
-    assert_eq!(gcd.0, BoxedUint::one());
-    assert_eq!(u.0, BoxedUint::one());
-    assert!(bool::from(v.positive.ct_eq(&1.into())));
-    assert_eq!(v.value.0, BoxedUint::zero());
-  }
-
-  {
-    let (gcd, u, v) =
-      UnsignedInteger(BoxedUint::from(2u8)).extended_gcd(&UnsignedInteger(BoxedUint::from(3u8)));
-    assert_eq!(gcd.0, BoxedUint::one());
-    assert_eq!(u.0, BoxedUint::from(2u8));
-    assert!(bool::from(v.positive.ct_eq(&0.into())));
-    assert_eq!(v.value.0, BoxedUint::one());
-  }
-
-  {
-    let (gcd, u, v) =
-      UnsignedInteger(BoxedUint::from(4u8)).extended_gcd(&UnsignedInteger(BoxedUint::from(8u8)));
-    assert_eq!(gcd.0, BoxedUint::from(4u8));
-    assert_eq!(u.0, BoxedUint::one());
-    assert!(bool::from(v.positive.ct_eq(&1.into())));
-    assert_eq!(v.value.0, BoxedUint::zero());
-  }
-
-  {
-    let (gcd, u, v) =
-      UnsignedInteger(BoxedUint::from(4u8)).extended_gcd(&UnsignedInteger(BoxedUint::from(10u8)));
-    assert_eq!(gcd.0, BoxedUint::from(2u8));
-    assert_eq!(u.0, BoxedUint::from(3u8));
-    assert!(bool::from(v.positive.ct_eq(&0.into())));
-    assert_eq!(v.value.0, BoxedUint::one());
-  }
-
-  {
-    let (gcd, u, v) =
-      UnsignedInteger(BoxedUint::from(2u8)).extended_gcd(&UnsignedInteger(BoxedUint::from(2u8)));
-    assert_eq!(gcd.0, BoxedUint::from(2u8));
-    assert_eq!(u.0, BoxedUint::one());
-    assert!(bool::from(v.positive.ct_eq(&1.into())));
-    assert_eq!(v.value.0, BoxedUint::zero());
   }
 }
