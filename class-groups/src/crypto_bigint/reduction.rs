@@ -11,10 +11,47 @@
 //! outputs of each function. This is done via brief proofs written in comments within each
 //! function.
 
-use crypto_bigint::{Choice, CtEq, CtLt, CtGt, CtSelect, Limb, UintRef};
+use crypto_bigint::{Choice, CtEq, CtSelect, CtLt, CtGt, Zero, BitOps, Limb, UintRef};
 
-mod limbs;
-pub(super) use limbs::Limbs;
+/// A collection of limbs and associated helper methods.
+///
+/// The provided reduction algorithm dances along the `Limb` boundaries, performance requiring
+/// correct decision of when to terminate execution of a given function. This API unifies `Uint`
+/// and `BoxedUint` (in a way `Integer` appeared ineligible for) while providing the niche methods
+/// required for performance.
+///
+/// Implementations MAY iterate up to the `limbs` argument (for performance) or MAY ignore it.
+/// Callers MUST NOT expect that if they specify a `limbs` argument, operations will only occur to
+/// that subset of limbs, and any results are undefined when any non-included limbs are non-zero.
+/// Callers MUST NOT specify more `limbs` than the value has.
+///
+/// Implementations MUST implement all functions in time constant to the value of the inputs,
+/// except for the amount of limbs, unless otherwise stated. Implementations MUST NOT panic for any
+/// input which the caller MAY pass.
+///
+/// A long-term goal is to replace this entirely for just `UintRef`. Currently, the reduction
+/// algorithm still requires allocating one scratch variable however, making this non-immediate.
+pub(crate) trait Limbs: AsRef<[Limb]> + AsMut<[Limb]> + CtEq + Zero + BitOps {
+  /// The number but with precision equal to `self`.
+  ///
+  /// This is equivalent to [`crypto_bigint::Zero::zero_like`] but avoids requiring `Self: Clone`.
+  /// We do not want to bound `Self: Clone` for performance reasons. Specifically, it's a goal of
+  /// the reduction algorithm to not allocate at all (for performance reasons), this one function
+  /// being necessary in one spot and the current sole exception.
+  fn like_zero(&self) -> Self;
+
+  /// Swap the values of `self` and `b` if `choice` is `true`.
+  ///
+  /// This is a basic helper as there is no `UintRef::ct_swap`.
+  #[inline(always)]
+  fn swap(&mut self, b: &mut Self, choice: Choice) {
+    let a = &mut <_ as AsMut<[Limb]>>::as_mut(self);
+    let b = &mut <_ as AsMut<[Limb]>>::as_mut(b);
+    for (a, b) in a.iter_mut().zip(b.iter_mut()) {
+      <_>::ct_swap(a, b, choice);
+    }
+  }
+}
 
 /// Obtain the equivalent form `(a', b', c')` for which `floor(log_2(a')) <= floor(log_2(c'))`.
 ///
