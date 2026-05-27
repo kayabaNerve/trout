@@ -43,14 +43,15 @@ pub struct CryptoBigintStackElement {
   a: U,
   b: I,
   c: WideU,
-  discriminant: WideI,
+  discriminant_abs: WideU,
 }
 
 impl PartialEq for CryptoBigintStackElement {
   fn eq(&self, other: &Self) -> bool {
-    let a = Self::reduce(self.a, self.b, self.discriminant);
-    let other = Self::reduce(other.a, other.b, other.discriminant);
-    (a.a.ct_eq(&other.a) & a.b.ct_eq(&other.b) & a.discriminant.ct_eq(&other.discriminant)).into()
+    let a = Self::reduce(self.a, self.b, self.discriminant_abs);
+    let other = Self::reduce(other.a, other.b, other.discriminant_abs);
+    (a.a.ct_eq(&other.a) & a.b.ct_eq(&other.b) & a.discriminant_abs.ct_eq(&other.discriminant_abs))
+      .into()
   }
 }
 impl Eq for CryptoBigintStackElement {}
@@ -65,7 +66,7 @@ impl Zeroize for CryptoBigintStackElement {
     // Set to the identity
     self.a = U::ONE;
     self.b = I::from(U::ONE);
-    self.c = (WideU::ONE + self.discriminant.abs()).overflowing_shr_vartime(2).unwrap();
+    self.c = (WideU::ONE + self.discriminant_abs).overflowing_shr_vartime(2).unwrap();
   }
 }
 
@@ -77,13 +78,13 @@ impl crypto_bigint::CtSelect for CryptoBigintStackElement {
       c: WideU::ct_select(&self.c, &b.c, choice),
       // Safe since `Element` is documented to have undefined behavior when mixed across class
       // groups
-      discriminant: self.discriminant,
+      discriminant_abs: self.discriminant_abs,
     }
   }
 }
 
 impl CryptoBigintStackElement {
-  fn partial_reduce(a: WideU, b: WideI, discriminant: WideI) -> Self {
+  fn partial_reduce(a: WideU, b: WideI, discriminant_abs: WideU) -> Self {
     /*
       `partial_reduce` yields `a, b` coefficients which are bounded by the square root of delta, so
       the `a` from composition will be bounded by delta. The `b` coefficient is bound to be
@@ -93,30 +94,30 @@ impl CryptoBigintStackElement {
       bound.
     */
     let (a, b_decomposed, c) = super::partial_reduce(
-      2 + discriminant.abs().bits_vartime(),
+      2 + discriminant_abs.bits_vartime(),
       a,
-      (b.positive(), *b.abs()),
-      discriminant.abs(),
+      (b.positive, *b.abs()),
+      &discriminant_abs,
     );
     let (a, a_hi) = a.split();
     debug_assert!(bool::from(a_hi.is_zero()));
     let (b_abs, b_abs_hi) = b_decomposed.1.split();
     debug_assert!(bool::from(b_abs_hi.is_zero()));
     let b = IStruct::from(b_abs).ct_neg(!b_decomposed.0);
-    Self { a, b, c, discriminant }
+    Self { a, b, c, discriminant_abs }
   }
-  fn reduce(a: U, b: I, discriminant: WideI) -> Self {
-    let b_decomposed = (b.positive(), *b.abs());
+  fn reduce(a: U, b: I, discriminant_abs: WideU) -> Self {
+    let b_decomposed = (b.positive, *b.abs());
     let (a, b_decomposed, c) = super::reduce(
-      discriminant.abs().bits_vartime().div_ceil(2),
+      discriminant_abs.bits_vartime().div_ceil(2),
       a.concat(&Uint::ZERO),
       (b_decomposed.0, b_decomposed.1.concat(&Uint::ZERO)),
-      discriminant.abs(),
+      &discriminant_abs,
     );
     let a = a.split().0;
     let mut b = IStruct::from(b_decomposed.1.split().0);
-    b = <_>::ct_select(&-b, &b, b_decomposed.0);
-    Self { a, b, c, discriminant }
+    b.positive = b_decomposed.0;
+    Self { a, b, c, discriminant_abs }
   }
 }
 
@@ -124,7 +125,7 @@ impl crate::Element for CryptoBigintStackElement {
   const MAX_TABLE_BITS: u32 = 12;
 
   fn is_identity(&self) -> subtle::Choice {
-    let a = Self::reduce(self.a, self.b, self.discriminant);
+    let a = Self::reduce(self.a, self.b, self.discriminant_abs);
     (a.a.ct_eq(&U::ONE) & a.b.ct_eq(&I::from(U::ONE))).into()
   }
 
@@ -136,9 +137,9 @@ impl crate::Element for CryptoBigintStackElement {
     let c2 = other.c;
 
     let (a3, b3) =
-      super::generic::add(a1, (b1.positive(), *b1.abs()), a2, (b2.positive(), *b2.abs()), c2);
+      super::generic::add(a1, (b1.positive, *b1.abs()), a2, (b2.positive, *b2.abs()), c2);
 
-    Self::partial_reduce(a3, IStruct::from(b3.1).ct_neg(!b3.0), self.discriminant)
+    Self::partial_reduce(a3, IStruct::from(b3.1).ct_neg(!b3.0), self.discriminant_abs)
   }
 
   fn double(&self) -> CryptoBigintStackElement {
@@ -146,9 +147,9 @@ impl crate::Element for CryptoBigintStackElement {
     let b = self.b;
     let c = self.c;
 
-    let (a3, b3) = super::generic::double(a, (b.positive(), *b.abs()), c);
+    let (a3, b3) = super::generic::double(a, (b.positive, *b.abs()), c);
 
-    Self::partial_reduce(a3, IStruct::from(b3.1).ct_neg(!b3.0), self.discriminant)
+    Self::partial_reduce(a3, IStruct::from(b3.1).ct_neg(!b3.0), self.discriminant_abs)
   }
 
   fn sub(&self, other: CryptoBigintStackElement) -> CryptoBigintStackElement {
@@ -242,15 +243,15 @@ impl crate::Element for CryptoBigintStackElement {
       a: U::from_be_slice(&full_bytes(usize::try_from(A_BITS).unwrap(), a)),
       b,
       c: WideU::from_be_slice(&full_bytes(usize::try_from(WideU::BITS).unwrap(), c)),
-      discriminant: -WideI::from(WideU::from_be_slice(&full_bytes(
-        usize::try_from(BITS).unwrap(),
+      discriminant_abs: WideU::from_be_slice(&full_bytes(
+        usize::try_from(WideU::BITS).unwrap(),
         abs_value_of_neg_discriminant,
-      ))),
+      )),
     }
   }
 
   fn a(&self) -> Vec<u8> {
-    let bytes = Self::reduce(self.a, self.b, self.discriminant).a.to_be_bytes();
+    let bytes = Self::reduce(self.a, self.b, self.discriminant_abs).a.to_be_bytes();
     let mut start = 0;
     while bytes.get(start) == Some(&0) {
       start += 1;
@@ -259,20 +260,21 @@ impl crate::Element for CryptoBigintStackElement {
   }
 
   fn b(&self) -> (subtle::Choice, Vec<u8>) {
-    let b = Self::reduce(self.a, self.b, self.discriminant).b;
+    let b = Self::reduce(self.a, self.b, self.discriminant_abs).b;
     let bytes = b.abs().to_be_bytes();
     let mut start = 0;
     while bytes.get(start) == Some(&0) {
       start += 1;
     }
-    (b.positive().into(), bytes[start ..].to_vec())
+    (b.positive.into(), bytes[start ..].to_vec())
   }
 }
 
 impl Neg for CryptoBigintStackElement {
   type Output = Self;
   fn neg(mut self) -> Self {
-    self.b = -self.b;
+    // We do not have to worry about if `b = 0` as `b` is odd when the discriminant is odd
+    self.b.positive = !self.b.positive;
     self
   }
 }
