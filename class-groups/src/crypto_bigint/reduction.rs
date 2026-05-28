@@ -702,7 +702,7 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `b'^2 <= |delta|`
 /// - `(a', b', c')` is reduced or `b' > a'`
-/// = `gcd(a, b, c) = gcd(a', b', c')`
+/// - `gcd(a, b, c) = gcd(a', b', c')`
 ///
 /// As composition is presumably programmed to compose `b`-bit-length numbers, where composition
 /// outputs `2 * b`-bit-length numbers, this function intends to solely perform the necessary
@@ -796,7 +796,7 @@ pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
 /// Yield the reduced equivalent form `(a', b', c')` such that:
 /// - `|b'| <= a' <= c'`
 /// - `b' >= 0` if `(|b'| == a') || (a' == c')`
-/// = `gcd(a, b, c) = gcd(a', b', c')`
+/// - `gcd(a, b, c) = gcd(a', b', c')`
 ///
 /// `b.0, b'.0` are `true` if the value is _positive_.
 ///

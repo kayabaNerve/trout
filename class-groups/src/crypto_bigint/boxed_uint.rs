@@ -160,4 +160,8 @@ impl super::element::Limbs for BoxedUint {
     }
     Self::from_be_slice(bytes, max_bits).unwrap()
   }
+
+  fn wide_gcd(x: Self::Wide, y: Self::Wide) -> impl One {
+    x.gcd(&y)
+  }
 }

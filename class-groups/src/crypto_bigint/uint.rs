@@ -1,4 +1,4 @@
-use crypto_bigint::{Encoding, Concat, SplitEven, NonZero, Uint};
+use crypto_bigint::{Encoding, Concat, SplitEven, NonZero, One, Uint};
 
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where
@@ -117,5 +117,9 @@ where
     fixed_bytes.as_mut()[(Uint::<WIDE_LIMBS>::BYTES - bytes.len()) ..].copy_from_slice(bytes);
 
     Self::Wide::from_be_bytes(fixed_bytes)
+  }
+
+  fn wide_gcd(x: Self::Wide, y: Self::Wide) -> impl One {
+    x.gcd(&y)
   }
 }

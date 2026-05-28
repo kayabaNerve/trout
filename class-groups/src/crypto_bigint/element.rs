@@ -2,7 +2,7 @@ use core::{ops::Neg, fmt::Debug};
 
 use zeroize::Zeroize;
 
-use crypto_bigint::{CtEq, CtSelect, CtAssign, BitOps, One, Choice, Limb};
+use crypto_bigint::{CtEq, CtGt, CtSelect, CtAssign, BitOps, One, Choice, Limb};
 
 use super::I;
 
@@ -15,6 +15,7 @@ pub(super) trait Limbs:
   + Zeroize
   + CtEq
   + CtSelect
+  + BitOps
   + super::composition::Limbs<
     Wide: Send
             + Sync
@@ -61,9 +62,12 @@ pub(super) trait Limbs:
   /// equal to `max_bits`.`max_bits` MUST be less than or equal to `2 * Self::max_bits()` when
   /// `Self::max_bits().is_some()`.
   fn wide_from_be_slice(bytes: &[u8], max_bits: u32) -> Self::Wide;
+
+  /// Calculate the GCD of `x, y`.
+  fn wide_gcd(x: Self::Wide, y: Self::Wide) -> impl One;
 }
 
-/// A constant-time element of a class group, implemented via `crypto-bigint`.
+/// A constant-time primitive element of a class group, implemented via `crypto-bigint`.
 ///
 /// This only supports discriminants `delta` such that $delta < 0, |delta| \cong 3 \mod 4$.
 ///
@@ -126,7 +130,7 @@ impl<U: Limbs> CtEq for CryptoBigintElement<U> {
     /*
       We do not check the `c` coefficient is equal, as if the `a, b` coefficients are equal, the
       `c` coefficient will be so long as these forms are of the same discriminant (and if not,
-      we're allowed to return an incorrect result).
+      we're allowed to return an incorrect result, which is why we don't check the discriminant).
     */
     a.a.ct_eq(&other.a) & a.b.0.ct_eq(&other.b.0) & a.b.1.ct_eq(&other.b.1)
   }
@@ -141,6 +145,9 @@ impl<U: Limbs> Eq for CryptoBigintElement<U> {}
 
 impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
   /// This is only valid for forms where $|delta| \cong 3 \mod 4$.
+  ///
+  /// This does not zeroize the discriminant, solely the `a, b, c` coefficients, and will set the
+  /// result to the identity element of the same discriminant.
   fn zeroize(&mut self) {
     // Zeroize
     self.a.zeroize();
@@ -151,12 +158,17 @@ impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
 
     /*
       The identity element has `a = 1`. As composition sets $a_3 = (a_1 * a_2) / gcd(a_1, a_2)^2$,
-      it's clear how having one $a_1 = 1$ causes $a_3 = a_2$ (or vice-versa). As for the `b`
-      coefficient, the only `b` coefficient less than or equal to an `a` coefficient of `1` (as
-      required for a reduced form) is itself `1`. As `|b| == a`, then `b` must be positive.
-      Finally, for the `c` coefficient, we are able to calculate it from the `a, b` coefficients.
+      it's clear how having one $a_1 = 1$ causes $a_3 = a_2$ (or $a_2 = 1$ causes $a_3 = a_1$). As
+      for the `b` coefficient, the only `b` coefficient less than or equal to an `a` coefficient of
+      `1` (as required for a reduced form) is itself `1`. As `|b| == a`, then `b` must be positive.
+      Finally, for the `c` coefficient, we are able to calculate it from the `a, b` coefficients
+      and the discriminant.
+
+      The identity element is primitive as `gcd(a, b, c) = gcd(1, 1, c) = 1`.
     */
     <_ as AsMut<[Limb]>>::as_mut(&mut self.a)[0] = Limb::ONE;
+    // As we zeroized `a`, this may be unnecessary if `zeroize` literally wrote zeroes, but we
+    // don't assume that here and still manually write zeroes
     for limb in &mut <_ as AsMut<[Limb]>>::as_mut(&mut self.a)[1 ..] {
       *limb = Limb::ZERO;
     }
@@ -216,8 +228,17 @@ impl<U: Limbs> crypto_bigint::CtSelect for CryptoBigintElement<U> {
 
 impl<U: Limbs> Neg for CryptoBigintElement<U> {
   type Output = Self;
+  /// This is only correct for primitives forms where $delta \cong 1 \mod 2$.
   fn neg(mut self) -> Self {
     /*
+      Per Proposition 5.2.5 of A Course in Computational Algebraic Number Theory, a binary
+      quadratic form is only invertible if `(a, b, c)` is primitive, hence why we bound the input
+      to be primitive.
+
+      Proposition 5.2.5 also includes a very academic description of the inverse, which here is
+      implemented as negating the `b` coefficient. TODO: Provide a better citation/explanation for
+      this?
+
       While `-0` is of unclear validity in this context, we know that this result will _NOT_ be
       `-0` as $b \cong 1 \mod 2$ for odd discriminants (as we bound).
     */
@@ -310,6 +331,7 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     (is_one.is_one() & is_zero.is_zero()).into()
   }
 
+  /// This is only correct for forms of the same discriminant where at least one form is primitive.
   fn add(&self, other: &Self) -> Self {
     /*
       TODO: We additionally need an argument this form is primitive. Presumably, we argue the
@@ -337,11 +359,13 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     Self::partial_reduce(a3, b3, self.discriminant_abs.clone())
   }
 
+  /// This is only correct when the form is primitive.
   fn double(&self) -> Self {
     let (a3, b3) = super::double(self.a.clone(), self.b.clone(), self.c.clone());
     Self::partial_reduce(a3, b3, self.discriminant_abs.clone())
   }
 
+  /// This is only correct for forms of the same discriminant where at least one form is primitive.
   fn sub(&self, other: Self) -> Self {
     let (a3, b3) = super::add(
       self.a.clone(),
@@ -353,6 +377,8 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     Self::partial_reduce(a3, b3, self.discriminant_abs.clone())
   }
 
+  /// This is only correct when `identity` is in fact the identity element for the class group the
+  /// elements in the table belong to.
   fn multiexp(identity: &Self, pairs: &[(&Table<Self>, &[u8])]) -> Self {
     let mut longest_scalar_bits = 0;
     for (_table, scalar) in pairs {
@@ -418,7 +444,14 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   /// discriminant itself congruent to 1 modulo 4, as `abs_value_of_neg_discriminant_cong_1_mod_4`
   /// represents its negative (absolute) value).
   ///
+  /// `abs_value_of_neg_discriminant_cong_1_mod_4` MUST fit within `(2 * max_bits) - 2` bits, where
+  /// `max_bits` is the capacity of the container `U`. `a, b` MUST be less than the square root of
+  /// the discriminant and `c` MUST be less than the discriminant. `a, b, c` MUST specify a
+  /// primitive form with discriminant `-abs_value_of_neg_discriminant_cong_1_mod_4` but MAY
+  /// specify an unreduced form.
+  ///
   /// This function MAY run in time variable to the amount of leading zeroes in its inputs.
+  // TODO: Adjust this function to return an error
   fn from_be_abc_discriminant_tess_root_unchecked(
     a: &[u8],
     b_positive: subtle::Choice,
@@ -450,9 +483,19 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
 
     let discriminant_bits = discriminant_abs.bits_vartime();
 
-    let a = U::from_be_slice(a, 1 + discriminant_bits.div_ceil(2));
-    let b = (Choice::from(b_positive), U::from_be_slice(b, 1 + discriminant_bits.div_ceil(2)));
+    let sqrt_discriminant_bits = discriminant_bits.div_ceil(2);
+    let a = U::from_be_slice(a, 1 + sqrt_discriminant_bits);
+    assert!(bool::from(!a.bits().ct_gt(&sqrt_discriminant_bits)));
+    let b = (Choice::from(b_positive), U::from_be_slice(b, 1 + sqrt_discriminant_bits));
+    assert!(bool::from(!b.1.bits().ct_gt(&sqrt_discriminant_bits)));
     let c = U::wide_from_be_slice(c, discriminant_bits);
+
+    assert!(
+      bool::from(
+        U::wide_gcd(U::widen(a.clone().xgcd(b.1.clone()).d, discriminant_bits), c.clone()).is_one()
+      ),
+      "imprimitive form"
+    );
 
     Self { a, b, c, discriminant_abs }
   }
