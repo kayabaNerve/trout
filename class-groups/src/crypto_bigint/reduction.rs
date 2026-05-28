@@ -336,7 +336,7 @@ fn reduce_to_next_bit<L: Limbs>(
         This is incompatible with needing to perform a borrowing subtraction of `2 m a`. Instead,
         we rewrite it as `b + -(2 m a)`, where `2 m a`'s negation can be expressed with a
         carrying addition. This means all three aspects (negating `b` if necessary, negating
-        `2 m a`, and summing `b, 2 m a`) can be so expressed and done simultaneously.
+        `2 m a`, and summing `b, -2 m a`) can be so expressed and done simultaneously.
       */
       {
         let two_m_a_limb: Limb = ((*m_a_limb) << 1) | two_m_a_carry;
@@ -647,6 +647,42 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
   (a, b, c)
 }
 
+/*
+  We wish to prove that for `(a, b, c)` input to the reduction algorithm, the output `(a', b', c')`
+  satisfies `gcd(a, b, c) = gcd(a', b', c')`.
+
+  The reduction algorithm solely repeatedly performs one of the following two actions:
+  `(a, b, c)` -> `(c, -b, a)`
+  `(a, b, c)` -> `(a, b - 2ma, c - m|b| + m^2 a)`
+
+  It is immediate that `gcd(a, b, c) = gcd(c, -b, a)` as `0 <= a, c`.
+
+  For the second action, we require an identity (which we state and assume but do not prove here):
+  - `gcd(x + z * y, y) = gcd(x, y)` for any integer `z` (positive or negative), which we refer to
+    as the modular identity due to its corollary `gcd(x % y, y) = gcd(x, y)`
+  and the following definition of a three-argument GCD call:
+  - `gcd(x, y, z) = gcd(gcd(x, y), z)`
+
+  Via the modular identity, `gcd(a, b) = gcd(a, b - 2ma)` is immediate. In order to now prove
+  `gcd(a, b, c) = gcd(a, b - 2ma, c - m|b| + m^2 a)`, we rewrite the right-hand side using our
+  definition of a three-argument GCD call as:
+
+    `gcd(gcd(a, b), c - m|b| + m^2 a)`
+
+  (simplifying `gcd(a, b - 2 ma)` to ust `gcd(a, b)`, as we've proven them equivalent)
+
+  The second argument to the outer-GCD call expands as
+  `c - m(|b| / gcd(a, b)) gcd(a, b) + m^2 (a / gcd(a, b)) gcd(a, b)`, and is able to be rewritten
+  as `c - (m(|b| / gcd(a, b)) + m^2 (a / gcd(a, b))) gcd(a, b)`, from which it's clear the modular
+  identity proves our desired result as when `z = m(|b| / gcd(a, b)) + m^2 (a / gcd(a, b))`, we
+  have:
+
+    `gcd(gcd(a, b), c - z gcd(a, b))`
+
+  Accordingly, for an element `(a, b, c)` input to the reduction algorithm, the output
+  `(a', b', c')` satisfies `gcd(a, b, c) = gcd(a', b', c')`.
+*/
+
 /// Partially reduce a positive definite binary quadratic form.
 ///
 /// For a positive definite binary quadratic form `(a, b, c)` such that:
@@ -666,6 +702,7 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 /// Yield an equivalent form `(a', b', c')` such that:
 /// - `b'^2 <= |delta|`
 /// - `(a', b', c')` is reduced or `b' > a'`
+/// = `gcd(a, b, c) = gcd(a', b', c')`
 ///
 /// As composition is presumably programmed to compose `b`-bit-length numbers, where composition
 /// outputs `2 * b`-bit-length numbers, this function intends to solely perform the necessary
@@ -759,6 +796,7 @@ pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
 /// Yield the reduced equivalent form `(a', b', c')` such that:
 /// - `|b'| <= a' <= c'`
 /// - `b' >= 0` if `(|b'| == a') || (a' == c')`
+/// = `gcd(a, b, c) = gcd(a', b', c')`
 ///
 /// `b.0, b'.0` are `true` if the value is _positive_.
 ///
