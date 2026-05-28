@@ -73,32 +73,11 @@
   and the following definition of a three-argument GCD call:
   - `gcd(x, y, z) = gcd(gcd(x, y), z)`
 
-  For the equation `ub + va = d1`, we note that `u, v` are coprime as the equation can be
-  rewritten as `(b / d1) u + (a / d1) v = 1`.  Additionally, we know at least one of
-  `b / d1, a / d1` is coprime to `d1`, as if neither were, `d1` would not be the GCD of `a, b`.
-  We write two proofs for our desired statement, one where `a / d1` is coprime to `d1`, and one
-  where `b / d1` is coprime to `d1`.
-
-  When `a / d1` is coprime to `d1`, the proof is quite short.
-  - `d1 = gcd(a, b)`
-  - By a corollary of the identity `gcd(x * z, y) = gcd(x, y) * gcd(z, y)`, when `z` is coprime
-    to `x`, `gcd(a / d1, b) = 1` (as then,
-    `gcd(a / d1 * d1, b) = gcd(a / d1, b) * gcd(d1, b) = 1 * d1 = d1`, completing the identity)
-  - By the modular identity,
-    `gcd(a / d1, b + (a / d1) * r) = gcd(a / d1, b) = gcd(a / d1, b3) = 1`
-  - `gcd(a3, b3) = gcd((a / d1)^2, b3) = 1` as `gcd(a / d1, b3) = 1`
-
-  When `b / d1` is coprime to `d1`, the proof is more involved, as `d1` is not cleared from `b`
-  during the production of `b3`.
-
-  We define `d1' = gcd(a3, b3) = gcd((a / d1)^2, b)`, with the properties `sqrt(d1') | d1` and
-  `d1' | d1^2`. We remember that the input satisfies `gcd(a, b, c) = 1`, and as `gcd(a, b) = d1`,
-  then `gcd(d1, c) = 1` must be true. By extension, `gcd(d1', c) = 1`.
-
-  "sqrt" is an absue of notation as `d1'` may not be a square. Here, it's defined such that
-  `sqrt(d1')` is the list of _unique_ prime factors in `d1'` such that `sqrt(d1') | d1'`, and
-  importantly, `sqrt(d1') | d1`. This lets us establish that being coprime to either `sqrt(d1')`,
-  `d1'`, or `d1`, is sufficient to be coprime to `d1'` as required.
+  We define, in an abuse of notation, `sqrt(d1') = gcd(a / d1, b)` and
+  `d1' = gcd((a / d1)^2, b) = gcd(a3, b3)`, with the important properties `sqrt(d1') | d1'` and
+  `d1' | d1^2`. This lets us establish that being coprime to `sqrt(d1')` is sufficient to be
+  coprime to `d1'` as required. We remember that the input satisfies `gcd(a, b, c) = 1`, and as
+  `gcd(a, b) = d1`, then `gcd(d1, c) = 1` must be true, and therefore `gcd(d1', c) = 1`.
 
   We prove `c3` coprime to `sqrt(d1')` as follows:
 
@@ -119,7 +98,7 @@
   this proves `gcd(u, sqrt(d1')) = 1`, completing the proof `c3` is coprime to `sqrt(d1')`, and
   therefore that `c3` is coprime to `gcd(a3, b3)`.
 
-  This completes the proof that the following doubling algorithm, which outputs `(a3, b3, c3)` as
+  This completes the sketch that the following doubling algorithm, which outputs `(a3, b3, c3)` as
   described above, preserves primitivity of the input `(a, b, c)`.
 */
 
