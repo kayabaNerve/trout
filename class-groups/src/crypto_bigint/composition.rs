@@ -12,95 +12,9 @@
 //! The important aspect of this code is that it's clearly bounded as necessary to verify the
 //! correctness of the implemented algortithm. Despite this, the implemented algorithm is not
 //! itself proven here, it being Algorithm 5.4.7 Composition of Positive Definite Forms from
-//! A Course in Computational Algebraic Number Theory by Henri Cohen (as commonly implemted in its
-//! optimized variant as "NUCOMP").
-
-/*
-  The comment composition preserves primitivity is frequently remarked but I (kayabaNerve), can not
-  find a single worthwhile citation for that. Cohen left it as an exercise to the reader
-  (Chapter 5, Exercise 9). Most literature deals with class groups over fundamental discriminants,
-  for which all forms are claimed to be primitive (itself infrequently proven and lacking any
-  worthwhile citation), and with little literature for non-fundamental discriminants.
-
-  The NICE cryptosystem did use a non-fundamental discriminant, and included a composition
-  algorithm which appears approximate to Algorithm 5.4.7 albeit without `d_0` (as required when
-  working with imprimitive forms), implying they solely work with primitive forms, but lacking any
-  commentary on the matter.
-
-  "Linearly Homomorphic Encryption from DDH" by Guilhem Castagnos and Fabien Laguillaumie,
-  https://eprint.iacr.org/2015/047, does state in Appendix B.1 that the order of the class group
-  with non-fundamental discriminant, as they've constructed, has order exactly `p` times greater
-  than the order of the class group with fundamental discriminant (which is echoed by a remark
-  following the presentation of Algorithm 5.3.5). By Proposition 5.3.3, the order is equivalent to
-  the amount of primitive reduced forms, implying all elements we work with are in fact primitive
-  (at least, one reduced).
-
-  Due to the ambiguity, and lack of a proof/citation however, the following is a sketch at a proof
-  that `gcd(a3, b3, c3) = 1` when the inputs are primitive. While potentially unnecessary due to
-  how accepted this result is, and potentially overzealous as we sketch a proof of this but don't
-  sketch a proof of the algorithm for composition, it's still included as we do need confidence all
-  our forms are primitive. The complexities of working with a non-fundamental discriminant, and
-  introducing partial reduction, really require every checkbox is properly ticked.
-
-  As an aside, the reduction algorithm is proven to preserve primitivity in a way which implies if
-  reduced forms are primitive, so are non-reduced forms, so a proof reduced forms are primitive
-  would be sufficient for our purposes (even without a proof composition outputs primitive forms).
-  This aligns with a comment following Definition 5.2.3,
-  "One can also easily check that equivalence preserves primitivity". To be complete, we do prove
-  both reduction to preserve primitivity (in its location) and composition preserves primitivity
-  (with the following sketch).
-*/
-
-/*
-  The following is solely for the case `a2 = a1, b2 = b1, c2 = c1`, for which we notate
-  `a{1, 2}` as `a`, `b{1, 2}` as `b`, and `c{1, 2}` as `c`.
-
-  TODO: Expand to the group operation as a whole.
-
-  `a, b, c` are considered arbitrary integers, with `0 <= a, c`
-
-  `d1 = gcd(a, b)`
-  `a3 = (a / d1)^2`
-  `r = -u c \mod (a / d1)` where `u` is an integer solution for the equation `ub + va = d1`
-  `b3 = b + (a / d1) * r`
-  `c3 = (c d1 + r (b + (a / d1) r)) / (a / d1)`
-
-  We wish to prove `gcd(a3, b3, c3) = 1` when `gcd(a, b, c) = 1`.
-
-  We require an identity (which we state and assume but do not prove here):
-  - `gcd(x + z * y, y) = gcd(x, y)` for any integer `z` (positive or negative), which we refer to
-    as the modular identity due to its corollary `gcd(x % y, y) = gcd(x, y)`
-  and the following definition of a three-argument GCD call:
-  - `gcd(x, y, z) = gcd(gcd(x, y), z)`
-
-  We define, in an abuse of notation, `sqrt(d1') = gcd(a / d1, b)` and
-  `d1' = gcd((a / d1)^2, b) = gcd(a3, b3)`, with the important properties `sqrt(d1') | d1'` and
-  `d1' | d1^2`. This lets us establish that being coprime to `sqrt(d1')` is sufficient to be
-  coprime to `d1'` as required. We remember that the input satisfies `gcd(a, b, c) = 1`, and as
-  `gcd(a, b) = d1`, then `gcd(d1, c) = 1` must be true, and therefore `gcd(d1', c) = 1`.
-
-  We prove `c3` coprime to `sqrt(d1')` as follows:
-
-  We rewrite `c3 = (c d1 + r (b + (a / d1) r)) / (a / d1)` as:
-  - `c3 = (c d1 + r (b + (a / d1) r)) * (d1 / a)`
-  - `c3 = (c d1^2 + r (b + (a / d1) r) d1) / a`
-  - `c3 = c d1^2 / a + r (b + (a / d1) r) d1 / a`
-  - `c3 = c d1^2 / a + (r b + (a / d1) r^2) d1 / a`
-  - `c3 = c d1^2 / a + (r b d1 + a r^2) / a`
-  - `c3 = c d1^2 / a + r b d1 / a + r^2`
-  And apply the modular identity to reduce to just `gcd(r^2, sqrt(d1'))`. We next aim to
-  prove `gcd(r, sqrt(d1')) = 1` (and therefore `gcd(r^2, sqrt(d1')) = 1`).
-
-  As `r = -u c \mod (a / d1)`, where `gcd(c, d1) = 1`, we solely have to prove
-  `gcd(u, sqrt(d1')) = 1`. Note the operation modulo `a / d1` is congruent as
-  `sqrt(d1') | (a / d1)`. As `u` satisfies `ub + va = d1`, we know the derivative equation
-  `(b / d1) u + v (a / d1) = 1`, and therefore `gcd(u, a / d1) = 1`. As `sqrt(d1') | (a / d1)`,
-  this proves `gcd(u, sqrt(d1')) = 1`, completing the proof `c3` is coprime to `sqrt(d1')`, and
-  therefore that `c3` is coprime to `gcd(a3, b3)`.
-
-  This completes the sketch that the following doubling algorithm, which outputs `(a3, b3, c3)` as
-  described above, preserves primitivity of the input `(a, b, c)`.
-*/
+//! A Course in Computational Algebraic Number Theory by Henri Cohen (as commonly implemented in
+//! its optimized variant as "NUCOMP"). Per a remark, and also Chapter 5, Exercise 9, the composite
+//! of two primitive forms is itself primitive.
 
 use crypto_bigint::{CtEq, CtSelect, CtAssign, Choice, Limb};
 
@@ -393,9 +307,8 @@ pub(crate) trait Limbs:
 
 /// Compose two positive definite binary quadratic forms.
 ///
-/// This requires both forms be well-defined and of the same negative discriminant. Additionally,
-/// we bound $\mathsf{gcd}(a1, a2, c1, c2, (b1 + b2) / 2, (b1 - b2) / 2) = 1$, which is trivially
-/// satisfied when at least one form is primitive. Neither form is bound to be reduced however.
+/// This requires boths form be well-defined, primitive, and with the same negative discriminant.
+/// Neither form is explicitly bound to be reduced however.
 ///
 /// This function assumes:
 /// - `floor(log_2(a1)) + 1 < AsRef::<[Limb]>::as_ref(&a1).len() * Limb::BITS`
@@ -609,9 +522,8 @@ pub(crate) fn add<U: Limbs>(
 
 /// Compose a positive definite binary quadratic form with itself.
 ///
-/// This requires the form be well-defined and of the same negative _odd_ discriminant.
-/// Additionally, we bound $\mathsf{gcd}(a, b, c) = 1$, which is trivially satisfied when the form
-/// is primitive. The form is not bound to be reduced however.
+/// This requires the form be well-defined, primitive, and with negative _odd_ discriminant. The
+/// form is not bound to be reduced however.
 ///
 /// This function assumes:
 /// - `floor(log_2(a)) + 1 < AsRef::<[Limb]>::as_ref(&a).len() * Limb::BITS`
