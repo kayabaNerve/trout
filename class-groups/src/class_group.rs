@@ -8,8 +8,6 @@ use ::malachite::{
   *,
 };
 
-use ::crypto_bigint::BoxedUint;
-
 use crate::{
   *,
   malachite::{natural_from_bytes, natural_to_bytes},
@@ -165,13 +163,35 @@ impl<E: Element> ClassGroup<E> {
       let q_bits = (2 * lambda) - mu;
       let q_bits = u32::try_from(q_bits).unwrap();
       loop {
-        let q = crypto_primes::random_prime::<BoxedUint, _>(
+        let mut seed = vec![0; usize::try_from(q_bits).unwrap().div_ceil(8)];
+        rng.fill_bytes(&mut seed);
+        if (q_bits % 8) != 0 {
+          let high_bit = 1 << ((q_bits % 8) - 1);
+          // Ensure the high bit is set
+          seed[0] |= high_bit;
+          // Mask off any higher bits
+          seed[0] &= (high_bit << 1) - 1;
+        }
+        let q = super::primes::next_prime(
           &mut *rng,
-          crypto_primes::Flavor::Any,
-          q_bits,
+          seed,
+          ({
+            let kappa = u32::try_from((8 * p_be_bytes.len()) / 2).unwrap();
+            let mut closest_power_of_two = 1u32;
+            while (2 * closest_power_of_two) < kappa {
+              closest_power_of_two <<= 1;
+            }
+
+            // $closest_power_of_two < kappa \le (2 * closest_power_of_two)$
+            if kappa.abs_diff(closest_power_of_two) >= kappa.abs_diff(closest_power_of_two << 1) {
+              closest_power_of_two <<= 1;
+            }
+            closest_power_of_two
+          })
+          .max(128),
         );
         let q = natural_from_bytes(q.to_be_bytes().as_ref());
-        debug_assert_eq!(u64::from(q_bits), q.significant_bits());
+        debug_assert!((q.significant_bits() - u64::from(q_bits)) < 1);
         // p * q is congruent to -1 mod 4
         if ((&p * &q) & Natural::from(3u8)) != 3u8 {
           continue;
@@ -262,14 +282,18 @@ impl<E: Element> ClassGroup<E> {
   pub fn generator_p(&self, rng: &mut impl CryptoRng) -> E {
     let prime_limit: Natural = self.delta_p.unsigned_abs_ref().floor_sqrt() >> 1;
     let r = loop {
-      // crypto-primes won't generate a prime up to this large yet solely a prime exactly this
-      // large, limiting the distribution of primes and adding at least one bit of bias
-      let r = crypto_primes::random_prime::<BoxedUint, _>(
-        &mut *rng,
-        crypto_primes::Flavor::Any,
-        u32::try_from(prime_limit.significant_bits()).unwrap(),
-      );
+      let r_bits = u32::try_from(prime_limit.significant_bits()).unwrap();
+      let mut seed = vec![0; usize::try_from(r_bits).unwrap().div_ceil(8)];
+      rng.fill_bytes(&mut seed);
+      if (r_bits % 8) != 0 {
+        let high_bit = 1 << ((r_bits % 8) - 1);
+        // Mask off any bits higher than the square root
+        seed[0] &= (high_bit << 1) - 1;
+      }
+      let r = super::primes::next_prime(&mut *rng, seed, 128);
+
       let r = natural_from_bytes(r.to_be_bytes().as_ref());
+      debug_assert!((r.significant_bits() - u64::from(r_bits)) < 1);
       if r >= prime_limit {
         continue;
       }

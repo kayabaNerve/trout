@@ -21,5 +21,7 @@ mod gmp;
 #[cfg(feature = "gmp")]
 pub use gmp::GmpElement;
 
+mod primes;
+
 mod class_group;
 pub use class_group::ClassGroup;
