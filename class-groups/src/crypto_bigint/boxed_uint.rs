@@ -1,5 +1,5 @@
 use crypto_bigint::{
-  CtAssign, Resize, Zero, One, ConcatenatingSquare, ConcatenatingMul, Gcd, Choice, NonZero,
+  CtEq, CtAssign, Resize, Zero, One, ConcatenatingSquare, ConcatenatingMul, Gcd, Choice, NonZero,
   BoxedUint,
 };
 
@@ -86,7 +86,7 @@ impl super::composition::Limbs for BoxedUint {
 
     #[cfg(debug_assertions)]
     {
-      use crypto_bigint::{CtEq, CtSelect};
+      use crypto_bigint::CtSelect;
       let eq1 = u.concatenating_mul(&self);
       let eq2 = v.concatenating_mul(&other);
       let lhs = <_>::ct_select(
@@ -148,14 +148,14 @@ impl super::element::Limbs for BoxedUint {
 
   #[inline(always)]
   fn from_be_slice(mut bytes: &[u8], max_bits: u32) -> Self {
-    while bytes.first() == Some(&0) {
+    while bytes.first().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
       bytes = &bytes[1 ..];
     }
     Self::from_be_slice(bytes, max_bits).unwrap()
   }
   #[inline(always)]
   fn wide_from_be_slice(mut bytes: &[u8], max_bits: u32) -> Self::Wide {
-    while bytes.first() == Some(&0) {
+    while bytes.first().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
       bytes = &bytes[1 ..];
     }
     Self::from_be_slice(bytes, max_bits).unwrap()

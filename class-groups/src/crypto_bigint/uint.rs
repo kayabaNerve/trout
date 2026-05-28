@@ -1,4 +1,4 @@
-use crypto_bigint::{Encoding, Concat, SplitEven, NonZero, One, Uint};
+use crypto_bigint::{CtEq, Encoding, Concat, SplitEven, NonZero, One, Uint};
 
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where
@@ -98,7 +98,7 @@ where
 
   #[inline(always)]
   fn from_be_slice(mut bytes: &[u8], _max_bits: u32) -> Self {
-    while bytes.first() == Some(&0) {
+    while bytes.first().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
       bytes = &bytes[1 ..];
     }
 
@@ -109,7 +109,7 @@ where
   }
   #[inline(always)]
   fn wide_from_be_slice(mut bytes: &[u8], _max_bits: u32) -> Self::Wide {
-    while bytes.first() == Some(&0) {
+    while bytes.first().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
       bytes = &bytes[1 ..];
     }
 
