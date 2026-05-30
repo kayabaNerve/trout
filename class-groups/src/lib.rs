@@ -3,7 +3,8 @@
 #![deny(missing_docs)]
 #![allow(non_snake_case)]
 
-pub(crate) mod compression;
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 mod element;
 pub use element::*;
@@ -12,7 +13,7 @@ mod malachite;
 pub use malachite::MalachiteElement;
 
 mod crypto_bigint;
-pub use crypto_bigint::CryptoBigintElement;
+pub use crypto_bigint::{Error, CryptoBigintElement};
 #[expect(deprecated)]
 pub use crypto_bigint::{CryptoBigintStackElement, CryptoBigintHeapElement};
 

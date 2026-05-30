@@ -1,15 +1,5 @@
-use core::{
-  ops::{Index, Neg},
-  cmp::Ordering,
-};
+use core::ops::{Index, Neg};
 use std::io;
-
-use ::malachite::{
-  base::num::{arithmetic::traits::*, basic::traits::*},
-  *,
-};
-
-use crate::{malachite::natural_from_bytes, compression};
 
 /// An element of a class group.
 ///
@@ -146,70 +136,28 @@ pub trait Element:
   fn b(&self) -> (subtle::Choice, Vec<u8>);
 
   /// Compress an element.
-  ///
-  /// The compressed representation is of variable-length, but internally length-prefixed such that
-  /// no additional length-prefixing is necessary to read a sequence from a tape. Due to being of
-  /// variable-length, all implementations will fundamentally execute in time variable to the
-  /// arguments (as the provided implementation does).
-  ///
-  /// The exact encoding is as follows:
-  /// - epsilon (1 bit)
-  /// - t' is negative (1 bit)
-  /// - The amount of bytes in the big-endian encoding of a', as a LE-chunked VarInt starting
-  ///   immediately after the sign bits (6 bits + n bytes)
-  /// - The big-endian encoding of a' (n bytes)
-  /// - The amount of bytes in the big-endian encoding of g, as a LE-chunked VarInt (n bytes)
-  /// - The big-endian encoding of g (n bytes)
-  /// - The amount of bytes in the big-endian encoding of t', as a LE-chunked VarInt (n bytes)
-  /// - The big-endian encoding of t' (n bytes)
-  /// - The amount of bytes in the big-endian encoding of b_0, as a LE-chunked VarInt (n bytes)
-  /// - The big-endian encoding of b_0 (n bytes)
+  #[cfg(feature = "std")]
   fn compress(&self, mut writer: impl io::Write) -> io::Result<()> {
-    let a = natural_from_bytes(&self.a());
-    let (epsilon, b) = {
-      let (b_sign, b_value) = self.b();
-      let b = natural_from_bytes(&b_value);
-      // We store `< 0` as `0`, and compression stores `< 0` as `1`
-      ((!b_sign).unwrap_u8(), b)
-    };
+    use crypto_bigint::{NonZero, BoxedUint};
 
-    let (a_, g, t_, b_0) = if a == b {
-      // Since `a >= 0`, `b >= 0`, and `epsilon == 0` as expected
-      (Natural::ONE, a, Integer::ZERO, Natural::ZERO)
-    } else if b == 0 {
-      // Since `b >= 0`, `epsilon == 0` as expected
-      (a, Natural::ZERO, Integer::ZERO, Natural::ZERO)
-    } else {
-      let (s, t) = compression::partial_xgcd(a.clone(), b.clone());
-      // Calculate the positive GCD of a, t
-      let (g, _x, _y) = a.clone().extended_gcd(t.unsigned_abs_ref());
-      // a and g are positive so this is unsigned
-      let a_ = &a / &g;
-      // t may be negative so this is an integer
-      let t_ = t / Integer::from(g.clone());
-      // `g`, `a`, `a_` are positive so `f` is unsigned
-      let f = compression::f(&a, &a_, g.clone());
-      assert_eq!(&s % &g, Natural::ZERO);
-      // `b` is in its absolute value form and `f` is positive, so `b_0` is unsigned
-      let b_0 = b % &f;
-      // (unsigned, unsigned, signed, unsigned)
-      (a_, g, t_, b_0)
-    };
+    let a = self.a();
+    let a =
+      BoxedUint::from_be_slice(&a, u32::try_from(8 * a.len()).expect("4 GB `a` coefficient?"))
+        .expect("container overflowed despite precision proportional to length of the encoding");
+    let a = NonZero::new(a).expect("`a > 0` when `delta < 0`");
 
-    /*
-      We now need to convert `(a_, g, t_, b_0, epsilon)` to bytes, where `t_` is an integer. We
-      define the first two bits as the sign of `t_` and `epsilon`, before encoding, with
-      VarInt-length prefixes, `a_, g, t_, b_0` (the first varint having the quirk of starting two
-      bits into its byte).
-    */
-    let sign_bits = ((epsilon << 1) + u8::from(t_.sign() == Ordering::Less)) << 6;
-    let t_ = t_.unsigned_abs();
+    let (b_positive, b_abs) = self.b();
+    let b_abs = BoxedUint::from_be_slice(
+      &b_abs,
+      u32::try_from(8 * b_abs.len()).expect("4 GB `b` coefficient?"),
+    )
+    .expect("container overflowed despite precision proportional to length of the encoding");
 
-    compression::write_number(&mut writer, sign_bits, 6, &a_)?;
-    let mut write_number = |number| compression::write_number(&mut writer, 0, 8, number);
-    write_number(&g)?;
-    write_number(&t_)?;
-    write_number(&b_0)
+    writer.write_all(&crate::crypto_bigint::encode_compressed_binary_quadratic_form(
+      a,
+      crypto_bigint::Choice::from(b_positive),
+      b_abs,
+    ))
   }
 }
 

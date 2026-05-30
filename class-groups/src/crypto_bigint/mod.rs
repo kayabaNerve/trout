@@ -20,6 +20,9 @@ pub use element::CryptoBigintElement;
 mod uint;
 mod boxed_uint;
 
+mod encoding;
+pub use encoding::*;
+
 /// A type supporting discriminants of up to `2560` bits.
 #[deprecated]
 pub type CryptoBigintStackElement =

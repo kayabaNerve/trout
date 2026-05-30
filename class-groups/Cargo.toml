@@ -7,13 +7,16 @@ edition = "2024"
 subtle = { version = "2", default-features = false, features = ["std"] }
 zeroize = { version = "1", default-features = false, features = ["std", "derive"] }
 rand = { version = "0.10", default-features = false, features = ["std", "sys_rng"] }
-crypto-bigint = { version = "0.7", default-features = false, features = ["alloc", "zeroize", "subtle", "extra-sizes"] }
+crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "subtle"] }
 crypto-primes = { version = "=0.7.0", default-features = false }
 malachite = { version = "0.9", default-features = false, features = ["naturals_and_integers"] }
 rug = { version = "1", default-features = false, features = ["std", "integer"], optional = true }
 
 [dev-dependencies]
 rand_chacha = { version = "0.10", default-features = false, features = ["std"] }
+crypto-bigint = { version = "0.7", default-features = false, features = ["extra-sizes"] }
 
 [features]
+alloc = ["crypto-bigint/alloc"]
+std = ["alloc"]
 gmp = ["rug"]

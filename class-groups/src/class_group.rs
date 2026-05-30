@@ -373,109 +373,26 @@ impl<E: Element> ClassGroup<E> {
   /// Decompress an element in the class group of discriminant `p`.
   ///
   /// This function executes in variable time.
-  pub fn decompress_p<R: io::Read>(&self, reader: R) -> io::Result<E> {
-    let (epsilon, a_, g, t_, b_0) = compression::read_epsilon_a_g_t_b_0(reader)?;
+  pub fn decompress_p(&self, reader: impl io::Read) -> io::Result<E> {
+    use ::crypto_bigint::BoxedUint;
 
-    // Step 1
-    if (&g, &t_, &b_0, epsilon) == (&Natural::ZERO, &Integer::ZERO, &Natural::ZERO, 0) {
-      return element::<E>(a_, Integer::ZERO, &self.delta_p, &self.tess_root_p)
-        .ok_or_else(|| io::Error::other("no c for (a, 0)"));
-    }
+    let discriminant_abs = natural_to_bytes(self.delta_p.unsigned_abs_ref());
 
-    // Step 2, modified to be canonical
-    if (&a_, &t_, &b_0, epsilon) == (&Natural::ONE, &Integer::ZERO, &Natural::ZERO, 0) {
-      if g == Integer::ZERO {
-        Err(io::Error::other("b = 0 exceptional yet was compressed as a = b exceptional"))?;
-      }
-      return element::<E>(g.clone(), Integer::from(g), &self.delta_p, &self.tess_root_p)
-        .ok_or_else(|| io::Error::other("no c for (g, g)"));
-    }
-
-    // Step 3
-    let (a, t) = (&g * &a_, Integer::from(g.clone()) * &t_);
-    // Step 4
-    let x = {
-      let a_int = Integer::from(a.clone());
-      if a_int == Integer::ZERO {
-        Err(io::Error::other("a was not a valid modulus"))?;
-      }
-      let x = (&t * &t * &self.delta_p) % &a_int;
-      (if x.sign() == Ordering::Less { a_int + x } else { x }).unsigned_abs()
-    };
-    // Step 5
-    let Some(s) = x.checked_sqrt() else { Err(io::Error::other("no x sqrt"))? };
-    // Step 6
-    if g == Natural::ZERO {
-      Err(io::Error::other("g was zero"))?;
-    }
-    let (s_, s_g_rem) = s.div_mod(&g);
-    if s_g_rem != Natural::ZERO {
-      Err(io::Error::other("s % g != 0"))?
-    }
-    // Step 7
-    let b_ = {
-      let a_int = Integer::from(a_.clone());
-      if a_int == Integer::ZERO {
-        Err(io::Error::other("a' was not a valid modulus"))?;
-      }
-      let t_ = &t_ % &a_int;
-      let t_ = (if t_.sign() == Ordering::Less { a_int + t_ } else { t_ }).unsigned_abs();
-      if t_ == Integer::ZERO {
-        Err(io::Error::other("t' wasn't in the multiplicative ring modulo a'"))?;
-      }
-      let inv_t_ = t_
-        .mod_inverse(&a_)
-        .ok_or_else(|| io::Error::other("t' didn't have an inverse modulo a'"))?;
-      (s_ * inv_t_) % &a_
-    };
-    // Step 8-10
-    let f = compression::f(&a, &a_, g.clone());
-    if b_0 >= f {
-      Err(io::Error::other("non-canonical b_0"))?
-    }
-    // Step 11
-    let b = compression::crt(b_, a_, b_0, f)?;
-    if (a == b) || (b == Natural::ZERO) {
-      Err(io::Error::other("exceptional yet wasn't compressed as exceptional"))?
-    }
-    // Step 12-13
-    let mut b = Integer::from(b);
-    if epsilon == 1 {
+    let (a, (b_positive, b_abs), _c) =
+      crate::crypto_bigint::decode_compressed_binary_quadratic_form(
+        reader,
+        &BoxedUint::from_be_slice(
+          &discriminant_abs,
+          u32::try_from(8 * discriminant_abs.len()).expect("4 GB discriminant?"),
+        )
+        .expect("container overflowed despite precision proportional to length of the encoding"),
+      )
+      .map_err(|e| io::Error::other(format!("{e:?}")))?;
+    let a = natural_from_bytes(&a.get().to_be_bytes());
+    let mut b = Integer::from(natural_from_bytes(&b_abs.to_be_bytes()));
+    if bool::from(!b_positive) {
       b = -b;
     }
-
-    /*
-      We need to check `a', g, t', b_0, epsilon` are canonical.
-
-      Since `a = g * a'`, then for this `a`, there is only a single `a'` for `g` and a single `g`
-      for `a'`. Accordingly, validating one is canonical validates the other.
-
-      For `t'`, it's trickier as `g * t'` just has to have congruences mod `a` and `a'` for any
-      choice of `t'`
-
-      For `b_0`, it is `mod f` and we have already validated it's in-range of `f`.
-
-      For epsilon, we've checked that `b != 0`, meaning it can't be malleated as negative 0.
-
-      We re-calculate `t'` in full to validate it, calculating `g` along the way. This ensures
-      `a', g, t'` are canonical with `b_0, epsilon` already checked, leaving the encoding fully
-      verified as canonical.
-    */
-    {
-      // TODO: We already re-calculated (s, t) above. Check if those can be verified to avoid
-      // re-calculation here.
-      let (_s, t) = compression::partial_xgcd(a.clone(), b.unsigned_abs_ref().clone());
-      let (g2, _x, _y) = a.clone().extended_gcd(t.unsigned_abs_ref());
-      if g != g2 {
-        Err(io::Error::other("g wasn't canonical"))?;
-      }
-      let t_2 = t / Integer::from(g2);
-      if t_ != t_2 {
-        Err(io::Error::other("t' wasn't canonical"))?;
-      }
-    }
-
-    // TODO: Error if element isn't reduced
 
     element::<E>(a, b, &self.delta_p, &self.tess_root_p)
       .ok_or_else(|| io::Error::other("element didn't have a `c`"))
