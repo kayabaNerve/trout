@@ -287,16 +287,19 @@ impl<E: Element> ClassGroup<E> {
       rng.fill_bytes(&mut seed);
       if (r_bits % 8) != 0 {
         let high_bit = 1 << ((r_bits % 8) - 1);
+        // Ensure the high bit is set
+        // TODO: This does make this somewhat non-uniform
+        seed[0] |= high_bit;
         // Mask off any bits higher than the square root
         seed[0] &= (high_bit << 1) - 1;
       }
       let r = super::primes::next_prime(&mut *rng, seed, 128);
 
       let r = natural_from_bytes(r.to_be_bytes().as_ref());
-      debug_assert!((r.significant_bits() - u64::from(r_bits)) < 1);
       if r >= prime_limit {
         continue;
       }
+      debug_assert_eq!(u64::from(r_bits), r.significant_bits());
       // Select `r` where `r` is congruent to 3 mod 4 to simplify the sqrt calculation
       // This does bias the choice of `r` by a couple of bits
       if (&r % Natural::from(4u8)) != 3u8 {
