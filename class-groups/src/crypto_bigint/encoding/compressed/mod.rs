@@ -99,6 +99,9 @@
 //!   assert b_0 <= g
 //!   b_abs = (b_0 * a_apo) + b_apo
 //!
+//!   # Assert `b_abs <= a`
+//!   # This is a prerequisite for calling `t`, which so bounds its inputs
+//!   assert b_abs <= a
 //!   # Assert `t` was canonically chosen
 //!   assert (t_positive, t_abs) == t(a, b_abs)
 //!
@@ -224,11 +227,11 @@ pub(crate) fn decode_compressed_binary_quadratic_form(
 
       b_0.concatenating_mul(a_apo.as_ref()).concatenating_add(&b_apo)
     };
-    if b_abs > (*a.as_ref()) {
-      Err(Error::Incorrect)?;
-    }
 
     {
+      if b_abs > (*a.as_ref()) {
+        Err(Error::Incorrect)?;
+      }
       let (t_positive_recalculated, t_abs_recalculated) = t(a.clone(), b_abs.clone());
       if (bool::from(t_positive), t_abs) !=
         (bool::from(t_positive_recalculated), t_abs_recalculated.get())
