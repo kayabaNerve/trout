@@ -188,7 +188,7 @@ pub trait Element:
   /// trailing zero bytes.
   fn uncompressed_decode(
     buf: impl AsRef<[u8]>,
-    discriminant_abs: &[u8],
+    discriminant_abs: impl AsRef<[u8]>,
   ) -> crypto_bigint::CtOption<Self>;
 
   /// Create an element of this type from another element.

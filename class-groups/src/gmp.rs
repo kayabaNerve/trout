@@ -315,8 +315,10 @@ impl crate::Element for GmpElement {
 
   fn uncompressed_decode(
     buf: impl AsRef<[u8]>,
-    discriminant_abs: &[u8],
+    discriminant_abs: impl AsRef<[u8]>,
   ) -> crypto_bigint::CtOption<Self> {
+    let discriminant_abs = discriminant_abs.as_ref();
+
     let invalid = Self { a: Integer::ZERO, b: Integer::ZERO, c: Integer::ZERO, L: Integer::ZERO };
     let invalid = crypto_bigint::CtOption::new(invalid, crypto_bigint::Choice::FALSE);
 

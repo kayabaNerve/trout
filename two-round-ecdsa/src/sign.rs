@@ -30,9 +30,9 @@ fn table_scaled_decryption_ciphertext<
   P: Parameters<PCG> + Parameters<CG>,
 >(
   class_group: &ClassGroup<PCG>,
-  ciphertext: &CG,
+  ciphertext: CG,
 ) -> Table<PCG> {
-  let ciphertext = class_group.map_p(ciphertext);
+  let ciphertext = PCG::from(ciphertext);
 
   Table::new_for_scalar_bits(
     // The protocol scales by an elliptic curve scalar yet the proofs presumably scale by a
@@ -303,17 +303,17 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Obser
         };
         let R_i = (R_i_0, R_i_1);
 
-        let Ok(K_i_0) = self.setup.class_group().decompress_p(&mut message) else {
+        let Ok(K_i_0) = CG::decompress(&mut message, self.setup.class_group().delta_p()) else {
           faulty.insert(participant);
           continue;
         };
-        let Ok(K_i_1) = self.setup.class_group().decompress_p(&mut message) else {
+        let Ok(K_i_1) = CG::decompress(&mut message, self.setup.class_group().delta_p()) else {
           faulty.insert(participant);
           continue;
         };
         let K_i = (K_i_0, K_i_1);
 
-        let Ok(U_i) = self.setup.class_group().decompress_p(&mut message) else {
+        let Ok(U_i) = CG::decompress(&mut message, self.setup.class_group().delta_p()) else {
           faulty.insert(participant);
           continue;
         };
@@ -603,18 +603,18 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Signi
 
     let K = table_scaled_decryption_ciphertext::<PCG, CG, P>(
       self.setup.view().prover_class_group(),
-      &aggregating.observing_signing.K,
+      aggregating.observing_signing.K.clone(),
     );
 
     let Z = table_scaled_decryption_ciphertext::<PCG, CG, P>(
       self.setup.view().prover_class_group(),
-      &aggregating.Z,
+      aggregating.Z.clone(),
     );
 
     let neg_U = Table::new_for_scalar_bits(
       2 * usize::try_from(self.setup.view().class_group().unknown_order_bound() + 128).unwrap(),
       self.setup.view().prover_class_group().identity_p().clone(),
-      self.setup.view().prover_class_group().map_p(&aggregating.observing_signing.neg_U),
+      PCG::from(aggregating.observing_signing.neg_U.clone()),
     );
 
     // (H(m)*r**-1 + x) * u
@@ -725,11 +725,11 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Aggre
         let message = std::io::Cursor::new(message);
         let mut message = DigestReader(self.observing_signing.transcript.clone(), message);
 
-        let Ok(ZU_i) = setup.class_group().decompress_p(&mut message) else {
+        let Ok(ZU_i) = CG::decompress(&mut message, setup.class_group().delta_p()) else {
           faulty.push(participant);
           continue;
         };
-        let Ok(KU_i) = setup.class_group().decompress_p(&mut message) else {
+        let Ok(KU_i) = CG::decompress(&mut message, setup.class_group().delta_p()) else {
           faulty.push(participant);
           continue;
         };

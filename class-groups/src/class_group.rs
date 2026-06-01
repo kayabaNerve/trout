@@ -1,5 +1,4 @@
 use core::cmp::Ordering;
-use std::io;
 
 use rand::CryptoRng;
 
@@ -348,47 +347,14 @@ impl<E: ElementExt> ClassGroup<E> {
     Some(natural_to_bytes(&inverse))
   }
 
-  /// Decompress an element in the class group of discriminant `p`.
-  ///
-  /// This function executes in variable time.
-  pub fn decompress_p(&self, reader: impl io::Read) -> io::Result<E> {
-    E::decompress(reader, natural_to_bytes(self.delta_p.unsigned_abs_ref()))
+  /// The little-endian encoding of the fundamental discriminant.
+  pub fn delta_k(&self) -> impl AsRef<[u8]> {
+    natural_to_bytes(self.delta_k.unsigned_abs_ref())
   }
 
-  /// Map an element of the class group with discriminant `k` with a distinct type into this
-  /// element type.
-  ///
-  /// This has undefined behavior for an element which isn't of discriminant `k`.
-  ///
-  /// This function executes in variable time.
-  pub fn map_k<E2: Element>(&self, e: &E2) -> E {
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, (b_positive, b), _c, _discriminant) = unsafe { e.a_b_c_discriminant() };
-    let mut b = Integer::from(natural_from_bytes(b.as_ref()));
-    if !bool::from(b_positive) {
-      b = -b;
-    }
-    // `unwrap` is fine as this is either valid or of a different discriminant, which means we're
-    // allowed to have undefined behavior
-    element::<E>(natural_from_bytes(a.as_ref()), b, &self.delta_k)
-  }
-
-  /// Map an element of the class group with discriminant `p` with a distinct type into this
-  /// element type.
-  ///
-  /// This has undefined behavior for an element which isn't of discriminant `p`.
-  ///
-  /// This function executes in variable time.
-  pub fn map_p<E2: Element>(&self, e: &E2) -> E {
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, (b_positive, b), _c, _discriminant) = unsafe { e.a_b_c_discriminant() };
-    let mut b = Integer::from(natural_from_bytes(b.as_ref()));
-    if !bool::from(b_positive) {
-      b = -b;
-    }
-    // `unwrap` is fine as this is either valid or of a different discriminant, which means we're
-    // allowed to have undefined behavior
-    element::<E>(natural_from_bytes(a.as_ref()), b, &self.delta_p)
+  /// The little-endian encoding of the non-fundamental discriminant.
+  pub fn delta_p(&self) -> impl AsRef<[u8]> {
+    natural_to_bytes(self.delta_p.unsigned_abs_ref())
   }
 
   /// Surject an element of the class group of discriminant `p` to the class group of discriminant
@@ -415,7 +381,7 @@ impl<E: ElementExt> ClassGroup<E> {
     b = (b * mu) + (Integer::from(&a) * lambda);
 
     let c = Integer::from(c(&a, b.unsigned_abs_ref(), &self.delta_k).unwrap());
-    self.map_k(&MalachiteElement::reduce(Integer::from(a), b, c, {
+    E::from(MalachiteElement::reduce(Integer::from(a), b, c, {
       let tess_root = self.delta_k.unsigned_abs_ref().ceiling_root(4);
       Integer::from(tess_root)
     }))
@@ -444,7 +410,7 @@ impl<E: ElementExt> ClassGroup<E> {
     b *= Integer::from(&self.p);
     let c = Integer::from(c(&a, b.unsigned_abs_ref(), &self.delta_p).unwrap());
 
-    self.map_p(&MalachiteElement::reduce(Integer::from(a), b, c, {
+    E::from(MalachiteElement::reduce(Integer::from(a), b, c, {
       let tess_root = self.delta_p.unsigned_abs_ref().ceiling_root(4);
       Integer::from(tess_root)
     }))
@@ -527,7 +493,7 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   {
     let mut bytes = vec![];
     cg.identity_p.compress(&mut bytes).unwrap();
-    assert_eq!(&cg.decompress_p(&mut bytes.as_slice()).unwrap(), &cg.identity_p);
+    assert_eq!(&E::decompress(&mut bytes.as_slice(), cg.delta_p()).unwrap(), &cg.identity_p);
   }
 
   // `b == 0` is another exceptional case, yet given `b**2 - 4ac = delta_p`, this would simplify to
@@ -539,16 +505,9 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   for g in g.as_ref() {
     let mut bytes = vec![];
     g.compress(&mut bytes).unwrap();
-    assert_eq!(&cg.decompress_p(&mut bytes.as_slice()).unwrap(), g);
+    assert_eq!(&E::decompress(&mut bytes.as_slice(), cg.delta_p()).unwrap(), g);
 
-    assert_eq!(
-      &E::uncompressed_decode(
-        g.uncompressed_encode(),
-        &natural_to_bytes(cg.delta_p.unsigned_abs_ref())
-      )
-      .unwrap(),
-      g
-    );
+    assert_eq!(&E::uncompressed_decode(g.uncompressed_encode(), cg.delta_p()).unwrap(), g);
   }
 
   // Check we can compress all elements of the f table
@@ -558,16 +517,9 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
     }
     let mut bytes = vec![];
     f.compress(&mut bytes).unwrap();
-    assert_eq!(&cg.decompress_p(&mut bytes.as_slice()).unwrap(), f);
+    assert_eq!(&E::decompress(&mut bytes.as_slice(), cg.delta_p()).unwrap(), f);
 
-    assert_eq!(
-      &E::uncompressed_decode(
-        f.uncompressed_encode(),
-        &natural_to_bytes(cg.delta_p.unsigned_abs_ref())
-      )
-      .unwrap(),
-      f
-    );
+    assert_eq!(&E::uncompressed_decode(f.uncompressed_encode(), cg.delta_p()).unwrap(), f);
   }
 
   // Test the coset labelling function

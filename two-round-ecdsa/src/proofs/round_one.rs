@@ -211,12 +211,12 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
   ) -> io::Result<()> {
     // ZKPoKLog commitment
     let R_message_0 = P::read_canonical_E(&mut *transcript)?;
-    let R_ciphertext_0 = class_group.decompress_p(&mut *transcript)?;
+    let R_ciphertext_0 = CG::decompress(&mut *transcript, class_group.delta_p())?;
     let R_message_1 = P::read_canonical_E(&mut *transcript)?;
-    let R_ciphertext_1 = class_group.decompress_p(&mut *transcript)?;
+    let R_ciphertext_1 = CG::decompress(&mut *transcript, class_group.delta_p())?;
 
     // ZKPoKRepS commitment
-    let R_U = class_group.decompress_p(&mut *transcript)?;
+    let R_U = CG::decompress(&mut *transcript, class_group.delta_p())?;
 
     let c = P::from_xof(transcript.0.finalize_xof());
     transcript.0.update(&[0]);
@@ -232,7 +232,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     let s_message_0 = Option::<P::F>::from(P::F::from_repr(s_message_0))
       .ok_or_else(|| io::Error::other("invalid s_message"))?;
 
-    let D_ciphertext_0 = class_group.decompress_p(&mut *transcript)?;
+    let D_ciphertext_0 = CG::decompress(&mut *transcript, class_group.delta_p())?;
     let e_randomness_0 = crate::ccykc::read_e(&mut *transcript, &modulus)?;
 
     let mut s_message_1 = <P::F as PrimeField>::Repr::default();
@@ -240,11 +240,11 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     let s_message_1 = Option::<P::F>::from(P::F::from_repr(s_message_1))
       .ok_or_else(|| io::Error::other("invalid s_message"))?;
 
-    let D_ciphertext_1 = class_group.decompress_p(&mut *transcript)?;
+    let D_ciphertext_1 = CG::decompress(&mut *transcript, class_group.delta_p())?;
     let e_randomness_1 = crate::ccykc::read_e(&mut *transcript, &modulus)?;
 
     // ZKPoKRepS response
-    let D_U = class_group.decompress_p(&mut *transcript)?;
+    let D_U = CG::decompress(&mut *transcript, class_group.delta_p())?;
     let e_beta_i = crate::ccykc::read_e(&mut *transcript, &modulus)?;
 
     // We now start mutating the batch verifier, so it's important we don't error from here on

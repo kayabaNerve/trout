@@ -229,11 +229,11 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     KU_i: CG,
     transcript: &mut DigestReader<R>,
   ) -> io::Result<()> {
-    let R_Z_i = class_group.decompress_p(&mut *transcript)?;
-    let R_K_i = class_group.decompress_p(&mut *transcript)?;
-    let R_U_i = class_group.decompress_p(&mut *transcript)?;
-    let R_ZU_i = class_group.decompress_p(&mut *transcript)?;
-    let R_KU_i = class_group.decompress_p(&mut *transcript)?;
+    let R_Z_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let R_K_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let R_U_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let R_ZU_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let R_KU_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
 
     let c = P::from_xof(transcript.0.finalize_xof());
     transcript.0.update(&[0]);
@@ -242,11 +242,11 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     let prime = crate::ccykc::natural_from_bytes(&prime.to_be_bytes());
     let modulus = &prime * &crate::ccykc::natural_from_bytes(class_group.p().as_ref());
 
-    let D_Z_i = class_group.decompress_p(&mut *transcript)?;
-    let D_K_i = class_group.decompress_p(&mut *transcript)?;
-    let D_U_i = class_group.decompress_p(&mut *transcript)?;
-    let D_ZU_i = class_group.decompress_p(&mut *transcript)?;
-    let D_KU_i = class_group.decompress_p(&mut *transcript)?;
+    let D_Z_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let D_K_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let D_U_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let D_ZU_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let D_KU_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
 
     let e_delta_i = crate::ccykc::read_e(&mut *transcript, &modulus)?;
     let mut s_x_i = <P::F as PrimeField>::Repr::default();

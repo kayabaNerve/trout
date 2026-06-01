@@ -406,10 +406,10 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     c: impl AsRef<[u8]>,
     discriminant_abs: impl AsRef<[u8]>,
   ) -> Self {
-    let mut a = a.as_ref();
-    let mut b_abs = b_abs.as_ref();
-    let mut c = c.as_ref();
-    let mut discriminant_abs = discriminant_abs.as_ref();
+    let a = a.as_ref();
+    let b_abs = b_abs.as_ref();
+    let c = c.as_ref();
+    let discriminant_abs = discriminant_abs.as_ref();
 
     let bit_len = |slice: &[u8]| {
       if let Some(last) = slice.last() {
@@ -462,8 +462,10 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   /// trailing zero bytes which cause the amount of encoded bits to exceed the bounds.
   fn uncompressed_decode(
     buf: impl AsRef<[u8]>,
-    discriminant_abs: &[u8],
+    discriminant_abs: impl AsRef<[u8]>,
   ) -> crypto_bigint::CtOption<Self> {
+    let discriminant_abs = discriminant_abs.as_ref();
+
     let invalid_size = CtOption::new(
       Self {
         a: U::from_le_slice(&[], 1),
