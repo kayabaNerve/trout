@@ -1,6 +1,6 @@
 //! A constant-time reduction algorithm.
 //!
-//! This is derived from Algorithm 1 of https://eprint.iacr.org/2022-466. Some typos have been
+//! This is derived from Algorithm 1 of <https://eprint.iacr.org/2022-466>. Some typos have been
 //! accounted for. Algorithm 2 is a restatement of Algorithm 1 in an iterative fashion and
 //! accordingly may of more approximate structure to the following, yet this work was independently
 //! derived from Algorithm 1.

@@ -3,6 +3,10 @@ name = "two-round-ecdsa"
 version = "0.1.0"
 edition = "2024"
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 subtle = { version = "2", default-features = false, features = ["std"] }
 zeroize = { version = "1", default-features = false, features = ["std", "derive"] }
