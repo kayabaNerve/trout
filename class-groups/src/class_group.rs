@@ -73,29 +73,15 @@ fn make_coprime(
   #[cfg(debug_assertions)]
   let original_b = b.clone();
 
-  /*
-    (a, b, c) -> (a + b + c, -b - 2a, a)
-    OR
-    (a, b, c) -> (a, b + 2a, a + b + c)
-
-    We apply the first transformation when `a + b + c >= 0`. We apply the second, which is an
-    equivalent form but ensures `a` remains positive, otherwise.
-  */
   let mut c = Integer::from(c(&a, b.unsigned_abs_ref(), delta).unwrap());
+
+  // (a, b, c) -> (a + b + c, -b - 2a, a)
   while !(&a).coprime_with(prime) {
-    let mut int_abc;
-    while {
-      int_abc = Integer::from(&a) + &b + &c;
-      &int_abc
-    } < &Integer::ZERO
-    {
-      b += Integer::from(&a << 1);
-      c = int_abc;
-    }
+    let int_abc = Integer::from(&a) + &b + &c;
     c = Integer::from(&a);
-    a = int_abc.unsigned_abs();
     b = -b;
     b -= Integer::from(&a << 1);
+    a = int_abc.unsigned_abs();
   }
 
   #[cfg(debug_assertions)]
