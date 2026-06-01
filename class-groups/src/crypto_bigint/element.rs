@@ -400,7 +400,6 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   ///
   /// This function MAY panic if asked to handle coefficients which exceed the capacity of the
   /// underlying container(s).
-  // TODO: What's the proper story for the timing of this function?
   unsafe fn from_coefficients(
     a: impl AsRef<[u8]>,
     (b_positive, b_abs): (crypto_bigint::Choice, impl AsRef<[u8]>),
@@ -423,29 +422,14 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
       }
     };
 
-    // Ensure all values fit within the expected capacities, allowing trailing zeroes
-    if let Some(max_bits) = U::max_bits() {
-      let truncate = |slice: &mut &[u8], max_bits: u32| {
-        let max_bytes = max_bits.div_ceil(8).max(1);
-        while u32::try_from(slice.len()).expect("slice exceeded 4 GB") > max_bytes {
-          assert!(bool::from(slice[slice.len() - 1].ct_eq(&0)), "coefficient exceeded capacity");
-          *slice = &slice[.. (slice.len() - 1)];
-        }
-      };
-      truncate(&mut a, max_bits);
-      truncate(&mut b_abs, max_bits);
-      truncate(&mut c, 2 * max_bits);
-      truncate(&mut discriminant_abs, (2 * max_bits) - 2);
-
-      assert!(bit_len(a) <= max_bits);
-      assert!(bit_len(b_abs) <= max_bits);
-      assert!(bit_len(c) <= (2 * max_bits));
-      assert!(bit_len(discriminant_abs) <= ((2 * max_bits) - 2));
-    }
-
     // Determine how many bits are actually in the absolute value of the discriminant
     let discriminant_bits =
       U::wide_from_le_slice(discriminant_abs, bit_len(discriminant_abs)).bits_vartime();
+    // Ensure our bound on the discriminant is respected
+    if let Some(max_bits) = U::max_bits() {
+      assert!(discriminant_bits <= ((2 * max_bits) - 2));
+    }
+
     // Load the absolute value of the discriminant with the exact precision required
     let discriminant_abs = U::wide_from_le_slice(discriminant_abs, discriminant_bits);
 
