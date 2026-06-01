@@ -1,5 +1,4 @@
 use core::{cmp::Ordering, ops::Neg};
-use std::sync::Arc;
 
 use ::malachite::{
   base::num::{arithmetic::traits::*, basic::traits::*, conversion::traits::*},
@@ -7,17 +6,16 @@ use ::malachite::{
 };
 
 pub(crate) fn natural_from_bytes(bytes: &[u8]) -> Natural {
-  Natural::from_digits_desc(&256u16, bytes.iter().map(|b| (*b).into())).unwrap()
+  Natural::from_digits_asc(&256u16, bytes.iter().map(|b| (*b).into())).unwrap()
 }
 pub(crate) fn natural_to_bytes(value: &Natural) -> Vec<u8> {
   let mut res = value
-    .to_digits_desc(&256u16)
+    .to_digits_asc(&256u16)
     .into_iter()
     .map(|byte| byte.try_into().unwrap())
     .collect::<Vec<_>>();
-  // This *should* never trigger in a sane-world, yet ensures we never make a non-canonical
-  // encoding
-  while res.first() == Some(&0) {
+  // Ensure this is a canonical encoding
+  while res.last() == Some(&0) {
     res.remove(0);
   }
   res
@@ -66,12 +64,12 @@ pub struct MalachiteElement {
   a: Integer,
   b: Integer,
   c: Integer,
-  L: Arc<Integer>,
+  L: Integer,
 }
 
 impl MalachiteElement {
   // Algorithm 5.4.2 of A Course in Computational Algebraic Number Theory
-  pub(crate) fn reduce(mut a: Integer, mut b: Integer, mut c: Integer, L: Arc<Integer>) -> Self {
+  pub(crate) fn reduce(mut a: Integer, mut b: Integer, mut c: Integer, L: Integer) -> Self {
     // Step 2
     let normalize = |a: &mut Integer, b: &mut Integer, c: &mut Integer| {
       let two_a = a.clone() << 1;
@@ -254,28 +252,50 @@ impl crate::Element for MalachiteElement {
     self.add(&-other)
   }
 
-  fn from_be_abc_discriminant_tess_root_unchecked(
-    a: &[u8],
-    b_positive: subtle::Choice,
-    b: &[u8],
-    c: &[u8],
-    _abs_value_of_neg_discriminant: &[u8],
-    tess_root: &[u8],
+  // SAFETY: This always reduces forms and does return a well-defined form as required.
+  unsafe fn a_b_c_discriminant(
+    &self,
+  ) -> (
+    impl AsRef<[u8]>,
+    (crypto_bigint::Choice, impl AsRef<[u8]>),
+    impl AsRef<[u8]>,
+    impl AsRef<[u8]>,
+  ) {
+    let a = natural_to_bytes(self.a.unsigned_abs_ref());
+    let b = (
+      u8::from(self.b.sign() != Ordering::Less).into(),
+      natural_to_bytes(self.b.unsigned_abs_ref()),
+    );
+    let c = natural_to_bytes(self.c.unsigned_abs_ref());
+
+    let discriminant = ((self.a.clone() * self.c.clone()) << 2u32) - self.b.clone().square();
+    let discriminant = natural_to_bytes(discriminant.unsigned_abs_ref());
+
+    (a, b, c, discriminant)
+  }
+
+  unsafe fn from_coefficients(
+    a: impl AsRef<[u8]>,
+    (b_positive, b_abs): (crypto_bigint::Choice, impl AsRef<[u8]>),
+    c: impl AsRef<[u8]>,
+    discriminant_abs: impl AsRef<[u8]>,
   ) -> Self {
     let to_malachite = |value: &[u8]| Integer::from(natural_from_bytes(value));
-    let mut b = to_malachite(b);
+
+    let a = to_malachite(a.as_ref());
+
+    let mut b = to_malachite(b_abs.as_ref());
     if !bool::from(b_positive) {
       b = -b;
     }
-    Self { a: to_malachite(a), b, c: to_malachite(c), L: Arc::new(to_malachite(tess_root)) }
-  }
 
-  fn a(&self) -> Vec<u8> {
-    natural_to_bytes(self.a.unsigned_abs_ref())
-  }
+    let c = to_malachite(c.as_ref());
 
-  fn b(&self) -> (subtle::Choice, Vec<u8>) {
-    (u8::from(self.b.sign() != Ordering::Less).into(), natural_to_bytes(self.b.unsigned_abs_ref()))
+    // b^2 - 4ac = delta
+    let delta: Integer = Integer::from(natural_from_bytes(discriminant_abs.as_ref()));
+    let tess_root = delta.unsigned_abs().ceiling_root(4);
+
+    Self { a, b, c, L: Integer::from(tess_root) }
   }
 }
 
@@ -285,3 +305,5 @@ impl Neg for MalachiteElement {
     Self::reduce(self.a, -self.b, self.c, self.L)
   }
 }
+
+impl crate::ElementExt for MalachiteElement {}

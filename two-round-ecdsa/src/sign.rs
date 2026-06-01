@@ -12,7 +12,7 @@ use group::{
   ff::{Field, PrimeField, PrimeFieldBits},
   Group, GroupEncoding,
 };
-use class_groups::{Element, Table, ClassGroup};
+use class_groups::{ElementExt, Table, ClassGroup};
 
 use dkg::Participant;
 
@@ -25,8 +25,8 @@ use crate::{
 ///
 /// This just yields the presumably-optimal table sizes.
 fn table_scaled_decryption_ciphertext<
-  PCG: Element,
-  CG: Element,
+  PCG: ElementExt,
+  CG: ElementExt,
   P: Parameters<PCG> + Parameters<CG>,
 >(
   class_group: &ClassGroup<PCG>,
@@ -45,12 +45,12 @@ fn table_scaled_decryption_ciphertext<
 }
 
 /// The 2-round signing protocol.
-pub struct SigningProtocol<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>>(
+pub struct SigningProtocol<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>(
   PhantomData<(PCG, CG, P)>,
 );
 
 /// A view of someone observing the signing protocol.
-pub struct Observing<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> {
+pub struct Observing<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> {
   setup: Arc<SetupView<PCG, CG, P>>,
   transcript: blake3::Hasher,
   accumulated: HashMap<
@@ -62,7 +62,7 @@ pub struct Observing<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<
 }
 
 /// A view of someone participating in the signing protocol.
-pub struct Participating<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> {
+pub struct Participating<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> {
   setup: Arc<Setup<PCG, CG, P>>,
   alpha_i: (Zeroizing<UnsignedInteger>, Zeroizing<UnsignedInteger>),
   k_i: (Zeroizing<<P as Parameters<PCG>>::F>, Zeroizing<<P as Parameters<PCG>>::F>),
@@ -71,7 +71,9 @@ pub struct Participating<PCG: Element, CG: Element, P: Parameters<PCG> + Paramet
 }
 
 /// A view of the first round of the signing protocol.
-impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> SigningProtocol<PCG, CG, P> {
+impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
+  SigningProtocol<PCG, CG, P>
+{
   /// Participate in the 2-round signing protocol.
   ///
   /// Returns the participant's message and the view necessary to further participate.
@@ -228,7 +230,7 @@ pub enum Ready<NotReady, Ready> {
 /// The view of someone who has observed the first round and can observe signature shares once the
 /// message is specified.
 // "signature shares" is loosely defined here as the round two messages.
-pub struct ObservingSigning<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> {
+pub struct ObservingSigning<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> {
   setup: Arc<SetupView<PCG, CG, P>>,
   transcript: blake3::Hasher,
   rho: Vec<<P as Parameters<PCG>>::F>,
@@ -241,7 +243,7 @@ pub struct ObservingSigning<PCG: Element, CG: Element, P: Parameters<PCG> + Para
 }
 
 /// The view of someone who has observed the first round and can now produce a signature share.
-pub struct Signing<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> {
+pub struct Signing<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> {
   setup: Arc<Setup<PCG, CG, P>>,
   alpha_i: (Zeroizing<UnsignedInteger>, Zeroizing<UnsignedInteger>),
   rho_i: <P as Parameters<PCG>>::F,
@@ -250,7 +252,7 @@ pub struct Signing<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG
   observing_signing: ObservingSigning<PCG, CG, P>,
 }
 
-impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Observing<PCG, CG, P> {
+impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Observing<PCG, CG, P> {
   /// Accumulate a message from a participant.
   ///
   /// Please see `Participating::accumulate` for more information. This method matches its
@@ -461,7 +463,9 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Observing<P
   }
 }
 
-impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Participating<PCG, CG, P> {
+impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
+  Participating<PCG, CG, P>
+{
   /// Accumulate a message from a participant.
   ///
   /// This message is expected to be authenticated as originating from the sender by the caller.
@@ -505,7 +509,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Participati
 }
 
 /// The view of someone aggregating signature shares to obtain the resulting signature.
-pub struct Aggregating<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> {
+pub struct Aggregating<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> {
   observing_signing: ObservingSigning<PCG, CG, P>,
   x_coordinate: <P as Parameters<PCG>>::F,
   message_hash: <P as Parameters<PCG>>::F,
@@ -514,7 +518,9 @@ pub struct Aggregating<PCG: Element, CG: Element, P: Parameters<PCG> + Parameter
   pending: HashMap<Participant, Vec<u8>>,
 }
 
-impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> ObservingSigning<PCG, CG, P> {
+impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
+  ObservingSigning<PCG, CG, P>
+{
   /// Observe the signing of the following message.
   #[must_use]
   pub fn message(mut self, message: &[u8]) -> Aggregating<PCG, CG, P> {
@@ -552,7 +558,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> ObservingSi
   }
 }
 
-impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Signing<PCG, CG, P> {
+impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Signing<PCG, CG, P> {
   /// Participate in signing the following message.
   ///
   /// Returns the participant's message and the view necessary to obtain the resulting signature.
@@ -567,7 +573,7 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Signing<PCG
   ) -> (Aggregating<PCG, CG, P>, Vec<u8>) {
     let mut aggregating = self.observing_signing.message(message);
 
-    fn scaled_decryption<PCG: Element>(
+    fn scaled_decryption<PCG: ElementExt>(
       A: &Table<PCG>,
       neg_B: &Table<PCG>,
       alpha_i: &UnsignedInteger,
@@ -677,7 +683,7 @@ impl<F: PrimeFieldBits> Signature<F> {
   }
 }
 
-impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Aggregating<PCG, CG, P> {
+impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Aggregating<PCG, CG, P> {
   /// Aggregate a signature share from a participant.
   ///
   /// This message is expected to be authenticated as originating from the sender by the caller.

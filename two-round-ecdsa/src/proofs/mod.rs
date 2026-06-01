@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use std::io;
 
-use class_groups::{Element, ClassGroup};
+use class_groups::{ElementExt, ClassGroup};
 
 use crate::UnsignedInteger;
 
@@ -199,7 +199,7 @@ pub(crate) mod ccykc {
   pub(crate) const LAMBDA: u32 = 128;
   const EPSILON_D: u32 = 128;
   const B_CONST: u32 = EPSILON_D + LAMBDA + 2;
-  pub(crate) fn B<F: group::ff::PrimeField, CG: Element>(class_group: &ClassGroup<CG>) -> u32 {
+  pub(crate) fn B<F: group::ff::PrimeField, CG: ElementExt>(class_group: &ClassGroup<CG>) -> u32 {
     /*
       The `1 +` is because the paper says to sample from `[-B, B]`. We sample from the equally
       large range `[0, 2B] which should be as uniform since this is in-effect modulo the unknown

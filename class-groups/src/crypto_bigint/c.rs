@@ -36,7 +36,7 @@ pub(super) trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> {
 /// - `<_ as AsRef<[Limb]>>::as_ref(negative_discriminant_abs).len() <=
 ///      2 * <_ as AsRef<[Limb]>>::as_ref(&b.1).len()`
 /// - `b < 2a`
-/// - $floor(log_2(|delta|)) + 1 <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
+/// - $floor(log_2(|delta|)) + 1 < <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
 /// - $floor(log_2(|a|)) + 1 < <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
 ///
 /// `delta` is specified via its absolute value in `negative_discriminant_abs`.
@@ -50,7 +50,7 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
 
     We simultaneously add `|delta|` and divide by four to obtain `ac`. Because `|delta|` is of size
     at most the size of `b^2`, their sum is at most one bit bigger, while the simultaneous division
-    by `4` ensures result is two bits smaller. Therefore, `(b^2 + |delta|) / 4` fits in the
+    by `4` ensures the result is two bits smaller. Therefore, `(b^2 + |delta|) / 4` fits in the
     container `b^2` fits in.
   */
   let mut carry = Limb::ZERO;

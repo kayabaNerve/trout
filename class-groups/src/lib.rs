@@ -9,6 +9,9 @@ extern crate alloc;
 mod element;
 pub use element::*;
 
+mod table;
+pub use table::*;
+
 mod malachite;
 pub use malachite::MalachiteElement;
 

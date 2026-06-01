@@ -5,6 +5,8 @@ use crypto_bigint::BoxedUint;
 
 /// Get the candidates for the next prime greater than or equal to the seed.
 ///
+/// The seed is specified by its big-endian encoding.
+///
 /// This returns the bit-length of the seed and an iterator of candidates.
 ///
 /// This may panic if an obscenely large seed is specified.

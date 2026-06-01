@@ -1,5 +1,8 @@
 //! Compressed and uncompressed encoding of primitive reduced positive definite binary quadratic
-//! forms of negative discriminants (even or odd).
+//! forms of negative discriminants (even or odd). While this is of greater scope than this library
+//! (which restricts itself to odd discriminants), it ensures the wire format allows the library to
+//! expand to include also implementing binary quadratic forms of even discriminants (without
+//! requiring a distinct encoding specification for those, when the time comes).
 //!
 //! Each module contains a documented, exact technical specification as to allow portable
 //! interoperability with any other implementation which also implements this specification.

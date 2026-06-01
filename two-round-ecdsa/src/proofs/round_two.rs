@@ -7,7 +7,7 @@ use rand::CryptoRng;
 use ::malachite::base::num::logic::traits::*;
 
 use group::ff::{Field, PrimeField};
-use class_groups::{Element, Table, ClassGroup};
+use class_groups::{ElementExt, Table, ClassGroup};
 
 use crate::{UnsignedInteger, DigestReader, DigestWriter, Primes, Parameters};
 
@@ -27,7 +27,7 @@ use crate::{UnsignedInteger, DigestReader, DigestWriter, Primes, Parameters};
 // signature. In that case, while a batch verifier could binary search for invalid elements, that
 // still has a worst-case linear complexity to the amount of proofs which are invalid (since all
 // invalid proofs are expected to be yielded).
-pub trait RoundTwoProofs<CG: Element, P: Parameters<CG>> {
+pub trait RoundTwoProofs<CG: ElementExt, P: Parameters<CG>> {
   /// Prove the round two statements.
   ///
   /// The provided context hash MUST be binding to `G, Z, K, U, Z_i, K_i, U_i`. This allows the
@@ -79,7 +79,7 @@ pub trait RoundTwoProofs<CG: Element, P: Parameters<CG>> {
 ///
 /// This forgoes the round two proofs, sacrificing identifiable aborts, in the name of efficiency.
 pub struct NoIdentifiableAborts;
-impl<CG: Element, P: Parameters<CG>> RoundTwoProofs<CG, P> for NoIdentifiableAborts {
+impl<CG: ElementExt, P: Parameters<CG>> RoundTwoProofs<CG, P> for NoIdentifiableAborts {
   fn prove<W: io::Write>(
     _rng: &mut impl CryptoRng,
     _class_group: &ClassGroup<CG>,
@@ -118,7 +118,9 @@ impl<CG: Element, P: Parameters<CG>> RoundTwoProofs<CG, P> for NoIdentifiableAbo
 /// Proofs from Cui, Chan, Yuen, Kang, and Chu's Bandwidth-Efficient Zero-Knowledge Proofs for
 /// Threshold ECDSA (2023).
 pub struct Ccykc2023RoundTwo<Pr: Primes>(PhantomData<Pr>);
-impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P> for Ccykc2023RoundTwo<Pr> {
+impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
+  for Ccykc2023RoundTwo<Pr>
+{
   fn prove<W: io::Write>(
     rng: &mut impl CryptoRng,
     class_group: &ClassGroup<CG>,
@@ -181,9 +183,10 @@ impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P> for Ccykc
     let c_uint = UnsignedInteger::from_be_slice(&crate::be_bytes(&c));
     transcript.0.update(&[0]);
     let prime = Pr::prime(crate::ccykc::LAMBDA, transcript.0.finalize_xof());
-    let modulus =
-      crypto_bigint::NonZero::new((&prime * &UnsignedInteger::from_be_slice(class_group.p())).0)
-        .unwrap();
+    let modulus = crypto_bigint::NonZero::new(
+      (&prime * &UnsignedInteger::from_be_slice(class_group.p().as_ref())).0,
+    )
+    .unwrap();
 
     let s_delta_i = Zeroizing::new(r_delta_i.deref() + &Zeroizing::new(&c_uint * delta_i));
     let s_x_i = (c * x_i) + r_x_i.deref();
@@ -237,7 +240,7 @@ impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P> for Ccykc
     let prime = Pr::prime(crate::ccykc::LAMBDA, transcript.0.finalize_xof());
     let c = crate::ccykc::natural_from_bytes(&crate::be_bytes(&c));
     let prime = crate::ccykc::natural_from_bytes(&prime.to_be_bytes());
-    let modulus = &prime * &crate::ccykc::natural_from_bytes(class_group.p());
+    let modulus = &prime * &crate::ccykc::natural_from_bytes(class_group.p().as_ref());
 
     let D_Z_i = class_group.decompress_p(&mut *transcript)?;
     let D_K_i = class_group.decompress_p(&mut *transcript)?;

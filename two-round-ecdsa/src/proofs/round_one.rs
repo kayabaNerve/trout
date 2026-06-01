@@ -10,7 +10,7 @@ use group::{
   ff::{Field, PrimeField},
   Group, GroupEncoding,
 };
-use class_groups::{Element, Table, ClassGroup};
+use class_groups::{ElementExt, Table, ClassGroup};
 
 use crate::{UnsignedInteger, DigestReader, DigestWriter, Primes, Parameters};
 
@@ -20,7 +20,7 @@ use crate::{UnsignedInteger, DigestReader, DigestWriter, Primes, Parameters};
 /// `R_{i_j} = E \cdot k_{i_j} \and K_{i_j} = (\alpha_i \cdot G + k_{i_j} \cdot H) for j \in [2]`
 /// and `U_i = \beta_i \cdot G` (that `Ki` is the ciphertext of the nonce and `U_i` has a known
 /// opening).
-pub trait RoundOneProofs<CG: Element, P: Parameters<CG>> {
+pub trait RoundOneProofs<CG: ElementExt, P: Parameters<CG>> {
   /// The batch verifier for the round one proofs.
   type BatchVerifier;
 
@@ -76,7 +76,7 @@ pub trait RoundOneProofs<CG: Element, P: Parameters<CG>> {
 }
 
 /// The batch verifier for `Ccykc2023RoundOne`.
-pub struct Ccykc2023RoundOneBatchVerifier<CG: Element, P: Parameters<CG>> {
+pub struct Ccykc2023RoundOneBatchVerifier<CG: ElementExt, P: Parameters<CG>> {
   G: Natural,
   H: P::F,
   E: P::F,
@@ -87,7 +87,9 @@ pub struct Ccykc2023RoundOneBatchVerifier<CG: Element, P: Parameters<CG>> {
 /// Proofs from Cui, Chan, Yuen, Kang, and Chu's Bandwidth-Efficient Zero-Knowledge Proofs for
 /// Threshold ECDSA (2023).
 pub struct Ccykc2023RoundOne<Pr: Primes>(PhantomData<Pr>);
-impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P> for Ccykc2023RoundOne<Pr> {
+impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
+  for Ccykc2023RoundOne<Pr>
+{
   type BatchVerifier = Ccykc2023RoundOneBatchVerifier<CG, P>;
 
   fn prove<W: io::Write>(
@@ -146,9 +148,10 @@ impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P> for Ccykc
     let prime = Pr::prime(crate::ccykc::LAMBDA, transcript.0.finalize_xof());
 
     let c_uint = UnsignedInteger::from_be_slice(&crate::be_bytes(&c));
-    let modulus =
-      crypto_bigint::NonZero::new((&prime * &UnsignedInteger::from_be_slice(class_group.p())).0)
-        .unwrap();
+    let modulus = crypto_bigint::NonZero::new(
+      (&prime * &UnsignedInteger::from_be_slice(class_group.p().as_ref())).0,
+    )
+    .unwrap();
 
     // ZKPoKLog response
     for (r_randomness, r_message, alpha_i, k_i) in [
@@ -221,7 +224,7 @@ impl<CG: Element, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P> for Ccykc
     let prime = crate::ccykc::natural_from_bytes(&prime.to_be_bytes());
 
     let c_uint = crate::ccykc::natural_from_bytes(&crate::be_bytes(&c));
-    let modulus = crate::ccykc::natural_from_bytes(class_group.p()) * &prime;
+    let modulus = crate::ccykc::natural_from_bytes(class_group.p().as_ref()) * &prime;
 
     // ZKPoKLog response
     let mut s_message_0 = <P::F as PrimeField>::Repr::default();

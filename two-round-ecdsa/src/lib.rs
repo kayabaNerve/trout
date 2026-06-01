@@ -10,7 +10,7 @@ use subtle::{Choice, ConditionallySelectable};
 use zeroize::{Zeroize, Zeroizing};
 
 use group::{ff::PrimeFieldBits, GroupEncoding, prime::PrimeGroup};
-use class_groups::Element;
+use class_groups::ElementExt;
 
 mod integer;
 pub use integer::UnsignedInteger;
@@ -63,7 +63,7 @@ pub(crate) fn be_bytes<F: PrimeFieldBits>(scalar: &F) -> Vec<u8> {
 }
 
 /// Parameters for the signing protocol.
-pub trait Parameters<CG: Element>: Sized {
+pub trait Parameters<CG: ElementExt>: Sized {
   /// The elliptic curve.
   type E: PrimeGroup<Scalar = Self::F>;
   /// The scalar field of the elliptic curve.
@@ -101,7 +101,7 @@ pub trait Parameters<CG: Element>: Sized {
 #[cfg(feature = "secp256k1")]
 pub struct Secp256k1<P: Primes>(PhantomData<P>);
 #[cfg(feature = "secp256k1")]
-impl<CG: Element, P: Primes> Parameters<CG> for Secp256k1<P> {
+impl<CG: ElementExt, P: Primes> Parameters<CG> for Secp256k1<P> {
   type E = k256::ProjectivePoint;
   type F = k256::Scalar;
 
@@ -133,7 +133,7 @@ impl<CG: Element, P: Primes> Parameters<CG> for Secp256k1<P> {
 #[cfg(feature = "secp256k1")]
 pub struct Secp256k1NoIa<P: Primes>(PhantomData<P>);
 #[cfg(feature = "secp256k1")]
-impl<CG: Element, P: Primes> Parameters<CG> for Secp256k1NoIa<P> {
+impl<CG: ElementExt, P: Primes> Parameters<CG> for Secp256k1NoIa<P> {
   type E = <Secp256k1<P> as Parameters<CG>>::E;
   type F = <Secp256k1<P> as Parameters<CG>>::F;
 

@@ -696,7 +696,7 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 /// - `<L as AsRef::<[Limb]>>::as_ref(&a).len() == <L as AsRef::<[Limb]>>::as_ref(&b.1).len()`
 /// - `<L as AsRef::<[Limb]>>::as_ref(&negative_discriminant_abs).len() <=
 ///      2 * <L as AsRef::<[Limb]>>::as_ref(&b.1).len()`
-/// - $floor(log_2(|delta|)) + 1 <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
+/// - $floor(log_2(|delta|)) + 1 < <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
 /// - $floor(log_2(a)) + 1 < <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
 ///
 /// Yield an equivalent form `(a', b', c')` such that:

@@ -1,5 +1,5 @@
 use core::cmp::Ordering;
-use std::{sync::Arc, io};
+use std::io;
 
 use rand::CryptoRng;
 
@@ -34,29 +34,31 @@ fn c(a: &Natural, b: &Natural, discriminant: &Integer) -> Option<Natural> {
   Some(res.try_into().unwrap())
 }
 
-fn element<E: Element>(
-  a: Natural,
-  b: Integer,
-  discriminant: &Integer,
-  tess_root_p: &[u8],
-) -> Option<E> {
-  debug_assert!(b.unsigned_abs_ref() <= &a);
-  let a_bytes = natural_to_bytes(&a);
-  let b_positive = b.sign() != Ordering::Less;
-  let b_bytes = natural_to_bytes(b.unsigned_abs_ref());
-  let c = c(&a, b.unsigned_abs_ref(), discriminant)?;
-  debug_assert!(a <= c);
-  if (b.unsigned_abs_ref() == &a) || (a == c) {
-    debug_assert!(b_positive);
-  }
-  Some(E::from_be_abc_discriminant_tess_root_unchecked(
-    &a_bytes,
-    u8::from(b_positive).into(),
-    &b_bytes,
-    &natural_to_bytes(&c),
-    &natural_to_bytes(discriminant.unsigned_abs_ref()),
-    tess_root_p,
-  ))
+fn element<E: Element>(a: Natural, b: Integer, discriminant: &Integer) -> E {
+  assert_eq!(discriminant.sign(), Ordering::Less, "discriminant wasn't negative");
+  assert_eq!(
+    discriminant.unsigned_abs_ref() % Natural::from(2u8),
+    Natural::ONE,
+    "discriminant wasn't odd"
+  );
+
+  // `b^2 - 4ac = -|delta|, b^2 + |delta| = 4ac`
+  let c = b.unsigned_abs_ref().square() + discriminant.unsigned_abs_ref();
+  assert_eq!(c.clone() % Natural::from(4u8), Natural::ZERO);
+  let c = c >> 2u32;
+  let (c, zero) = c.div_rem(&a);
+  assert_eq!(zero, Natural::ZERO);
+
+  assert_eq!(
+    a.clone().gcd(b.unsigned_abs_ref().gcd(&c)),
+    Natural::ONE,
+    "discriminant wasn't primitive"
+  );
+
+  E::from(MalachiteElement::reduce(Integer::from(a), b, Integer::from(c), {
+    let tess_root = discriminant.unsigned_abs_ref().ceiling_root(4);
+    Integer::from(tess_root)
+  }))
 }
 
 #[must_use]
@@ -65,7 +67,6 @@ fn make_coprime(
   mut b: Integer,
   prime: &Natural,
   delta: &Integer,
-  tess_root: &[u8],
 ) -> (Natural, Integer) {
   #[cfg(debug_assertions)]
   let original_a = a.clone();
@@ -101,18 +102,18 @@ fn make_coprime(
   {
     debug_assert_eq!(
       {
-        let reduced = MalachiteElement::reduce(
-          Integer::from(a.clone()),
-          b.clone(),
-          c.clone(),
-          Arc::new(Integer::from(natural_from_bytes(tess_root))),
-        );
-        let (b_positive, b) = reduced.b();
-        let mut b = Integer::from(natural_from_bytes(&b));
+        let reduced = MalachiteElement::reduce(Integer::from(a.clone()), b.clone(), c.clone(), {
+          let delta = b.clone().square() - ((Integer::from(a.clone()) * c.clone()) << 2u32);
+          let tess_root = delta.unsigned_abs_ref().ceiling_root(4);
+          Integer::from(tess_root)
+        });
+        // SAFETY: `a_b_c_discriminant` is always safe to call
+        let (a, (b_positive, b), _c, _discriminant) = unsafe { reduced.a_b_c_discriminant() };
+        let mut b = Integer::from(natural_from_bytes(b.as_ref()));
         if !bool::from(b_positive) {
           b = -b;
         }
-        (natural_from_bytes(&reduced.a()), b)
+        (natural_from_bytes(a.as_ref()), b)
       },
       (original_a, original_b)
     );
@@ -123,19 +124,17 @@ fn make_coprime(
 
 /// A class group.
 #[derive(Clone)]
-pub struct ClassGroup<E: Element> {
+pub struct ClassGroup<E: ElementExt> {
   B: Natural,
   p: Natural,
-  p_be_bytes: Vec<u8>,
+  p_le_bytes: Vec<u8>,
   // TODO identity_k: E,
   identity_p: E,
   f_table: Table<E>,
   delta_k: Integer,
-  tess_root_k: Vec<u8>,
   delta_p: Integer,
-  tess_root_p: Vec<u8>,
 }
-impl<E: Element> ClassGroup<E> {
+impl<E: ElementExt> ClassGroup<E> {
   /// Perform the setup for a randomly sampled class group with a subgroup where the discrete
   /// logarithm is easy.
   ///
@@ -145,11 +144,11 @@ impl<E: Element> ClassGroup<E> {
   /// bit-length of the fundamental discriminant for 128-bit security but please review
   /// <https://eprint.iacr.org/2020/196> for context on choices.
   ///
-  /// `p_be_bytes` is expected to be the big-endian encoding of the odd prime order of the
+  /// `p_le_bytes` is expected to be the little-endian encoding of the odd prime order of the
   /// subgroup.
   // https://eprint.iacr.org/2015/047 Figure 2, slightly modified with regards to `g`
-  pub fn setup(rng: &mut impl CryptoRng, lambda: u64, p_be_bytes: Vec<u8>) -> Option<Self> {
-    let p = natural_from_bytes(&p_be_bytes);
+  pub fn setup(rng: &mut impl CryptoRng, lambda: u64, p_le_bytes: Vec<u8>) -> Option<Self> {
+    let p = natural_from_bytes(&p_le_bytes);
 
     let mu = p.significant_bits();
 
@@ -176,7 +175,7 @@ impl<E: Element> ClassGroup<E> {
           &mut *rng,
           seed,
           ({
-            let kappa = u32::try_from((8 * p_be_bytes.len()) / 2).unwrap();
+            let kappa = u32::try_from((8 * p_le_bytes.len()) / 2).unwrap();
             let mut closest_power_of_two = 1u32;
             while (2 * closest_power_of_two) < kappa {
               closest_power_of_two <<= 1;
@@ -190,7 +189,7 @@ impl<E: Element> ClassGroup<E> {
           })
           .max(128),
         );
-        let q = natural_from_bytes(q.to_be_bytes().as_ref());
+        let q = natural_from_bytes(q.to_le_bytes().as_ref());
         debug_assert!((q.significant_bits() - u64::from(q_bits)) < 1);
         // p * q is congruent to -1 mod 4
         if ((&p * &q) & Natural::from(3u8)) != 3u8 {
@@ -207,26 +206,17 @@ impl<E: Element> ClassGroup<E> {
 
     // Step 3
     let delta_k = -Integer::from(&p * &q);
-    let tess_root_k = {
-      let delta_k_div_4: Integer = &delta_k >> 2;
-      natural_to_bytes(&delta_k_div_4.abs().floor_root(4).try_into().unwrap())
-    };
 
     let p_square = p.clone().pow(2u64);
     let delta_p = &delta_k * Integer::from(p_square.clone());
 
-    let tess_root_p = {
-      let delta_p_div_4: Integer = &delta_p >> 2;
-      natural_to_bytes(&delta_p_div_4.abs().floor_root(4).try_into().unwrap())
-    };
-
-    let identity_p = element::<E>(Natural::ONE, Integer::ONE, &delta_p, &tess_root_p).unwrap();
+    let identity_p = element::<E>(Natural::ONE, Integer::ONE, &delta_p);
 
     // Step 4
     let f = {
       let a = p_square.clone();
       let b = p.clone();
-      element::<E>(a, Integer::from(b), &delta_p, &tess_root_p).unwrap()
+      element::<E>(a, Integer::from(b), &delta_p)
     };
 
     let B = {
@@ -242,22 +232,20 @@ impl<E: Element> ClassGroup<E> {
 
     Some(ClassGroup {
       B,
-      p_be_bytes,
+      p_le_bytes,
       p,
       identity_p: identity_p.clone(),
       // Make a very large table for this as it's static to the setup
       // This should be ~24 MB
       f_table: Table::new(12, identity_p, f),
       delta_k,
-      tess_root_k,
       delta_p,
-      tess_root_p,
     })
   }
 
   /// The prime-order of the subgroup where the discrete log problem is easy.
-  pub fn p(&self) -> &[u8] {
-    &self.p_be_bytes
+  pub fn p(&self) -> impl AsRef<[u8]> {
+    self.p_le_bytes.iter().copied().rev().collect::<Vec<_>>()
   }
 
   /// The bound on the unknown order, in bits.
@@ -295,7 +283,7 @@ impl<E: Element> ClassGroup<E> {
       }
       let r = super::primes::next_prime(&mut *rng, seed, 128);
 
-      let r = natural_from_bytes(r.to_be_bytes().as_ref());
+      let r = natural_from_bytes(r.to_le_bytes().as_ref());
       if r >= prime_limit {
         continue;
       }
@@ -327,7 +315,7 @@ impl<E: Element> ClassGroup<E> {
     if (rng.next_u64() % 2) == 1 {
       b = -b;
     }
-    element::<E>(a, b, &self.delta_p, &self.tess_root_p).unwrap()
+    element::<E>(a, b, &self.delta_p)
   }
 
   /// The generator for the known-order subgroup over discriminant `p`.
@@ -354,8 +342,9 @@ impl<E: Element> ClassGroup<E> {
     let p = &self.p;
     let p_int = Integer::from(p.clone());
 
-    let (b_sign, b_value) = X.b();
-    let mut b_value = Integer::from(natural_from_bytes(&b_value));
+    // SAFETY: `a_b_c_discriminant` is always safe to call
+    let (_a, (b_sign, b_value), _c, _discriminant) = unsafe { X.a_b_c_discriminant() };
+    let mut b_value = Integer::from(natural_from_bytes(b_value.as_ref()));
     if !bool::from(b_sign) {
       b_value = -b_value;
     }
@@ -377,28 +366,7 @@ impl<E: Element> ClassGroup<E> {
   ///
   /// This function executes in variable time.
   pub fn decompress_p(&self, reader: impl io::Read) -> io::Result<E> {
-    use ::crypto_bigint::BoxedUint;
-
-    let discriminant_abs = natural_to_bytes(self.delta_p.unsigned_abs_ref());
-
-    let (a, (b_positive, b_abs), _c) =
-      crate::crypto_bigint::decode_compressed_binary_quadratic_form(
-        reader,
-        &BoxedUint::from_be_slice(
-          &discriminant_abs,
-          u32::try_from(8 * discriminant_abs.len()).expect("4 GB discriminant?"),
-        )
-        .expect("container overflowed despite precision proportional to length of the encoding"),
-      )
-      .map_err(|e| io::Error::other(format!("{e:?}")))?;
-    let a = natural_from_bytes(&a.get().to_be_bytes());
-    let mut b = Integer::from(natural_from_bytes(&b_abs.to_be_bytes()));
-    if bool::from(!b_positive) {
-      b = -b;
-    }
-
-    element::<E>(a, b, &self.delta_p, &self.tess_root_p)
-      .ok_or_else(|| io::Error::other("element didn't have a `c`"))
+    E::decompress(reader, natural_to_bytes(self.delta_p.unsigned_abs_ref()))
   }
 
   /// Map an element of the class group with discriminant `k` with a distinct type into this
@@ -408,14 +376,15 @@ impl<E: Element> ClassGroup<E> {
   ///
   /// This function executes in variable time.
   pub fn map_k<E2: Element>(&self, e: &E2) -> E {
-    let (b_positive, b) = e.b();
-    let mut b = Integer::from(natural_from_bytes(&b));
+    // SAFETY: `a_b_c_discriminant` is always safe to call
+    let (a, (b_positive, b), _c, _discriminant) = unsafe { e.a_b_c_discriminant() };
+    let mut b = Integer::from(natural_from_bytes(b.as_ref()));
     if !bool::from(b_positive) {
       b = -b;
     }
     // `unwrap` is fine as this is either valid or of a different discriminant, which means we're
     // allowed to have undefined behavior
-    element::<E>(natural_from_bytes(&e.a()), b, &self.delta_k, &self.tess_root_k).unwrap()
+    element::<E>(natural_from_bytes(a.as_ref()), b, &self.delta_k)
   }
 
   /// Map an element of the class group with discriminant `p` with a distinct type into this
@@ -425,14 +394,15 @@ impl<E: Element> ClassGroup<E> {
   ///
   /// This function executes in variable time.
   pub fn map_p<E2: Element>(&self, e: &E2) -> E {
-    let (b_positive, b) = e.b();
-    let mut b = Integer::from(natural_from_bytes(&b));
+    // SAFETY: `a_b_c_discriminant` is always safe to call
+    let (a, (b_positive, b), _c, _discriminant) = unsafe { e.a_b_c_discriminant() };
+    let mut b = Integer::from(natural_from_bytes(b.as_ref()));
     if !bool::from(b_positive) {
       b = -b;
     }
     // `unwrap` is fine as this is either valid or of a different discriminant, which means we're
     // allowed to have undefined behavior
-    element::<E>(natural_from_bytes(&e.a()), b, &self.delta_p, &self.tess_root_p).unwrap()
+    element::<E>(natural_from_bytes(a.as_ref()), b, &self.delta_p)
   }
 
   /// Surject an element of the class group of discriminant `p` to the class group of discriminant
@@ -443,27 +413,26 @@ impl<E: Element> ClassGroup<E> {
   /// This function executes in variable time.
   // HJPT98, Algorithm 3, for odd discriminants (b_O = 1)
   pub fn surject(&self, e: &E) -> E {
-    let a = natural_from_bytes(&e.a());
-    let (b_positive, b) = e.b();
-    let mut b = Integer::from(natural_from_bytes(&b));
+    // SAFETY: `a_b_c_discriminant` is always safe to call
+    let (a, (b_positive, b), _c, _discriminant) = unsafe { e.a_b_c_discriminant() };
+    let a = natural_from_bytes(a.as_ref());
+    let mut b = Integer::from(natural_from_bytes(b.as_ref()));
     if !bool::from(b_positive) {
       b = -b;
     }
 
     // Ensure `a` and `p` are coprime
-    let (a, mut b) = make_coprime(a, b, &self.p, &self.delta_p, &self.tess_root_p);
+    let (a, mut b) = make_coprime(a, b, &self.p, &self.delta_p);
 
     // Apply the surjections
     let (_one, mu, lambda) = (&self.p).extended_gcd(&a);
     b = (b * mu) + (Integer::from(&a) * lambda);
 
     let c = Integer::from(c(&a, b.unsigned_abs_ref(), &self.delta_k).unwrap());
-    self.map_k(&MalachiteElement::reduce(
-      Integer::from(a),
-      b,
-      c,
-      Arc::new(Integer::from(natural_from_bytes(&self.tess_root_k))),
-    ))
+    self.map_k(&MalachiteElement::reduce(Integer::from(a), b, c, {
+      let tess_root = self.delta_k.unsigned_abs_ref().ceiling_root(4);
+      Integer::from(tess_root)
+    }))
   }
 
   /// Inject an element of the class group of discriminant `k` to the class group of discriminant
@@ -474,26 +443,25 @@ impl<E: Element> ClassGroup<E> {
   /// This function executes in variable time.
   // HJPT, Algorithm 2
   pub fn inject(&self, e: E) -> E {
-    let a = natural_from_bytes(&e.a());
-    let (b_positive, b) = e.b();
-    let mut b = Integer::from(natural_from_bytes(&b));
+    // SAFETY: `a_b_c_discriminant` is always safe to call
+    let (a, (b_positive, b), _c, _discriminant) = unsafe { e.a_b_c_discriminant() };
+    let a = natural_from_bytes(a.as_ref());
+    let mut b = Integer::from(natural_from_bytes(b.as_ref()));
     if !bool::from(b_positive) {
       b = -b;
     }
 
     // Ensure `a` and `p` are coprime
-    let (a, mut b) = make_coprime(a, b, &self.p, &self.delta_k, &self.tess_root_k);
+    let (a, mut b) = make_coprime(a, b, &self.p, &self.delta_k);
 
     // Apply the injection
     b *= Integer::from(&self.p);
     let c = Integer::from(c(&a, b.unsigned_abs_ref(), &self.delta_p).unwrap());
 
-    self.map_p(&MalachiteElement::reduce(
-      Integer::from(a),
-      b,
-      c,
-      Arc::new(Integer::from(natural_from_bytes(&self.tess_root_p))),
-    ))
+    self.map_p(&MalachiteElement::reduce(Integer::from(a), b, c, {
+      let tess_root = self.delta_p.unsigned_abs_ref().ceiling_root(4);
+      Integer::from(tess_root)
+    }))
   }
 
   /// Apply the coset labelling function for an element in the class group of discriminant `p`.
@@ -507,7 +475,7 @@ impl<E: Element> ClassGroup<E> {
 }
 
 #[cfg(test)]
-fn test_class_group<E: Element>(mut rng: impl CryptoRng) {
+fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   let prime = 19;
   let cg = ClassGroup::<E>::setup(&mut rng, 100, vec![prime]).unwrap();
 
@@ -562,9 +530,9 @@ fn test_class_group<E: Element>(mut rng: impl CryptoRng) {
 
   // Check we can solve for the discrete logarithm of all of our tabled scalings of f
   for (i, f) in cg.f().as_ref().iter().enumerate() {
-    let mut i = u32::try_from(i % usize::from(prime)).unwrap().to_be_bytes().to_vec();
-    while i.first() == Some(&0) {
-      i.remove(0);
+    let mut i = u32::try_from(i % usize::from(prime)).unwrap().to_le_bytes().to_vec();
+    while i.last() == Some(&0) {
+      i.pop();
     }
     assert_eq!(cg.discrete_logarithm(f), Some(i));
   }
@@ -606,7 +574,7 @@ fn test_class_group<E: Element>(mut rng: impl CryptoRng) {
 }
 
 #[cfg(test)]
-fn bench_class_group<E: Element>(mut rng: impl CryptoRng) {
+fn bench_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   // Benchmark with the maximum size of class group supported by CryptoBigintStackElement
   let prime = 19u8;
   // The fundamental discriminant is of length `lambda * 2`, yet then that's scaled by `prime**2`

@@ -142,26 +142,26 @@ impl super::element::Limbs for BoxedUint {
   }
 
   #[inline(always)]
-  fn to_be_bytes(self) -> impl AsRef<[u8]> {
-    BoxedUint::to_be_bytes(&self)
+  fn to_le_bytes(self) -> impl AsRef<[u8]> {
+    BoxedUint::to_le_bytes(&self)
+  }
+  #[inline(always)]
+  fn wide_to_le_bytes(wide: Self::Wide) -> impl AsRef<[u8]> {
+    BoxedUint::to_le_bytes(&wide)
   }
 
   #[inline(always)]
-  fn from_be_slice(mut bytes: &[u8], max_bits: u32) -> Self {
-    while bytes.first().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
-      bytes = &bytes[1 ..];
+  fn from_le_slice(mut bytes: &[u8], max_bits: u32) -> Self {
+    while bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
+      bytes = &bytes[.. (bytes.len() - 1)];
     }
-    Self::from_be_slice(bytes, max_bits).unwrap()
+    Self::from_le_slice(bytes, max_bits).unwrap()
   }
   #[inline(always)]
-  fn wide_from_be_slice(mut bytes: &[u8], max_bits: u32) -> Self::Wide {
-    while bytes.first().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
-      bytes = &bytes[1 ..];
+  fn wide_from_le_slice(mut bytes: &[u8], max_bits: u32) -> Self::Wide {
+    while bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
+      bytes = &bytes[.. (bytes.len() - 1)];
     }
-    Self::from_be_slice(bytes, max_bits).unwrap()
-  }
-
-  fn wide_gcd(x: Self::Wide, y: Self::Wide) -> impl One {
-    x.gcd(&y)
+    Self::from_le_slice(bytes, max_bits).unwrap()
   }
 }

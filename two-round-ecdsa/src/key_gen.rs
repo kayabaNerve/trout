@@ -8,7 +8,7 @@ use group::{
   ff::{Field, PrimeField},
   Group, GroupEncoding,
 };
-use class_groups::{Element, Table, ClassGroup};
+use class_groups::{ElementExt, Table, ClassGroup};
 
 use dkg::Participant;
 
@@ -36,7 +36,7 @@ pub enum SecurityLevel {
   Insecure = 0xff,
 }
 
-fn class_group<CG: Element, P: Parameters<CG>>(
+fn class_group<CG: ElementExt, P: Parameters<CG>>(
   seed: [u8; 32],
   security_level: SecurityLevel,
 ) -> (ClassGroup<CG>, Table<CG>) {
@@ -64,7 +64,12 @@ fn class_group<CG: Element, P: Parameters<CG>>(
     p_bytes
   };
 
-  let class_group = ClassGroup::<CG>::setup(&mut class_group_rng, lambda, p_bytes.clone()).unwrap();
+  let class_group = ClassGroup::<CG>::setup(
+    &mut class_group_rng,
+    lambda,
+    p_bytes.iter().copied().rev().collect::<Vec<_>>(),
+  )
+  .unwrap();
   let G = class_group.generator_p(&mut class_group_rng);
   // Ensure G is a generator of G_q, not G, as required by the CCYKC proofs
   let G = CG::mul(
@@ -82,7 +87,7 @@ fn class_group<CG: Element, P: Parameters<CG>>(
 
 /// A view of the setup for a multisig.
 #[derive(Clone)]
-pub struct SetupView<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> {
+pub struct SetupView<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> {
   t: u16,
   class_group_seed: [u8; 32],
 
@@ -100,7 +105,7 @@ pub struct SetupView<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<
   transcript: blake3::Hasher,
 }
 
-impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> SetupView<PCG, CG, P> {
+impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> SetupView<PCG, CG, P> {
   // This is only 'internal' due to assumptions regarding the `HashMap`s
   // They aren't validated with an error returned if they're wrong
   fn new_internal(
@@ -192,13 +197,13 @@ impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> SetupView<P
 }
 
 /// The result of the setup for a participant.
-pub struct Setup<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> {
+pub struct Setup<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> {
   view: Arc<SetupView<PCG, CG, P>>,
   i: Participant,
   share_ciphertext_opening: Zeroizing<(UnsignedInteger, <P as Parameters<PCG>>::F)>,
 }
 
-impl<PCG: Element, CG: Element, P: Parameters<PCG> + Parameters<CG>> Setup<PCG, CG, P> {
+impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup<PCG, CG, P> {
   /// The public view of the setup.
   pub fn view(&self) -> &Arc<SetupView<PCG, CG, P>> {
     &self.view

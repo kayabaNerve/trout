@@ -242,34 +242,50 @@ impl crate::Element for GmpElement {
     self.add(&-other)
   }
 
-  fn from_be_abc_discriminant_tess_root_unchecked(
-    a: &[u8],
-    b_positive: subtle::Choice,
-    b: &[u8],
-    c: &[u8],
-    _abs_value_of_neg_discriminant: &[u8],
-    tess_root: &[u8],
+  // SAFETY: This always reduces forms and does return a well-defined form as required.
+  unsafe fn a_b_c_discriminant(
+    &self,
+  ) -> (
+    impl AsRef<[u8]>,
+    (crypto_bigint::Choice, impl AsRef<[u8]>),
+    impl AsRef<[u8]>,
+    impl AsRef<[u8]>,
+  ) {
+    let a = self.a.to_digits::<u8>(Order::LsfLe);
+    let b = (u8::from(!self.b.is_negative()).into(), self.b.to_digits::<u8>(Order::LsfLe));
+    let c = self.c.to_digits::<u8>(Order::LsfLe);
+
+    let discriminant = (((self.a.clone() * self.c.clone()) << 2u32) - self.b.clone().square())
+      .to_digits::<u8>(Order::LsfLe);
+
+    (a, b, c, discriminant)
+  }
+
+  unsafe fn from_coefficients(
+    a: impl AsRef<[u8]>,
+    (b_positive, b_abs): (crypto_bigint::Choice, impl AsRef<[u8]>),
+    c: impl AsRef<[u8]>,
+    discriminant_abs: impl AsRef<[u8]>,
   ) -> Self {
-    let to_gmp = |value: &[u8]| {
-      let mut res = Integer::new();
-      unsafe {
-        res.assign_bytes_radix_unchecked(value, 256, false);
-      }
-      res
-    };
-    let mut b = to_gmp(b);
+    let to_gmp = |value: &[u8]| Integer::from_digits(value, Order::LsfLe);
+
+    let a = to_gmp(a.as_ref());
+
+    let mut b = to_gmp(b_abs.as_ref());
     if !bool::from(b_positive) {
       b = -b;
     }
-    Self { a: to_gmp(a), b, c: to_gmp(c), L: to_gmp(tess_root) }
-  }
 
-  fn a(&self) -> Vec<u8> {
-    self.a.to_digits::<u8>(Order::MsfBe)
-  }
+    let c = to_gmp(c.as_ref());
 
-  fn b(&self) -> (subtle::Choice, Vec<u8>) {
-    (u8::from(!self.b.is_negative()).into(), self.b.to_digits::<u8>(Order::MsfBe))
+    // b^2 - 4ac = delta
+    let delta: Integer = to_gmp(discriminant_abs.as_ref());
+    let mut tess_root = delta.clone().abs().root(4);
+    if tess_root.clone().square().square() < delta.abs() {
+      tess_root += Integer::from(1u8);
+    }
+
+    Self { a, b, c, L: tess_root }
   }
 }
 
@@ -279,3 +295,5 @@ impl Neg for GmpElement {
     Self { a: self.a, b: -self.b, c: self.c, L: self.L.clone() }.reduce()
   }
 }
+
+impl crate::ElementExt for GmpElement {}

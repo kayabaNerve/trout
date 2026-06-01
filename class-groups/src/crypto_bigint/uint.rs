@@ -1,4 +1,4 @@
-use crypto_bigint::{CtEq, Encoding, Concat, SplitEven, NonZero, One, Uint};
+use crypto_bigint::{CtEq, Encoding, Concat, SplitEven, NonZero, Uint};
 
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where
@@ -92,34 +92,34 @@ where
   }
 
   #[inline(always)]
-  fn to_be_bytes(self) -> impl AsRef<[u8]> {
-    Self::to_be_bytes(&self)
+  fn to_le_bytes(self) -> impl AsRef<[u8]> {
+    Self::to_le_bytes(&self)
+  }
+  #[inline(always)]
+  fn wide_to_le_bytes(wide: Self::Wide) -> impl AsRef<[u8]> {
+    Self::Wide::to_le_bytes(&wide)
   }
 
   #[inline(always)]
-  fn from_be_slice(mut bytes: &[u8], _max_bits: u32) -> Self {
-    while bytes.first().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
-      bytes = &bytes[1 ..];
+  fn from_le_slice(mut bytes: &[u8], _max_bits: u32) -> Self {
+    while bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
+      bytes = &bytes[.. (bytes.len() - 1)];
     }
 
     let mut fixed_bytes = <Self as Encoding>::Repr::default();
-    fixed_bytes.as_mut()[(Self::BYTES - bytes.len()) ..].copy_from_slice(bytes);
+    fixed_bytes.as_mut()[.. bytes.len()].copy_from_slice(bytes);
 
-    Self::from_be_bytes(fixed_bytes)
+    Self::from_le_bytes(fixed_bytes)
   }
   #[inline(always)]
-  fn wide_from_be_slice(mut bytes: &[u8], _max_bits: u32) -> Self::Wide {
-    while bytes.first().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
-      bytes = &bytes[1 ..];
+  fn wide_from_le_slice(mut bytes: &[u8], _max_bits: u32) -> Self::Wide {
+    while bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
+      bytes = &bytes[.. (bytes.len() - 1)];
     }
 
     let mut fixed_bytes = <Uint<WIDE_LIMBS> as Encoding>::Repr::default();
-    fixed_bytes.as_mut()[(Uint::<WIDE_LIMBS>::BYTES - bytes.len()) ..].copy_from_slice(bytes);
+    fixed_bytes.as_mut()[.. bytes.len()].copy_from_slice(bytes);
 
-    Self::Wide::from_be_bytes(fixed_bytes)
-  }
-
-  fn wide_gcd(x: Self::Wide, y: Self::Wide) -> impl One {
-    x.gcd(&y)
+    Self::Wide::from_le_bytes(fixed_bytes)
   }
 }

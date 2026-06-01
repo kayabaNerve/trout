@@ -46,30 +46,36 @@ pub(super) trait Limbs:
   /// `2 * Self::max_bits()` when `Self::max_bits().is_some()`.
   fn widen(thin: Self, wide_bits: u32) -> Self::Wide;
 
-  /// Convert this number to a sequence of big-endian bytes.
-  fn to_be_bytes(self) -> impl AsRef<[u8]>;
+  /// Convert this number to a sequence of little-endian bytes.
+  ///
+  /// This function MUST run in constant time and yield a result of length constant to the relevant
+  /// bound.
+  fn to_le_bytes(self) -> impl AsRef<[u8]>;
 
-  /// Load this number from a sequence of big-endian bytes.
+  /// Convert this wide number to a sequence of little-endian bytes.
+  ///
+  /// This function MUST run in constant time and yield a result of length constant to the relevant
+  /// bound.
+  fn wide_to_le_bytes(wide: Self::Wide) -> impl AsRef<[u8]>;
+
+  /// Load this number from a sequence of little-endian bytes.
   ///
   /// The slice MAY be of arbitrary length so long as the encoded value has bits less than or
   /// equal to `max_bits`. `max_bits` MUST be less than or equal to `Self::max_bits()` when
   /// `Self::max_bits().is_some()`.
-  fn from_be_slice(bytes: &[u8], max_bits: u32) -> Self;
+  fn from_le_slice(bytes: &[u8], max_bits: u32) -> Self;
 
-  /// Load a wide number from a sequence of big-endian bytes.
+  /// Load a wide number from a sequence of little-endian bytes.
   ///
   /// The slice MAY be of arbitrary length so long as the encoded value has bits less than or
   /// equal to `max_bits`.`max_bits` MUST be less than or equal to `2 * Self::max_bits()` when
   /// `Self::max_bits().is_some()`.
-  fn wide_from_be_slice(bytes: &[u8], max_bits: u32) -> Self::Wide;
-
-  /// Calculate the GCD of `x, y`.
-  fn wide_gcd(x: Self::Wide, y: Self::Wide) -> impl One;
+  fn wide_from_le_slice(bytes: &[u8], max_bits: u32) -> Self::Wide;
 }
 
 /// A constant-time primitive element of a class group, implemented via `crypto-bigint`.
 ///
-/// This only supports discriminants `delta` such that $delta < 0, |delta| \cong 3 \mod 4$.
+/// This only supports discriminants `delta` such that $delta < 0, |delta| \cong 1 \mod 2$.
 ///
 /// This is implemented in time variable to the discriminant yet constant to the `a, b, c`
 /// coefficients. This prevents timing analysis from leaking the elements being composed. It is
@@ -99,8 +105,8 @@ pub struct CryptoBigintElement<U: Limbs> {
   /// This may not be reduced but is bounded to be less than the discriminant.
   /*
     This `c` coefficient satisfies `b^2 - 4ac = delta`. `b^2` is at most the discriminant itself.
-    This means `4ac` can be at most `3 |delta|` (for a negative discriminant, as we bound). This
-    means `ac` can be at most `3 / 4 |delta|`, and therefore `c` itself is within that bound.
+    This means `4ac` can be at most `2 |delta|` (for a negative discriminant, as we bound). This
+    means `ac` can be at most `2 |delta| / 4`, and therefore `c` itself is within that bound.
   */
   c: U::Wide,
 
@@ -144,7 +150,7 @@ impl<U: Limbs> PartialEq for CryptoBigintElement<U> {
 impl<U: Limbs> Eq for CryptoBigintElement<U> {}
 
 impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
-  /// This is only valid for forms where $|delta| \cong 3 \mod 4$.
+  /// This is only valid for forms of negative odd discriminant.
   ///
   /// This does not zeroize the discriminant, solely the `a, b, c` coefficients, and will set the
   /// result to the identity element of the same discriminant.
@@ -203,7 +209,12 @@ impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
           `+ 1`, as `carry` was initialized to one.
 
           This technically doesn't calculate $(1 + |delta|) / 4$ but $floor(|delta| / 4) + 1$.
-          These two values are equivalent when $|delta| \cong 3 \mod 4$, which we bound to.
+          These two values are equivalent when $|delta| \cong 3 \mod 4$.
+
+          We only explicitly bound $delta < 0, delta \cong 1 \mod 2$. By $b^2 - 4 a c = delta$, we
+          have $b^2 \cong delta \mod 4$. $3$ is not a square modulo $4$, so if
+          $delta \cong 1 \mod 2$ (as we bound), we MUST have $delta \cong 1 \mod 4$ (and therefore
+          $|delta| \cong 3 \mod 4$).
         */
         (c[i], carry) = c[i].carrying_add(Limb::ZERO, carry);
         i += 1;
@@ -303,8 +314,6 @@ impl<U: Limbs> CryptoBigintElement<U> {
 }
 
 impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
-  const MAX_TABLE_BITS: u32 = 12;
-
   /// This MAY return an incorrect result when the form doesn't have an odd, negative discriminant.
   fn is_identity(&self) -> subtle::Choice {
     /*
@@ -356,9 +365,108 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     Self::partial_reduce(a3, b3, self.discriminant_abs.clone())
   }
 
+  /// This function runs in constant time.
+  // SAFETY: This reduces the form before yielding it and does return a well-defined form as
+  // required.
+  unsafe fn a_b_c_discriminant(
+    &self,
+  ) -> (
+    impl AsRef<[u8]>,
+    (crypto_bigint::Choice, impl AsRef<[u8]>),
+    impl AsRef<[u8]>,
+    impl AsRef<[u8]>,
+  ) {
+    let reduced = self.clone().reduce();
+    (
+      reduced.a.to_le_bytes(),
+      (reduced.b.0, reduced.b.1.to_le_bytes()),
+      U::wide_to_le_bytes(reduced.c),
+      U::wide_to_le_bytes(reduced.discriminant_abs),
+    )
+  }
+
+  /// This function is only valid for primitive reduced positive definite binary quadratic forms of
+  /// negative odd discriminant where the discriminant fits within `(2 * max_bits) - 2` bits.
+  ///
+  /// This function MAY run in time variable to:
+  /// - the byte-length of the inputs
+  /// - the validity of the inputs
+  /// - the discriminant
+  ///
+  /// This function MAY panic if asked to handle coefficients which exceed the capacity of the
+  /// underlying container(s).
+  // TODO: What's the proper story for the timing of this function?
+  unsafe fn from_coefficients(
+    a: impl AsRef<[u8]>,
+    (b_positive, b_abs): (crypto_bigint::Choice, impl AsRef<[u8]>),
+    c: impl AsRef<[u8]>,
+    discriminant_abs: impl AsRef<[u8]>,
+  ) -> Self {
+    let mut a = a.as_ref();
+    let mut b_abs = b_abs.as_ref();
+    let mut c = c.as_ref();
+    let mut discriminant_abs = discriminant_abs.as_ref();
+
+    let bit_len = |slice: &[u8]| {
+      if let Some(last) = slice.last() {
+        u32::try_from(8 * (slice.len() - 1))
+          .ok()
+          .and_then(|value| value.checked_add(Limb::from(*last).bits()))
+          .expect("slice exceeded 4 GB")
+      } else {
+        0
+      }
+    };
+
+    // Ensure all values fit within the expected capacities, allowing trailing zeroes
+    if let Some(max_bits) = U::max_bits() {
+      let truncate = |slice: &mut &[u8], max_bits: u32| {
+        let max_bytes = max_bits.div_ceil(8).max(1);
+        while u32::try_from(slice.len()).expect("slice exceeded 4 GB") > max_bytes {
+          assert!(bool::from(slice[slice.len() - 1].ct_eq(&0)), "coefficient exceeded capacity");
+          *slice = &slice[.. (slice.len() - 1)];
+        }
+      };
+      truncate(&mut a, max_bits);
+      truncate(&mut b_abs, max_bits);
+      truncate(&mut c, 2 * max_bits);
+      truncate(&mut discriminant_abs, (2 * max_bits) - 2);
+
+      assert!(bit_len(a) <= max_bits);
+      assert!(bit_len(b_abs) <= max_bits);
+      assert!(bit_len(c) <= (2 * max_bits));
+      assert!(bit_len(discriminant_abs) <= ((2 * max_bits) - 2));
+    }
+
+    // Determine how many bits are actually in the absolute value of the discriminant
+    let discriminant_bits =
+      U::wide_from_le_slice(discriminant_abs, bit_len(discriminant_abs)).bits_vartime();
+    // Load the absolute value of the discriminant with the exact precision required
+    let discriminant_abs = U::wide_from_le_slice(discriminant_abs, discriminant_bits);
+
+    let sqrt_discriminant_bits = discriminant_bits.div_ceil(2);
+    let a = U::from_le_slice(a, 1 + sqrt_discriminant_bits);
+    assert!(bool::from(!a.bits().ct_gt(&sqrt_discriminant_bits)));
+    let b = (b_positive, U::from_le_slice(b_abs, 1 + sqrt_discriminant_bits));
+    assert!(bool::from(!b.1.bits().ct_gt(&sqrt_discriminant_bits)));
+    let c = U::wide_from_le_slice(c, discriminant_bits);
+
+    Self { a, b, c, discriminant_abs }
+  }
+}
+
+// TODO
+impl<U: Limbs> crate::ElementExt for CryptoBigintElement<U>
+where
+  Self: crate::Element,
+{
+  const MAX_TABLE_BITS: u32 = 12;
+
   /// This is only correct when `identity` is in fact the identity element for the class group the
   /// elements in the table belong to.
   fn multiexp(identity: &Self, pairs: &[(&Table<Self>, &[u8])]) -> Self {
+    use crate::Element;
+
     let mut longest_scalar_bits = 0;
     for (_table, scalar) in pairs {
       longest_scalar_bits = longest_scalar_bits.max(scalar.len() * 8);
@@ -417,90 +525,5 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     }
 
     res.unwrap_or_else(|| identity.clone())
-  }
-
-  /// `abs_value_of_neg_discriminant_cong_1_mod_4` MUST be congruent to 3 modulo 4 (the
-  /// discriminant itself congruent to 1 modulo 4, as `abs_value_of_neg_discriminant_cong_1_mod_4`
-  /// represents its negative (absolute) value).
-  ///
-  /// `abs_value_of_neg_discriminant_cong_1_mod_4` MUST fit within `(2 * max_bits) - 2` bits, where
-  /// `max_bits` is the capacity of the container `U`. `a, b` MUST be less than the square root of
-  /// the discriminant and `c` MUST be less than the discriminant. `a, b, c` MUST specify a
-  /// primitive form with discriminant `-abs_value_of_neg_discriminant_cong_1_mod_4` but MAY
-  /// specify an unreduced form.
-  ///
-  /// This function MAY run in time variable to the amount of leading zeroes in its inputs.
-  // TODO: Adjust this function to return an error
-  fn from_be_abc_discriminant_tess_root_unchecked(
-    a: &[u8],
-    b_positive: subtle::Choice,
-    b: &[u8],
-    c: &[u8],
-    mut abs_value_of_neg_discriminant_cong_1_mod_4: &[u8],
-    // We do not use `_tess_root` as we do not implement `PARTEUCL` (or similar)
-    _tess_root: &[u8],
-  ) -> Self {
-    while abs_value_of_neg_discriminant_cong_1_mod_4.first() == Some(&0) {
-      abs_value_of_neg_discriminant_cong_1_mod_4 =
-        &abs_value_of_neg_discriminant_cong_1_mod_4[1 ..];
-    }
-    assert_eq!(
-      abs_value_of_neg_discriminant_cong_1_mod_4.last().unwrap_or(&0) % 4,
-      3,
-      "absolute value of discriminant wasn't congruent to 3 modulo 4"
-    );
-
-    let discriminant_abs = {
-      let discriminant_bits =
-        u32::try_from(8 * abs_value_of_neg_discriminant_cong_1_mod_4.len()).unwrap();
-      if let Some(max_bits) = U::max_bits() {
-        assert!(discriminant_bits <= ((2 * max_bits) - 2), "too large of a discriminant");
-      }
-
-      U::wide_from_be_slice(abs_value_of_neg_discriminant_cong_1_mod_4, discriminant_bits)
-    };
-
-    let discriminant_bits = discriminant_abs.bits_vartime();
-
-    let sqrt_discriminant_bits = discriminant_bits.div_ceil(2);
-    let a = U::from_be_slice(a, 1 + sqrt_discriminant_bits);
-    assert!(bool::from(!a.bits().ct_gt(&sqrt_discriminant_bits)));
-    let b = (Choice::from(b_positive), U::from_be_slice(b, 1 + sqrt_discriminant_bits));
-    assert!(bool::from(!b.1.bits().ct_gt(&sqrt_discriminant_bits)));
-    let c = U::wide_from_be_slice(c, discriminant_bits);
-
-    assert!(
-      bool::from(
-        U::wide_gcd(U::widen(a.clone().xgcd(b.1.clone()).d, discriminant_bits), c.clone()).is_one()
-      ),
-      "imprimitive form"
-    );
-
-    Self { a, b, c, discriminant_abs }
-  }
-
-  // TODO: Rewrite the API to be non-allocating, and to yield both coefficients at once
-  /// This function MAY run in time variable to the amount of leading zeroes in its output.
-  fn a(&self) -> Vec<u8> {
-    let reduced = self.clone().reduce();
-    let bytes = reduced.a.to_be_bytes();
-    let bytes = bytes.as_ref();
-    let mut start = 0;
-    while bytes.get(start) == Some(&0) {
-      start += 1;
-    }
-    bytes[start ..].to_vec()
-  }
-
-  /// This function MAY run in time variable to the amount of leading zeroes in its output.
-  fn b(&self) -> (subtle::Choice, Vec<u8>) {
-    let reduced = self.clone().reduce();
-    let bytes = reduced.b.1.to_be_bytes();
-    let bytes = bytes.as_ref();
-    let mut start = 0;
-    while bytes.get(start) == Some(&0) {
-      start += 1;
-    }
-    (reduced.b.0.into(), bytes[start ..].to_vec())
   }
 }
