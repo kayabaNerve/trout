@@ -171,16 +171,8 @@ pub trait Element:
   /// or amenability for constant-time implementations).
   ///
   /// This MUST implement the defined specification for the uncompressed encoding of binary
-  /// quadratic forms. Implementations MUST only error if the underlying IO errors, being
-  /// error-free themselves.
-  ///
-  /// The provided implementation runs in variable time and MAY panic for absurdly large
-  /// coefficients.
-  #[cfg(feature = "std")]
-  fn uncompressed_encode(&self, writer: impl io::Write) -> io::Result<()> {
-    let _ = writer;
-    todo!("TODO")
-  }
+  /// quadratic forms.
+  fn uncompressed_encode(&self) -> impl AsRef<[u8]>;
 
   /// Decode an element of the specified discriminant without compression.
   ///
@@ -190,15 +182,14 @@ pub trait Element:
   ///
   /// This MUST implement the defined specification for the uncompressed decoding of binary
   /// quadratic forms. The discriminant MUST be negative and odd, specified by the little-endian
-  /// encoding of its absolute value.
-  ///
-  /// The provided implementation runs in variable time and MAY panic for absurdly large
-  /// discriminants.
-  #[cfg(feature = "std")]
-  fn uncompressed_decode(reader: impl io::Read, discriminant_abs: &[u8]) -> io::Result<()> {
-    let _ = (reader, discriminant_abs);
-    todo!("TODO")
-  }
+  /// encoding of its absolute value. Implementations MUST return `None` if `buf.len()` is not
+  /// exactly `2 * ((floor(log_2(-discriminant)) / 2) + 1).div_ceil(8)` OR if the discriminant is
+  /// even. Implementations MAY not support discriminants whose absolute values are encoded with
+  /// trailing zero bytes.
+  fn uncompressed_decode(
+    buf: impl AsRef<[u8]>,
+    discriminant_abs: &[u8],
+  ) -> crypto_bigint::CtOption<Self>;
 
   /// Create an element of this type from another element.
   fn from(source: impl Element) -> Self {

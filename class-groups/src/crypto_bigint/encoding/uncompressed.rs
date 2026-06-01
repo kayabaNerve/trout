@@ -16,7 +16,7 @@
 //! ```py
 //! # Note `discriminant` is a _signed_ big integer, bound to be negative
 //! fn encode_uncompressed_binary_quadratic_form(a, b_positive, b_abs, discriminant) {
-//!   bits_per_element = floor_log_2(-discriminant) / 2
+//!   bits_per_element = (floor_log_2(-discriminant) // 2) + 1
 //!   bytes_per_element = (bits_per_element + 7) / 8
 //!
 //!   result = a.to_le_bytes()

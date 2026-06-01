@@ -1,4 +1,4 @@
-use crypto_bigint::{CtEq, Encoding, Concat, SplitEven, NonZero, Uint};
+use crypto_bigint::{Choice, CtEq, Encoding, Concat, SplitEven, One, NonZero, Uint};
 
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where
@@ -72,11 +72,44 @@ where
   }
 }
 
+struct StitchedBytes<const WIDE_LIMBS: usize>
+where
+  Uint<WIDE_LIMBS>: Encoding,
+{
+  buf: <Uint<WIDE_LIMBS> as Encoding>::Repr,
+  len: usize,
+}
+
+impl<const WIDE_LIMBS: usize> AsRef<[u8]> for StitchedBytes<WIDE_LIMBS>
+where
+  Uint<WIDE_LIMBS>: Encoding,
+{
+  fn as_ref(&self) -> &[u8] {
+    &self.buf.as_ref()[.. self.len]
+  }
+}
+
+impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::encoding::Limbs for Uint<LIMBS>
+where
+  Self: Concat<LIMBS, Output = Uint<WIDE_LIMBS>>,
+  Uint<WIDE_LIMBS>: SplitEven<Output = Self>,
+{
+  fn wide_div_rem_thin(wide: Self::Wide, thin: &NonZero<Self>) -> (Self::Wide, Self) {
+    wide.div_rem(thin)
+  }
+
+  fn coprime(a: Self, b_abs: Self, c: Self::Wide) -> Choice {
+    a.gcd(&b_abs).concat(&Self::ZERO).gcd(&c).is_one()
+  }
+}
+
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::element::Limbs for Uint<LIMBS>
 where
   Self: Encoding<Repr: Default> + Concat<LIMBS, Output = Uint<WIDE_LIMBS>>,
   Uint<WIDE_LIMBS>: Encoding<Repr: Default> + SplitEven<Output = Self> + super::c::Limbs,
 {
+  type Bytes = crypto_bigint::EncodedUint<LIMBS>;
+
   #[inline(always)]
   fn max_bits() -> Option<u32> {
     Some(Self::BITS)
@@ -92,7 +125,7 @@ where
   }
 
   #[inline(always)]
-  fn to_le_bytes(self) -> impl AsRef<[u8]> {
+  fn to_le_bytes(self) -> Self::Bytes {
     Self::to_le_bytes(&self)
   }
   #[inline(always)]
@@ -101,8 +134,10 @@ where
   }
 
   #[inline(always)]
-  fn from_le_slice(mut bytes: &[u8], _max_bits: u32) -> Self {
-    while bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
+  fn from_le_slice(mut bytes: &[u8], max_bits: u32) -> Self {
+    while ((8 * u32::try_from(bytes.len().saturating_sub(1)).unwrap()) >= max_bits) &&
+      bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false)
+    {
       bytes = &bytes[.. (bytes.len() - 1)];
     }
 
@@ -112,8 +147,10 @@ where
     Self::from_le_bytes(fixed_bytes)
   }
   #[inline(always)]
-  fn wide_from_le_slice(mut bytes: &[u8], _max_bits: u32) -> Self::Wide {
-    while bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
+  fn wide_from_le_slice(mut bytes: &[u8], max_bits: u32) -> Self::Wide {
+    while ((8 * u32::try_from(bytes.len().saturating_sub(1)).unwrap()) >= max_bits) &&
+      bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false)
+    {
       bytes = &bytes[.. (bytes.len() - 1)];
     }
 
@@ -121,5 +158,13 @@ where
     fixed_bytes.as_mut()[.. bytes.len()].copy_from_slice(bytes);
 
     Self::Wide::from_le_bytes(fixed_bytes)
+  }
+
+  fn stitch(first: Self::Bytes, second: Self::Bytes, bytes_per_element: usize) -> impl AsRef<[u8]> {
+    let mut buf = <Self::Wide as Encoding>::Repr::default();
+    buf.as_mut()[.. bytes_per_element].copy_from_slice(&first.as_ref()[.. bytes_per_element]);
+    buf.as_mut()[bytes_per_element .. (2 * bytes_per_element)]
+      .copy_from_slice(&second.as_ref()[.. bytes_per_element]);
+    StitchedBytes::<WIDE_LIMBS> { buf, len: 2 * bytes_per_element }
   }
 }

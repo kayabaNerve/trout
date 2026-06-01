@@ -1,7 +1,9 @@
 use core::{cmp::Ordering, ops::Neg};
 
 use ::malachite::{
-  base::num::{arithmetic::traits::*, basic::traits::*, conversion::traits::*},
+  base::num::{
+    arithmetic::traits::*, basic::traits::*, conversion::traits::*, logic::traits::SignificantBits,
+  },
   *,
 };
 
@@ -296,6 +298,96 @@ impl crate::Element for MalachiteElement {
     let tess_root = delta.unsigned_abs().ceiling_root(4);
 
     Self { a, b, c, L: Integer::from(tess_root) }
+  }
+
+  fn uncompressed_encode(&self) -> impl AsRef<[u8]> {
+    let discriminant = self.b.clone().square() - ((self.a.clone() * self.c.clone()) << 2u32);
+    let bits_per_element = (discriminant.unsigned_abs_ref().significant_bits() / 2) + 1;
+    let bytes_per_element = usize::try_from(bits_per_element.div_ceil(8)).unwrap();
+
+    let mut a = natural_to_bytes(self.a.unsigned_abs_ref());
+    debug_assert!(a.len() <= bytes_per_element);
+    while a.len() < bytes_per_element {
+      a.push(0);
+    }
+
+    let b = natural_to_bytes(self.b.unsigned_abs_ref());
+    debug_assert!(b.len() <= bytes_per_element);
+
+    let mut result = a;
+    result.extend(b);
+    while result.len() < (2 * bytes_per_element) {
+      result.push(0);
+    }
+
+    result[bytes_per_element] ^= u8::from(self.b.sign() == Ordering::Less);
+
+    result
+  }
+
+  fn uncompressed_decode(
+    buf: impl AsRef<[u8]>,
+    discriminant_abs: &[u8],
+  ) -> crypto_bigint::CtOption<Self> {
+    let invalid = Self { a: Integer::ZERO, b: Integer::ZERO, c: Integer::ZERO, L: Integer::ZERO };
+    let invalid = crypto_bigint::CtOption::new(invalid, crypto_bigint::Choice::FALSE);
+
+    if discriminant_abs.first().map(|byte| ((*byte) & 1) != 1).unwrap_or(true) {
+      return invalid;
+    }
+
+    let discriminant_abs = natural_from_bytes(discriminant_abs);
+    let bits_per_element = (discriminant_abs.significant_bits() / 2) + 1;
+    let bytes_per_element = usize::try_from(bits_per_element.div_ceil(8)).unwrap();
+
+    let buf = buf.as_ref();
+    if buf.len() != (2 * bytes_per_element) {
+      return invalid;
+    }
+
+    let a = natural_from_bytes(&buf[.. bytes_per_element]);
+    if a == Natural::ZERO {
+      return invalid;
+    }
+
+    let b = natural_from_bytes(&buf[bytes_per_element ..]);
+    let b = if (b.clone() & Natural::ONE) != (discriminant_abs.clone() & Natural::ONE) {
+      -Integer::from(b ^ Natural::ONE)
+    } else {
+      Integer::from(b)
+    };
+
+    let (c, zero) =
+      (b.unsigned_abs_ref().square() + discriminant_abs.clone()).div_rem(a.clone() << 2u32);
+    if zero != Natural::ZERO {
+      return invalid;
+    }
+
+    let a = Integer::from(a);
+    let c = Integer::from(c);
+
+    // Check the absolute values are reduced
+    if !((b.unsigned_abs_ref() <= a.unsigned_abs_ref()) &&
+      (a.unsigned_abs_ref() <= c.unsigned_abs_ref()))
+    {
+      return invalid;
+    }
+    // Check `b`'s sign is reduced
+    if ((b.unsigned_abs_ref() == a.unsigned_abs_ref()) ||
+      (a.unsigned_abs_ref() == c.unsigned_abs_ref())) &&
+      (b.sign() == Ordering::Less)
+    {
+      return invalid;
+    }
+    // Check the form is primitive
+    if a.unsigned_abs_ref().gcd(b.unsigned_abs_ref()).gcd(c.unsigned_abs_ref()) != Natural::ONE {
+      return invalid;
+    }
+
+    crypto_bigint::CtOption::new(
+      Self { a, b, c, L: Integer::from(discriminant_abs.ceiling_root(4)) },
+      crypto_bigint::Choice::TRUE,
+    )
   }
 }
 

@@ -2,7 +2,7 @@ use core::{ops::Neg, fmt::Debug};
 
 use zeroize::Zeroize;
 
-use crypto_bigint::{CtEq, CtGt, CtSelect, CtAssign, BitOps, One, Choice, Limb};
+use crypto_bigint::{Choice, CtOption, CtEq, CtGt, CtSelect, CtAssign, BitOps, One, Limb};
 
 use super::I;
 
@@ -25,8 +25,10 @@ pub(super) trait Limbs:
             + BitOps
             + super::c::Limbs
             + super::reduction::Limbs,
-  >
+  > + super::encoding::Limbs
 {
+  type Bytes: AsRef<[u8]> + AsMut<[u8]>;
+
   /// The maximum amount of bits this value can support.
   ///
   /// `None` signifies this value is unbounded.
@@ -50,7 +52,7 @@ pub(super) trait Limbs:
   ///
   /// This function MUST run in constant time and yield a result of length constant to the relevant
   /// bound.
-  fn to_le_bytes(self) -> impl AsRef<[u8]>;
+  fn to_le_bytes(self) -> Self::Bytes;
 
   /// Convert this wide number to a sequence of little-endian bytes.
   ///
@@ -71,6 +73,9 @@ pub(super) trait Limbs:
   /// equal to `max_bits`.`max_bits` MUST be less than or equal to `2 * Self::max_bits()` when
   /// `Self::max_bits().is_some()`.
   fn wide_from_le_slice(bytes: &[u8], max_bits: u32) -> Self::Wide;
+
+  /// Stich together two byte sequences into a single container of length `2 * bytes_per_element`.
+  fn stitch(first: Self::Bytes, second: Self::Bytes, bytes_per_element: usize) -> impl AsRef<[u8]>;
 }
 
 /// A constant-time primitive element of a class group, implemented via `crypto-bigint`.
@@ -452,6 +457,87 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     let c = U::wide_from_le_slice(c, discriminant_bits);
 
     Self { a, b, c, discriminant_abs }
+  }
+
+  /// This runs in time variable to the size of the discriminant and the size of the underlying
+  /// container.
+  fn uncompressed_encode(&self) -> impl AsRef<[u8]> {
+    let bits_per_element = (self.discriminant_abs.bits() / 2) + 1;
+    let bytes_per_element = usize::try_from(bits_per_element.div_ceil(8)).unwrap();
+
+    let reduced = self.clone().reduce();
+    let a = reduced.a.to_le_bytes();
+    let mut b = reduced.b.1.to_le_bytes();
+    b.as_mut()[0] ^= u8::from(!reduced.b.0);
+
+    U::stitch(a, b, bytes_per_element)
+  }
+
+  /// This runs in time variable to the size of the discriminant and the size of the underlying
+  /// container. This MAY return `None` for discriminants which fit within the bounds but have
+  /// trailing zero bytes which cause the amount of encoded bits to exceed the bounds.
+  fn uncompressed_decode(
+    buf: impl AsRef<[u8]>,
+    discriminant_abs: &[u8],
+  ) -> crypto_bigint::CtOption<Self> {
+    let invalid_size = CtOption::new(
+      Self {
+        a: U::from_le_slice(&[], 1),
+        b: (Choice::TRUE, U::from_le_slice(&[], 1)),
+        c: U::wide_from_le_slice(&[], 1),
+        discriminant_abs: U::wide_from_le_slice(&[], 1),
+      },
+      Choice::FALSE,
+    );
+    let discriminant_bits = {
+      let Ok(discriminant_bytes) = u32::try_from(discriminant_abs.len()) else {
+        return invalid_size;
+      };
+      let Some(msb) = discriminant_abs.last().copied() else { return invalid_size };
+      /*
+        This is lossy in that it _may_ believe a discriminant is larger than it actually is, but
+        only if the discriminant has trailing zero bytes, which we're allowed to not support.
+      */
+      let Some(discriminant_bits) = 8u32.checked_mul(discriminant_bytes) else {
+        return invalid_size;
+      };
+      let discriminant_bits = discriminant_bits - (8 - Limb::from(msb).bits());
+
+      if let Some(max_bits) = U::max_bits() &&
+        (discriminant_bits > (2u32.checked_mul(max_bits).unwrap_or(0).saturating_sub(2)))
+      {
+        return invalid_size;
+      }
+
+      discriminant_bits
+    };
+
+    let discriminant_bits = crypto_bigint::UintRef::new(
+      U::wide_from_le_slice(discriminant_abs, discriminant_bits).as_ref(),
+    )
+    .bits();
+    let discriminant_abs = U::wide_from_le_slice(discriminant_abs, discriminant_bits);
+
+    let bits_per_element = (discriminant_abs.bits() / 2) + 1;
+    let bytes_per_element = usize::try_from(bits_per_element.div_ceil(8)).unwrap();
+
+    let buf = buf.as_ref();
+    if buf.len() != (2 * bytes_per_element) {
+      return invalid_size;
+    }
+
+    let sqrt_discriminant_bits = discriminant_bits.div_ceil(2);
+    let a = U::from_le_slice(&buf[.. bytes_per_element], 1 + sqrt_discriminant_bits);
+    let mut b_abs = U::from_le_slice(&buf[bytes_per_element ..], 1 + sqrt_discriminant_bits);
+
+    let b_positive =
+      (b_abs.as_ref()[0] & Limb::ONE).ct_eq(&(discriminant_abs.as_ref()[0] & Limb::ONE));
+    b_abs.as_mut()[0] ^= Limb::from(u8::from(!b_positive));
+
+    crypto_bigint::NonZero::new(a).and_then(|a| {
+      super::encoding::validate_binary_quadratic_form(a, (b_positive, b_abs), &discriminant_abs)
+        .map(|(a, b, c)| Self { a: a.get(), b, c, discriminant_abs })
+    })
   }
 }
 

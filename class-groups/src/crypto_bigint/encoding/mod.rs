@@ -50,9 +50,7 @@
 //! }
 //! ```
 
-use crypto_bigint::{
-  Choice, CtOption, CtEq, CtGt, NonZero, ConcatenatingMul, ConcatenatingSquare, Gcd, BoxedUint,
-};
+use crypto_bigint::{Choice, CtOption, CtEq, CtLt, CtAssign, Zero, One, NonZero, Limb};
 
 /// An error encountered while decoding.
 #[derive(Clone, Copy, Debug)]
@@ -67,41 +65,82 @@ pub enum Error {
   Incorrect,
 }
 
+/// The required view over a collection of limbs to validate a binary quadratic form.
+pub(super) trait Limbs:
+  From<u8> + CtAssign + Zero + One + super::composition::Limbs
+{
+  /// Divide a wide value by a thin value, yielding the quotient and remainder.
+  fn wide_div_rem_thin(wide: Self::Wide, thin: &NonZero<Self>) -> (Self::Wide, Self);
+  /// Return if the values are coprime.
+  fn coprime(a: Self, b_abs: Self, c: Self::Wide) -> Choice;
+}
+
 /// Validate a positive definite binary quadratic form (of negative discriminant) as primitive and
 /// reduced.
 ///
 /// This function runs in constant time.
-fn validate_binary_quadratic_form(
-  a: NonZero<BoxedUint>,
-  (b_positive, b_abs): (Choice, BoxedUint),
-  discriminant_abs: &BoxedUint,
-) -> CtOption<(NonZero<BoxedUint>, (Choice, BoxedUint), BoxedUint)> {
-  let (c, zero) = {
+#[expect(clippy::type_complexity)]
+pub(super) fn validate_binary_quadratic_form<U: Limbs>(
+  a: NonZero<U>,
+  (b_positive, b_abs): (Choice, U),
+  discriminant_abs: &U::Wide,
+) -> CtOption<(NonZero<U>, (Choice, U), U::Wide)> {
+  let (c, c_is_correct) = {
+    let mut b_square = b_abs.clone().square();
+
     // This is correct as the discriminant is bound to be negative
-    let four_ac = b_abs.concatenating_square().concatenating_add(discriminant_abs);
-    let four_a = NonZero::new(a.as_ref().concatenating_mul(BoxedUint::from(4u8)))
-      .expect("4 * non-zero value is non-zero");
-    four_ac.div_rem(&four_a)
+    let mut carry = Limb::ZERO;
+    for (b_square, discriminant_abs) in <_ as AsMut<[Limb]>>::as_mut(&mut b_square)
+      .iter_mut()
+      .zip(discriminant_abs.as_ref().iter().chain(core::iter::repeat(&Limb::ZERO)))
+    {
+      let new_limb;
+      (new_limb, carry) = b_square.carrying_add(*discriminant_abs, carry);
+      *b_square = new_limb;
+    }
+
+    let mut four_ac = b_square;
+
+    {
+      let four_ac = <_ as AsMut<[Limb]>>::as_mut(&mut four_ac);
+      for i in (0 .. four_ac.len()).rev() {
+        let new_limb = (four_ac[i] >> 2) | (carry << (Limb::BITS - 2));
+        carry = four_ac[i] & Limb::from(0b11u8);
+        four_ac[i] = new_limb;
+      }
+    }
+    let ac = four_ac;
+
+    let (c, rem) = U::wide_div_rem_thin(ac, &a);
+
+    (c, carry.is_zero() & rem.is_zero())
   };
 
-  // Check `b <= a <= c`
-  let reduced_absolute_values = (!b_abs.ct_gt(a.as_ref())) & (!a.as_ref().ct_gt(&c));
-  // Check the sign of `b` is positive if `a == b` or `a == c`
-  let reduced_sign = {
-    let has_equality = b_abs.ct_eq(a.as_ref()) | a.as_ref().ct_eq(&c);
-    (!has_equality) | b_positive
-  };
+  let reduced_absolute_values;
+  let reduced_sign;
+  {
+    let a = crypto_bigint::UintRef::new(a.as_ref().as_ref());
+    let b_abs = crypto_bigint::UintRef::new(b_abs.as_ref());
+    let c = crypto_bigint::UintRef::new(c.as_ref());
+
+    // Check `b <= a <= c`
+    reduced_absolute_values = (b_abs.ct_lt(a) | b_abs.ct_eq(a)) & (a.ct_lt(c) | a.ct_eq(c));
+    // Check the sign of `b` is positive if `a == b` or `a == c`
+    reduced_sign = {
+      let has_equality = b_abs.ct_eq(a) | a.ct_eq(c);
+      (!has_equality) | b_positive
+    };
+  }
   // Check it's primitive
-  let primitive = a.as_ref().gcd(&b_abs).gcd(&c).is_one();
+  let primitive = U::coprime(a.as_ref().clone(), b_abs.clone(), c.clone());
 
   CtOption::new(
     (a, (b_positive, b_abs), c),
-    zero.is_zero() & reduced_absolute_values & reduced_sign & primitive,
+    c_is_correct & reduced_absolute_values & reduced_sign & primitive,
   )
 }
 
 mod uncompressed;
-pub(crate) use uncompressed::*;
 
 #[cfg(feature = "alloc")]
 mod compressed;

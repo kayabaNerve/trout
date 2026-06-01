@@ -287,6 +287,91 @@ impl crate::Element for GmpElement {
 
     Self { a, b, c, L: tess_root }
   }
+
+  fn uncompressed_encode(&self) -> impl AsRef<[u8]> {
+    let discriminant = self.b.clone().square() - ((self.a.clone() * self.c.clone()) << 2u32);
+    let bits_per_element = (discriminant.significant_bits() / 2) + 1;
+    let bytes_per_element = usize::try_from(bits_per_element.div_ceil(8)).unwrap();
+
+    let mut a = self.a.to_digits::<u8>(Order::LsfLe);
+    debug_assert!(a.len() <= bytes_per_element);
+    while a.len() < bytes_per_element {
+      a.push(0);
+    }
+
+    let b = self.b.to_digits::<u8>(Order::LsfLe);
+    debug_assert!(b.len() <= bytes_per_element);
+
+    let mut result = a;
+    result.extend(b);
+    while result.len() < (2 * bytes_per_element) {
+      result.push(0);
+    }
+
+    result[bytes_per_element] ^= u8::from(self.b.is_negative());
+
+    result
+  }
+
+  fn uncompressed_decode(
+    buf: impl AsRef<[u8]>,
+    discriminant_abs: &[u8],
+  ) -> crypto_bigint::CtOption<Self> {
+    let invalid = Self { a: Integer::ZERO, b: Integer::ZERO, c: Integer::ZERO, L: Integer::ZERO };
+    let invalid = crypto_bigint::CtOption::new(invalid, crypto_bigint::Choice::FALSE);
+
+    if discriminant_abs.first().map(|byte| ((*byte) & 1) != 1).unwrap_or(true) {
+      return invalid;
+    }
+
+    let to_gmp = |value: &[u8]| Integer::from_digits(value, Order::LsfLe);
+
+    let discriminant_abs = to_gmp(discriminant_abs);
+    let bits_per_element = (discriminant_abs.significant_bits() / 2) + 1;
+    let bytes_per_element = usize::try_from(bits_per_element.div_ceil(8)).unwrap();
+
+    let buf = buf.as_ref();
+    if buf.len() != (2 * bytes_per_element) {
+      return invalid;
+    }
+
+    let a = to_gmp(&buf[.. bytes_per_element]);
+    if a == Integer::ZERO {
+      return invalid;
+    }
+
+    let b = to_gmp(&buf[bytes_per_element ..]);
+    let b = if (b.clone() & Integer::ONE) != (discriminant_abs.clone() & Integer::ONE) {
+      -(b ^ Integer::ONE)
+    } else {
+      b
+    };
+
+    let (c, zero) = (b.clone().square() + discriminant_abs.clone()).div_rem(a.clone() << 2u32);
+    if zero != Integer::ZERO {
+      return invalid;
+    }
+
+    // Check the absolute values are reduced
+    if !((b <= a) && (a <= c)) {
+      return invalid;
+    }
+    // Check `b`'s sign is reduced
+    if ((b == a) || (a == c)) && b.is_negative() {
+      return invalid;
+    }
+    // Check the form is primitive
+    if a.clone().gcd(&b).gcd(&c) != *Integer::ONE {
+      return invalid;
+    }
+
+    let mut tess_root = discriminant_abs.clone().sqrt().sqrt();
+    if tess_root.clone().square().square() != discriminant_abs {
+      tess_root += Integer::ONE;
+    }
+
+    crypto_bigint::CtOption::new(Self { a, b, c, L: tess_root }, crypto_bigint::Choice::TRUE)
+  }
 }
 
 impl Neg for GmpElement {

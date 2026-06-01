@@ -540,6 +540,15 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
     let mut bytes = vec![];
     g.compress(&mut bytes).unwrap();
     assert_eq!(&cg.decompress_p(&mut bytes.as_slice()).unwrap(), g);
+
+    assert_eq!(
+      &E::uncompressed_decode(
+        g.uncompressed_encode(),
+        &natural_to_bytes(cg.delta_p.unsigned_abs_ref())
+      )
+      .unwrap(),
+      g
+    );
   }
 
   // Check we can compress all elements of the f table
@@ -550,6 +559,15 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
     let mut bytes = vec![];
     f.compress(&mut bytes).unwrap();
     assert_eq!(&cg.decompress_p(&mut bytes.as_slice()).unwrap(), f);
+
+    assert_eq!(
+      &E::uncompressed_decode(
+        f.uncompressed_encode(),
+        &natural_to_bytes(cg.delta_p.unsigned_abs_ref())
+      )
+      .unwrap(),
+      f
+    );
   }
 
   // Test the coset labelling function

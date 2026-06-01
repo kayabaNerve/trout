@@ -126,7 +126,19 @@ impl super::composition::WideLimbs<BoxedUint> for BoxedUint {
   }
 }
 
+impl super::encoding::Limbs for BoxedUint {
+  fn wide_div_rem_thin(wide: Self::Wide, thin: &NonZero<Self>) -> (Self::Wide, Self) {
+    wide.div_rem(thin)
+  }
+
+  fn coprime(a: Self, b_abs: Self, c: Self::Wide) -> Choice {
+    a.gcd(&b_abs).gcd(&c).is_one()
+  }
+}
+
 impl super::element::Limbs for BoxedUint {
+  type Bytes = Box<[u8]>;
+
   #[inline(always)]
   fn max_bits() -> Option<u32> {
     None
@@ -142,7 +154,7 @@ impl super::element::Limbs for BoxedUint {
   }
 
   #[inline(always)]
-  fn to_le_bytes(self) -> impl AsRef<[u8]> {
+  fn to_le_bytes(self) -> Self::Bytes {
     BoxedUint::to_le_bytes(&self)
   }
   #[inline(always)]
@@ -152,16 +164,24 @@ impl super::element::Limbs for BoxedUint {
 
   #[inline(always)]
   fn from_le_slice(mut bytes: &[u8], max_bits: u32) -> Self {
-    while bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
+    while ((8 * u32::try_from(bytes.len().saturating_sub(1)).unwrap()) >= max_bits) &&
+      bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false)
+    {
       bytes = &bytes[.. (bytes.len() - 1)];
     }
     Self::from_le_slice(bytes, max_bits).unwrap()
   }
   #[inline(always)]
   fn wide_from_le_slice(mut bytes: &[u8], max_bits: u32) -> Self::Wide {
-    while bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false) {
+    while ((8 * u32::try_from(bytes.len().saturating_sub(1)).unwrap()) >= max_bits) &&
+      bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false)
+    {
       bytes = &bytes[.. (bytes.len() - 1)];
     }
     Self::from_le_slice(bytes, max_bits).unwrap()
+  }
+
+  fn stitch(first: Self::Bytes, second: Self::Bytes, bytes_per_element: usize) -> impl AsRef<[u8]> {
+    [&first[.. bytes_per_element], &second[.. bytes_per_element]].concat()
   }
 }
