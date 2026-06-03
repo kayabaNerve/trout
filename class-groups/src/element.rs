@@ -205,4 +205,207 @@ pub trait Element:
     */
     unsafe { Self::from_coefficients(a, b, c, discriminant) }
   }
+
+  /// Sample a uniform element from a subgroup of the class group and return its square.
+  ///
+  /// The discriminant MUST be negative and is specified by the little-endian encoding of its
+  /// absolute value. The discriminant MUST be odd.
+  ///
+  /// This element is deterministic to the seed, has an unknown relationship to other elements of
+  /// the class group, and may be presumed to be a generator of (most of) the squares of the class
+  /// group. These properties make this function suitable for use as a hash-to-element for _some_
+  /// use cases, and we claim _most_ of the desirable use cases. This function MUST NOT be assumed
+  /// to output uniform elements of the class group or to be indistinguishable. The element is
+  /// squared as the Decisional Diffie-Hellman problem is easy over the entire class group and it's
+  /// its squares which form a generally-desirable subgroup
+  /// ("Linearly Homomorphic Encryption from DDH" by Guilhem Castagnos and Fabien Laguillaumie,
+  /// https://eprint.iacr.org/2015/047, Appendix B.4).
+  ///
+  /// Implementations MUST implement the specification for sampling a random element of the class
+  /// group, as the provided implementation does, with identical results. The provided
+  /// implementation executes in variable time and all implementations SHOULD be assumed to execute
+  /// in variable time due to the specification only having a statistical bound for its termination
+  /// (requiring sampling a prime number).
+  ///
+  /// "How (not) to hash into class groups of imaginary quadratic fields?", by
+  /// István András Seres, Péter Burcsi, and Péter Kutas (https://eprint.iacr.org/2024/034), is
+  /// referred to as primary academic reference for the analysis and justification of such hash
+  /// functions. We specify (and implement) the second construction, attributed to the conference
+  /// version of "Efficient verifiable delay functions" by Benjamin Wesolowski, and _not_ the
+  /// "Improved version". This is _not_ uniform over the class group as a whole, solely the binary
+  /// quadratic forms of prime ideal, assuming the underlying hash-to-prime function is itself
+  /// uniform. This is presented as _sufficient_ for most purposes and is remarkably
+  /// straightforward to implement, hence it being the reasonable choice for specification.
+  ///
+  /// ```py
+  /// fn next_prime_ideal(seed, discriminant) {
+  ///   # Assert the discriminant is negative and sufficiently large there is such a prime ideal
+  ///   assert discriminant < -200
+  ///   # Assert the seed is within the expected bound
+  ///   assert 0 <= seed
+  ///   assert seed <= sqrt((-discriminant) / 4)
+  ///
+  ///   i = 0
+  ///   seed = next_odd_prime(seed)
+  ///   if seed > sqrt((-discriminant) / 4) {
+  ///     # Increment modulo our upper bound to the first odd prime
+  ///     seed = 3
+  ///   }
+  ///   while jacobi(discriminant, seed) != 1 {
+  ///     i += 1
+  ///     seed = next_odd_prime(seed + 1)
+  ///     if seed > sqrt((-discriminant) / 4) {
+  ///       seed = 3
+  ///     }
+  ///   }
+  ///
+  ///   b = mod_sqrt(delta, p)
+  ///   if (i % 2) == 1 {
+  ///     b = -b
+  ///   }
+  ///
+  ///   # Return the composition of the sampled prime ideal with itself
+  ///   prime_ideal = (p, b)
+  ///   return composition(prime_ideal, prime_ideal)
+  /// }
+  /// ```
+  ///
+  /// `seed` is required to be a uniform element in the range $[0, sqrt(|discriminant| / 4)]$.
+  /// `next_odd_prime` tests if `seed` is an odd prime, incrementing it if it is not, until it is.
+  /// `jacobi(x, y)` yields the Jacobi symbol of `x` over `y` where as `y` is an odd prime, this is
+  /// equivalent to the Lagrange symbol. `mod_sqrt(x, y)` returns the _odd_ square root of `x`
+  /// modulo `y` such that $mod_sqrt(x, y)^2 \cong x \mod y$ if one exists, which our precondition
+  /// of checking the Jacobi symbol ensures. `mod_sqrt` is RECOMMENDED to be implemented via the
+  /// Tonelli-Shanks algorithms but MAY be implemented with alternatives such as Cipolla's.
+  /// `composition` returns the composition (the result of the group operation, the product in
+  /// multiplicative notation, the sum in additive notation as this library generally prefers) of
+  /// two binary quadratic forms (corresponding to `NUCOMP` or similar, or as the first form is
+  /// equal to the second form, `NUDUPL` or similar).
+  ///
+  /// For the validity of the results, we primarily defer to
+  /// "How (not) to hash into class groups of imaginary quadratic fields?" (which did prove this
+  /// construction secure and uniform to the prime ideals for primes in the range
+  /// $[0, sqrt(|discriminant| / 4)]$). We choose our sign differently from the suggested negative
+  /// if $p % 3 = 2$, as for any prime $p$, that would fix a single $b$ coefficient (despite it
+  /// naturally having two potential solutions as $|b| < a$). We intead use the amount of rejected
+  /// non-residues to decide the sign of $b$, which is uniform modulo `2` if the distribution of
+  /// prime quadratic residues to prime quadratic non-residues in a prime field is itself uniform.
+  /// The ordinality of the set of non-zero quadratic residues is equivalent to the ordinality of
+  /// the set of non-zero quadratic non-residues, so this isn't impossible, though exact analysis
+  /// regarding the distribution of primes and the distribution of quadratic non-residues within a
+  /// prime field have been open problems with decades (if not centuries, if not millenia) of
+  /// literature. Even though we can't prove a tight bound for the bias of this method, we do claim
+  /// this method sufficient for our purposes.
+  ///
+  /// The provided implementation MAY panic upon invalid or absurdly large inputs. It accepts an
+  /// RNG to perform primality tests against the prime numbers with though the RNG is not used to
+  /// sample potential coefficients for the binary quadratic form and will not impact the result
+  /// (except if a primality test fails). `bits_of_security` parameterizes the statistical odds of
+  /// a sampled prime number actually being prime.
+  #[cfg(feature = "alloc")]
+  fn next_prime_ideal_squared(
+    mut rng: impl rand::CryptoRng,
+    seed: crypto_bigint::BoxedUint,
+    discriminant_abs: impl AsRef<[u8]>,
+    bits_of_security: u32,
+  ) -> Self {
+    use ::crypto_bigint::{CtEq, NonZero, Odd, Resize, ConcatenatingSquare, BoxedUint};
+    use crate::crypto_bigint::sqrt_mod_p_vartime;
+
+    let discriminant_abs = discriminant_abs.as_ref();
+    let discriminant_abs = BoxedUint::from_le_slice(
+      discriminant_abs,
+      8 * u32::try_from(discriminant_abs.len()).unwrap(),
+    )
+    .unwrap();
+    // TODO: Confirm this bound is tightly defined
+    assert!(discriminant_abs > BoxedUint::from(200u8));
+    let inclusive_end = discriminant_abs.wrapping_shr_vartime(2).floor_sqrt();
+    assert!(seed <= inclusive_end);
+    let mut seed = seed.resize(inclusive_end.bits_precision());
+    if seed.bits_vartime() <= 2 {
+      seed = BoxedUint::from(3u8).resize(inclusive_end.bits_precision());
+    }
+
+    let mut i = 0u64;
+    seed = crate::primes::next_prime(&mut rng, seed.to_be_bytes(), bits_of_security);
+    if seed > inclusive_end {
+      seed = BoxedUint::from(3u8);
+    }
+    let mut b_abs;
+    while {
+      let seed = Odd::new(seed.clone()).expect("odd prime wasn't odd?");
+      let discriminant_abs_mod_a = discriminant_abs.rem(seed.as_nz_ref());
+      let discriminant_mod_a = discriminant_abs_mod_a.neg_mod(seed.as_nz_ref());
+      b_abs = sqrt_mod_p_vartime(discriminant_mod_a, &seed);
+      b_abs.is_none()
+    } {
+      i += 1;
+      seed = crate::primes::next_prime(
+        &mut rng,
+        seed.concatenating_add(BoxedUint::one()).to_be_bytes(),
+        bits_of_security,
+      );
+      if seed > inclusive_end {
+        seed = BoxedUint::from(3u8);
+      }
+      seed = seed.resize(inclusive_end.bits_precision());
+    }
+
+    let (b_positive, b_abs) = {
+      let b_abs = b_abs.unwrap();
+
+      #[cfg(debug_assertions)]
+      {
+        let seed = NonZero::new(seed.clone()).unwrap();
+        debug_assert_eq!(
+          b_abs.concatenating_square().rem(&seed),
+          discriminant_abs.rem(&seed).neg_mod(&seed)
+        );
+      }
+
+      let b_negative = (i & 1).ct_eq(&1);
+      let b_positive = !b_negative;
+      (b_positive, b_abs)
+    };
+
+    let a = seed;
+
+    // $b^2 - 4ac = -|delta|, b^2 + |delta| = 4ac$ as $delta < 0$
+    // TODO: Add a proof on why `b^2 + |delta|` is divisible by `4ac`
+    let (four_c, zero) = (b_abs.concatenating_square().concatenating_add(&discriminant_abs))
+      .div_rem(&NonZero::new(a.clone()).unwrap());
+    assert!(
+      bool::from(zero.is_zero()),
+      "didn't correctly sample a prime ideal ($b^2 + |delta|$ not divisible by `a`)"
+    );
+    let (c, zero) = four_c.div_rem(&NonZero::new(BoxedUint::from(4u8)).unwrap());
+    assert!(
+      bool::from(zero.is_zero()),
+      "didn't correctly sample a prime ideal ($(b^2 + |delta|)/a$ not divisible by `4`)"
+    );
+
+    let trim = |number: BoxedUint| {
+      let mut number = number.to_le_bytes().to_vec();
+      while number.last() == Some(&0) {
+        number.pop().unwrap();
+      }
+      number
+    };
+
+    /*
+      The `a` coefficient is reduced as it is smaller than or equal to the `c` coefficient (and
+      therefore the `c` coefficient is reduced).
+
+      `b < a` as `b` is a member of the prime field defined by `a`. This means it is reduced and
+      its sign may be positive or negative.
+
+      The `c` coefficient does satisfy the equation $b^2 - 4 a c = discriminant$. Therefore, this
+      is safe to call.
+    */
+    let prime_ideal = unsafe {
+      Self::from_coefficients(trim(a), (b_positive, trim(b_abs)), trim(c), trim(discriminant_abs))
+    };
+    prime_ideal.double()
+  }
 }

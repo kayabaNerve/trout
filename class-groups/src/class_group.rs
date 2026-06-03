@@ -246,61 +246,26 @@ impl<E: ElementExt> ClassGroup<E> {
     &self.identity_p
   }
 
-  /// Obtain a generator of the class group with discriminant `p`.
+  /// Obtain a generator of the squares of the class group with discriminant `p`.
   ///
   /// This function executes in variable time.
-  ///
-  /// This uses Wesolowski's hash-to-class-group internally, making it somewhat slow. More
-  /// efficient algorithms should be used by the caller if this will be called on a regular basis.
   pub fn generator_p(&self, rng: &mut impl CryptoRng) -> E {
-    let prime_limit: Natural = self.delta_p.unsigned_abs_ref().floor_sqrt() >> 1;
-    let r = loop {
-      let r_bits = u32::try_from(prime_limit.significant_bits()).unwrap();
-      let mut seed = vec![0; usize::try_from(r_bits).unwrap().div_ceil(8)];
-      rng.fill_bytes(&mut seed);
-      if (r_bits % 8) != 0 {
-        let high_bit = 1 << ((r_bits % 8) - 1);
-        // Ensure the high bit is set
-        // TODO: This does make this somewhat non-uniform
-        seed[0] |= high_bit;
-        // Mask off any bits higher than the square root
-        seed[0] &= (high_bit << 1) - 1;
-      }
-      let r = super::primes::next_prime(&mut *rng, seed, 128);
-
-      let r = natural_from_bytes(r.to_le_bytes().as_ref());
-      if r >= prime_limit {
-        continue;
-      }
-      debug_assert_eq!(u64::from(r_bits), r.significant_bits());
-      // Select `r` where `r` is congruent to 3 mod 4 to simplify the sqrt calculation
-      // This does bias the choice of `r` by a couple of bits
-      if (&r % Natural::from(4u8)) != 3u8 {
-        continue;
-      }
-      // Ensure `delta_p` has a square root mod `r`
-      if self.delta_p.clone().jacobi_symbol(Integer::from(r.clone())) != 1 {
-        continue;
-      }
-      break r;
-    };
-
-    let a = r.clone();
-    let b_square = &r - (self.delta_p.unsigned_abs_ref() % &r);
-    // The exponent to raise `b_square` to to calculate its square root modulo `r`
-    let b_exp = (&r + Natural::from(1u8)) >> 2;
-    let mut b = b_square.clone().mod_pow(&b_exp, &r);
-    // `b` must be the odd root for there to be a `c`
-    if !b.odd() {
-      b = &r - b;
-    }
-    debug_assert_eq!((&b * &b) % &r, b_square);
-    // But it is our choice of `b` or `-b`
-    let mut b = Integer::from(b);
-    if (rng.next_u64() % 2) == 1 {
-      b = -b;
-    }
-    element::<E>(a, b, &self.delta_p)
+    use ::crypto_bigint::{NonZero, RandomMod, BoxedUint};
+    let discriminant_abs = natural_to_bytes(self.delta_p.unsigned_abs_ref());
+    let seed = BoxedUint::random_mod_vartime(
+      rng,
+      &NonZero::new(
+        BoxedUint::from_le_slice(
+          &discriminant_abs,
+          8 * u32::try_from(discriminant_abs.len()).unwrap(),
+        )
+        .unwrap()
+        .wrapping_shr_vartime(2)
+        .floor_sqrt(),
+      )
+      .unwrap(),
+    );
+    E::next_prime_ideal_squared(rng, seed, discriminant_abs, 128)
   }
 
   /// The generator for the known-order subgroup over discriminant `p`.

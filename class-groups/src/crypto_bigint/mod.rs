@@ -24,6 +24,10 @@ mod boxed_uint;
 mod encoding;
 pub use encoding::*;
 
+mod sqrt;
+#[expect(unused)]
+pub(crate) use sqrt::{legendre_symbol, sqrt_mod_p_vartime};
+
 /// A type supporting discriminants of up to `2560` bits.
 #[deprecated]
 pub type CryptoBigintStackElement =
