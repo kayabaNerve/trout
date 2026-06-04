@@ -1,45 +1,34 @@
-//! Encapsulated encoding of unsigned big integers
+//! Encoding of unsigned big integers of size known ahead of time
 //!
 //! ```py
-//! fn encode_bigint(bigint) {
-//!   bytes = bigint.to_le_bytes()
+//! fn encode_bigint(bigint, bits) {
+//!   result = bigint.to_le_bytes()
 //!   # Trim any trailing zero bytes
-//!   while bytes.len() != 0 {
-//!     if bytes[bytes.len() - 1] == 0 {
-//!       bytes.pop()
+//!   while result.len() != 0 {
+//!     if result[result.len() - 1] == 0 {
+//!       result.pop()
 //!     }
 //!   }
-//!
-//!   result = encode_varint(bytes.len())
-//!   result.extend(bytes)
+//!   # Pad this to the bound, as necessary
+//!   while result.len() < ((bits + 7) / 8) {
+//!     result.push(0)
+//!   }
 //!   return result
 //! }
 //!
-//! fn decode_bigint(bytestream) {
-//!   len = decode_varint(bytestream)
+//! fn decode_bigint(bytestream, bits) {
 //!   result = []
-//!   while len != 0 {
+//!   while result.len() != ((bits + 7) / 8) {
 //!     result.push(bytestream.next_byte())
-//!     len -= 1
 //!   }
-//!
-//!   # Check this was canonical, without unnecessary extra bytes
-//!   if result.len() != 0 {
-//!     assert result[result.len() - 1] != 0
-//!   }
-//!
 //!   return BigInt::from_le_bytes(result)
 //! }
 //! ```
 //!
-//! Implementations SHOULD bound the size of big integers, as context allows, to prevent any
-//! denial-of-service attacks. Implementations MUST ensure any bounds exceed any possible valid
-//! value's length.
-//!
-//! This encoding method was chosen as in practice, one expects to encode big integers of up to
-//! approximately 64-256 bytes. At this scale, the VarInt encoding method does not remain
-//! efficient, justifying the usage of either a fixed-length or length-prefixed encoding instead.
-//! As numbers are sufficiently often of low norm, length-prefixed encodings are preferable.
+//! This accepts bit bounds for the size of the integers, from which it applies a ceiling division
+//! to obtain a byte bound for the length of the encoding, but the bit bound is never strictly
+//! enforced. These methods assume the caller will ensure the encoded values were appropriate. The
+//! alignment to byte boundaries is to simplify decoding.
 
 use alloc::{vec::Vec, vec};
 
@@ -48,18 +37,17 @@ use std::io;
 
 use crypto_bigint::BoxedUint;
 
-use super::{Error, varint::*};
+use super::Error;
 
 /// This function runs in time variable to the input.
-pub(super) fn encode_bigint(bigint: &BoxedUint) -> Vec<u8> {
-  let bytes = bigint.to_le_bytes();
-  let mut bytes = bytes.as_ref();
-  while bytes.last() == Some(&0) {
-    bytes = &bytes[.. bytes.len() - 1];
+pub(super) fn encode_bigint(bigint: &BoxedUint, bits: usize) -> Vec<u8> {
+  let mut result = bigint.to_le_bytes().to_vec();
+  while result.last() == Some(&0) {
+    result.pop();
   }
-
-  let mut result = encode_varint(bytes.len());
-  result.extend(bytes);
+  while result.len() < bits.div_ceil(8) {
+    result.push(0);
+  }
   result
 }
 
@@ -68,14 +56,8 @@ pub(super) fn encode_bigint(bigint: &BoxedUint) -> Vec<u8> {
 pub(super) fn decode_bigint(mut reader: impl io::Read, bit_bound: u32) -> Result<BoxedUint, Error> {
   let result = BoxedUint::from_le_slice(
     ({
-      let len = decode_varint(&mut reader)?;
-      let mut buf = vec![0xff; len];
+      let mut buf = vec![0xff; usize::try_from(bit_bound.div_ceil(8)).unwrap()];
       reader.read_exact(&mut buf).map_err(|_| Error::UnexpectedEof)?;
-
-      if buf.last() == Some(&0) {
-        Err(Error::NonCanonical)?;
-      }
-
       buf
     })
     .as_slice(),
@@ -87,12 +69,12 @@ pub(super) fn decode_bigint(mut reader: impl io::Read, bit_bound: u32) -> Result
 
 #[test]
 fn bigint() {
-  use crypto_bigint::RandomBits;
+  use crypto_bigint::{RandomBits, Uint};
 
   let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
 
   let test = |value| {
-    let encoding = encode_bigint(&value);
+    let encoding = encode_bigint(&value, usize::try_from(value.bits_precision()).unwrap());
     {
       let mut encoding = encoding.as_slice();
       assert_eq!(decode_bigint(&mut encoding, value.bits_precision()).unwrap(), value);
@@ -101,8 +83,12 @@ fn bigint() {
     encoding
   };
 
-  assert_eq!(test(BoxedUint::zero()), vec![0]);
-  assert_eq!(test(BoxedUint::one()), vec![1, 1]);
+  assert_eq!(test(BoxedUint::zero()), vec![0; Uint::<1>::BYTES]);
+  assert_eq!(test(BoxedUint::one()), {
+    let mut one = vec![0; Uint::<1>::BYTES];
+    one[0] = 1;
+    one
+  });
 
   for i in 0 .. 256 {
     test(BoxedUint::random_bits(&mut rng, 8 * i));

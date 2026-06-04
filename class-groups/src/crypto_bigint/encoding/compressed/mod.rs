@@ -28,37 +28,42 @@
 //! traditional `z_prime` (for arbitrary "z"). This is to avoid confusion on if this variable is
 //! notably considered (co)prime.
 //!
-//! We assume the existence of a `gcd` function, which for `gcd(x, y)` returns the greatest common
-//! divisor of `x, y`. We also assume the existence of an `xgcd` function, which for `xgcd(x, y)`,
-//! returns `(u, v, d)` where `u * x + v * y = d` and `d = gcd(x, y)`.
+//! We assume the existence of:
+//! - A `gcd` function, which for `gcd(x, y)` returns the greatest common divisor of `x, y`
+//! - An `xgcd` function, which for `xgcd(x, y)`, returns `(u, v, d)` where `u * x + v * y = d` and
+//!   `d = gcd(x, y)`.
+//! - A `floor_sqrt` function, which for `floor_sqrt(x)`, returns `y` where $y^2 \le x < (y + 1)^2$
+//! - A `floor_log_2` function, which for `floor_log_2(x)`, returns `k` such that
+//!   $2^k \le x < 2^{k + 1}$
 //!
 //! `//` is used to represent floor division.
 //!
 //! ```py
-//! fn encode_compressed_binary_quadratic_form(a, b_positive, b_abs) {
+//! # Note `discriminant` is a _signed_ big integer, bound to be negative
+//! fn encode_compressed_binary_quadratic_form(a, b_positive, b_abs, discriminant) {
 //!   (t_positive, t_abs) = t(a, b_abs)
 //!   g = gcd(a, t_abs)
 //!   a_apo = a / g
 //!   t_apo_abs = t_abs / g
 //!   b_0 = b_abs // a_apo
 //!
-//!   result = encode_bigint(a_apo)
-//!   result.extend(encode_bigint(g))
+//!   g_bits = floor_log_2(g) + 1
+//!   result = encode_varint(g_bits)
+//!   result.extend(encode_bigint(a_apo, (floor_log_2(-discriminant) // 2) + 1 - (g_bits - 1)))
+//!   result.extend(encode_bigint(g, g_bits))
 //!   result.push((t_positive << 1) | b_positive)
-//!   result.extend(encode_bigint(t_apo_abs))
-//!   result.extend(encode_bigint(b_0))
+//!   result.extend(encode_bigint(t_apo_abs, (floor_log_2(-discriminant) // 4) + 1 - (g_bits - 1)))
+//!   result.extend(encode_bigint(b_0, g_bits))
 //!   return result
 //! }
 //!
 //! # Note `discriminant` is a _signed_ big integer, bound to be negative
 //! fn decode_compressed_binary_quadratic_form(bytestream, discriminant) {
-//!   # This is bounded to be less than the square root
-//!   # of the absolute value of the discriminant
-//!   a_apo = decode_bigint(bytestream)
-//!
-//!   # This is bounded to be less than the fourth root
-//!   # of the absolute value of the discriminant
-//!   g = decode_bigint(bytestream)
+//!   g_bits = decode_varint(bytestream)
+//!   assert g_bits <= (floor_log_2(-discriminant) // 2) + 1
+//!   a_apo = decode_bigint(bytestream, (floor_log_2(-discriminant) // 2) + 1 - (g_bits - 1))
+//!   g = decode_bigint(bytestream, g_bits)
+//!   assert g_bits == (floor_log_2(g) + 1)
 //!
 //!   a = a_apo * g
 //!   # For a negative discriminant, `a != 0`
@@ -70,9 +75,7 @@
 //!   b_positive = sign_bits & 1
 //!   t_positive = sign_bits >> 1
 //!
-//!   # This is bounded to be less than the fourth root
-//!   # of the absolute value of the discriminant
-//!   t_apo_abs = decode_bigint(bytestream)
+//!   t_apo_abs = decode_bigint(bytestream, (floor_log_2(-discriminant) // 4) + 1 - (g_bits - 1))
 //!
 //!   t_abs = t_apo_abs * g
 //!   # We ignore the sign of `t` here as `-1 * -1 = 1`
@@ -93,9 +96,7 @@
 //!     b_apo = a_apo - b_apo
 //!   }
 //!
-//!   # This is bounded to be less than `g`, which is less than the fourth root
-//!   # of the absolute value of the discriminant
-//!   b_0 = decode_bigint(bytestream)
+//!   b_0 = decode_bigint(bytestream, g_bits)
 //!   assert b_0 <= g
 //!   b_abs = (b_0 * a_apo) + b_apo
 //!
@@ -107,15 +108,20 @@
 //!
 //!   return validate_binary_quadratic_form(a, b_positive, b_abs, discriminant)
 //! }
+//! ```
 //!
-//! The total bounds on the bits read is actually slighty more than the bit-length of the absolute
-//! value of the discriminant. This is explained by how these bounds _overlap_. `a_apo, g`
-//! _together_ are of bit-length approximate to the square root of the absolute value of the
-//! discriminant. Similarly, `b_0` has bit-length approximate to `g`, but `t_apo_abs, g`
-//! _together_ are of bit-length approximate to the fourth root of the absolute value of the
-//! discriminant (and therefore `t_apo_abs, b_0` are _together_ of bit-length approximate to the
-//! fourth root of the absolute value of the discriminant). This results in the total amount of
-//! bits being approximate to just `2 + 1.5 (floor(log_2(sqrt(|discriminant|))) + 1)`, as desired.
+//! When decoding `a_apo, g`, their bit bounds are such that their product is at most the square
+//! root of the discriminant. Note these bit bounds aren't strictly enforced, solely used to
+//! determine the lengths of the big integers' encodings, and we ensure they're canonical via
+//! validating `g_bits` upon deserialization and ensuring the resulting form is in fact reduced.
+//! Similarly, when decoding `t_apo_abs, b_0`, their bit bounds are such that their product is at
+//! most the fourth root of the discriminant (if the bit bounds were enforced, where we do validate
+//! `b_0 <= g` and then validate `t` was canonically chosen and therefore `t_apo_abs` was correctly
+//! encoded). This causes the encoding, ignoring the alignment of the big integers to byte
+//! boundaries, to be of length $v + \lfloor log_2(-discriminant)^{3 / 4} \rfloor + 11$ where $v$
+//! is the length of the VarInt encoding of $g_bits$ (experimentally, $1$ in the average case).
+//! Note most of the $11$ is from using an entire byte to represent the two sign bits, $b_positive$
+//! and $t_positive$.
 
 use alloc::vec::Vec;
 
@@ -129,6 +135,7 @@ use crypto_bigint::{
 use super::Error;
 
 mod varint;
+use varint::{encode_varint, decode_varint};
 
 mod bigint;
 use bigint::{encode_bigint, decode_bigint};
@@ -141,6 +148,7 @@ pub(crate) fn encode_compressed_binary_quadratic_form(
   a: NonZero<BoxedUint>,
   b_positive: Choice,
   b_abs: BoxedUint,
+  discriminant_abs: &BoxedUint,
 ) -> Vec<u8> {
   let (t_positive, t_abs) = t(a.clone(), b_abs.clone());
   let g = a.gcd_vartime(&t_abs);
@@ -150,11 +158,19 @@ pub(crate) fn encode_compressed_binary_quadratic_form(
   let t_apo_abs = t_abs.get() / &g;
   let b_0 = b_abs / &a_apo;
 
-  let mut result = encode_bigint(a_apo.as_ref());
-  result.extend(&encode_bigint(g.as_ref()));
+  let g_bits = usize::try_from(g.bits()).unwrap();
+  let mut result = encode_varint(g_bits);
+  result.extend(&encode_bigint(
+    a_apo.as_ref(),
+    ((usize::try_from(discriminant_abs.bits()).unwrap() - 1) / 2) + 1 - (g_bits - 1),
+  ));
+  result.extend(&encode_bigint(g.as_ref(), g_bits));
   result.push((u8::from(t_positive) << 1) | u8::from(b_positive));
-  result.extend(&encode_bigint(&t_apo_abs));
-  result.extend(&encode_bigint(&b_0));
+  result.extend(&encode_bigint(
+    &t_apo_abs,
+    ((usize::try_from(discriminant_abs.bits()).unwrap() - 1) / 4) + 1 - (g_bits - 1),
+  ));
+  result.extend(&encode_bigint(&b_0, g_bits));
   result
 }
 
@@ -165,12 +181,24 @@ pub(crate) fn decode_compressed_binary_quadratic_form(
   mut reader: impl io::Read,
   discriminant_abs: &BoxedUint,
 ) -> Result<(NonZero<BoxedUint>, (Choice, BoxedUint), BoxedUint), Error> {
-  let bits_per_element = discriminant_abs.bits().div_ceil(2);
-  debug_assert!(discriminant_abs.floor_sqrt_vartime().bits() <= bits_per_element);
+  debug_assert!(
+    discriminant_abs.floor_sqrt_vartime().bits() <= ((discriminant_abs.bits() - 1) / 2) + 1
+  );
+  debug_assert!(
+    discriminant_abs.floor_sqrt_vartime().floor_sqrt_vartime().bits() <=
+      ((discriminant_abs.bits() - 1) / 4) + 1
+  );
 
-  let a_apo = decode_bigint(&mut reader, bits_per_element)?;
+  let g_bits = u32::try_from(decode_varint(&mut reader)?).map_err(|_| Error::Overflow)?;
+  if g_bits > (((discriminant_abs.bits() - 1) / 2) + 1) {
+    Err(Error::Incorrect)?;
+  }
+  let a_apo = decode_bigint(&mut reader, ((discriminant_abs.bits() - 1) / 2) + 1 - (g_bits - 1))?;
   let a_apo = NonZero::new(a_apo).ok_or(Error::Incorrect)?;
-  let g = decode_bigint(&mut reader, bits_per_element.div_ceil(2))?;
+  let g = decode_bigint(&mut reader, g_bits)?;
+  if g.bits() != g_bits {
+    Err(Error::NonCanonical)?;
+  }
   let g = Option::<NonZero<_>>::from(NonZero::new(g)).ok_or(Error::Incorrect)?;
   let a = a_apo.concatenating_mul(g.as_ref());
   let a = NonZero::new(a).expect("the product of two non-zero values is itself non-zero");
@@ -185,7 +213,8 @@ pub(crate) fn decode_compressed_binary_quadratic_form(
     let b_positive = (sign_bits & 1).ct_eq(&1);
     let t_positive = (sign_bits >> 1).ct_eq(&1);
 
-    let t_apo_abs = decode_bigint(&mut reader, bits_per_element.div_ceil(2))?;
+    let t_apo_abs =
+      decode_bigint(&mut reader, ((discriminant_abs.bits() - 1) / 4) + 1 - (g_bits - 1))?;
     if bool::from(t_apo_abs.is_zero()) {
       Err(Error::Incorrect)?;
     }
@@ -214,13 +243,13 @@ pub(crate) fn decode_compressed_binary_quadratic_form(
         Err(Error::Incorrect)?;
       }
       let u = t_apo_abs
-        .resize(bits_per_element)
+        .resize(a_apo.bits_precision())
         .invert_mod(&a_apo)
         .expect("non-zero and coprime but no modular inverse?");
       let mut b_apo = s_apo.mul_mod(&u, &a_apo);
       b_apo.ct_assign(&b_apo.neg_mod(&a_apo), !t_positive);
 
-      let b_0 = decode_bigint(&mut reader, g.bits_vartime())?;
+      let b_0 = decode_bigint(&mut reader, g_bits)?;
       if b_0 > *g {
         Err(Error::Incorrect)?;
       }

@@ -97,9 +97,10 @@ pub trait Element:
     use crypto_bigint::{NonZero, BoxedUint};
 
     // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, (b_positive, b_abs), _c, _discriminant) = unsafe { self.a_b_c_discriminant() };
+    let (a, (b_positive, b_abs), _c, discriminant_abs) = unsafe { self.a_b_c_discriminant() };
     let a = a.as_ref();
     let b_abs = b_abs.as_ref();
+    let discriminant_abs = discriminant_abs.as_ref();
 
     let a = BoxedUint::from_le_slice(a, u32::try_from(8 * a.len()).expect("4 GB `a` coefficient?"))
       .expect("container overflowed despite precision proportional to length of the encoding");
@@ -111,8 +112,17 @@ pub trait Element:
     )
     .expect("container overflowed despite precision proportional to length of the encoding");
 
+    let discriminant_abs = BoxedUint::from_le_slice(
+      discriminant_abs,
+      u32::try_from(8 * discriminant_abs.len()).expect("4 GB discriminant?"),
+    )
+    .expect("container overflowed despite precision proportional to length of the encoding");
+
     writer.write_all(&crate::crypto_bigint::encode_compressed_binary_quadratic_form(
-      a, b_positive, b_abs,
+      a,
+      b_positive,
+      b_abs,
+      &discriminant_abs,
     ))
   }
 
