@@ -75,7 +75,7 @@ pub trait Element:
   // Currently, all provided implementations will simply be incorrect (and may panic) if these
   // conditions aren't met. The usage of `unsafe` is simply to allow implementations to introduce
   // `unsafe` operations around these preconditions, when all loaded forms should be from
-  /// (un)compressed encodings which perform validation at time of decode.
+  // (un)compressed encodings which perform validation at time of decode.
   unsafe fn from_coefficients(
     a: impl AsRef<[u8]>,
     b: (crypto_bigint::Choice, impl AsRef<[u8]>),
@@ -248,7 +248,7 @@ pub trait Element:
   /// straightforward to implement, hence it being the reasonable choice for specification.
   ///
   /// ```py
-  /// fn next_prime_ideal(seed, discriminant) {
+  /// fn next_prime_ideal_squared(seed, discriminant) {
   ///   # Assert the discriminant is negative and sufficiently large there is such a prime ideal
   ///   assert discriminant < -200
   ///   # Assert the seed is within the expected bound
@@ -323,6 +323,7 @@ pub trait Element:
     use crate::crypto_bigint::sqrt_mod_p_vartime;
 
     let discriminant_abs = discriminant_abs.as_ref();
+    assert_eq!(discriminant_abs[0] & 1, 1, "discriminant wasn't odd");
     let discriminant_abs = BoxedUint::from_le_slice(
       discriminant_abs,
       8 * u32::try_from(discriminant_abs.len()).unwrap(),
@@ -330,6 +331,8 @@ pub trait Element:
     .unwrap();
     // TODO: Confirm this bound is tightly defined
     assert!(discriminant_abs > BoxedUint::from(200u8));
+    // As the discriminant is odd, this integer is less than the fractional square root which we
+    // have as an exclusive bound
     let inclusive_end = discriminant_abs.wrapping_shr_vartime(2).floor_sqrt();
     assert!(seed <= inclusive_end);
     let mut seed = seed.resize(inclusive_end.bits_precision());
@@ -404,14 +407,20 @@ pub trait Element:
     };
 
     /*
-      The `a` coefficient is reduced as it is smaller than or equal to the `c` coefficient (and
-      therefore the `c` coefficient is reduced).
+      Per Lemma 5.3.4 of A Course in Computational Algebraic Number Theory by Henri Cohen, if
+      $a < sqrt(|D| / 4)$ and $-a < b \le a$, then the form is reduced. We bound
+      $a \le \lfloor sqrt(|D| / 4) \rfloor < sqrt(|D| / 4)$, the former explicitly, the latter by
+      virtue of $D$ being odd (and therefore ensuring a fractional result for the ideal
+      evaluation).
 
-      `b < a` as `b` is a member of the prime field defined by `a`. This means it is reduced and
-      its sign may be positive or negative.
+      We know our form is primitive as $a$ is prime and $b < a$.
 
-      The `c` coefficient does satisfy the equation $b^2 - 4 a c = discriminant$. Therefore, this
-      is safe to call.
+      The `c` coefficient does satisfy the equation $b^2 - 4 a c = delta$.
+
+      The discriminant was bound to be negative and odd, the former inherent by our treatment of
+      it, the latter explicitly checked with an assertion.
+
+      Therefore, this is safe to call.
     */
     let prime_ideal = unsafe {
       Self::from_coefficients(trim(a), (b_positive, trim(b_abs)), trim(c), trim(discriminant_abs))
