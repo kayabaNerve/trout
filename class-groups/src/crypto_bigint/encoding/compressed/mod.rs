@@ -48,22 +48,29 @@
 //!   b_0 = b_abs // a_apo
 //!
 //!   g_bits = floor_log_2(g) + 1
-//!   result = encode_varint(g_bits)
-//!   result.extend(encode_bigint(a_apo, (floor_log_2(-discriminant) // 2) + 1 - (g_bits - 1)))
+//!   g_bytes = (g_bits + 7) // 8
+//!   result = encode_varint(g_bytes)
+//!
 //!   result.extend(encode_bigint(g, g_bits))
+//!   result.extend(encode_bigint(a_apo, (floor_log_2(-discriminant) // 2) + 1 - (g_bits - 1)))
+//!
 //!   result.push((t_positive << 1) | b_positive)
+//!
 //!   result.extend(encode_bigint(t_apo_abs, (floor_log_2(-discriminant) // 4) + 1 - (g_bits - 1)))
 //!   result.extend(encode_bigint(b_0, g_bits))
+//!
 //!   return result
 //! }
 //!
 //! # Note `discriminant` is a _signed_ big integer, bound to be negative
 //! fn decode_compressed_binary_quadratic_form(bytestream, discriminant) {
-//!   g_bits = decode_varint(bytestream)
-//!   assert g_bits <= (floor_log_2(-discriminant) // 2) + 1
+//!   g_bytes = decode_varint(bytestream)
+//!   assert g_bytes <= ((((floor_log_2(-discriminant) // 2) + 1) + 7) // 8)
+//!   g = decode_bigint(bytestream, g_bytes * 8)
+//!   g_bits = floor_log_2(g) + 1
+//!   assert g_bytes == ((g_bits + 7) // 8)
+//!
 //!   a_apo = decode_bigint(bytestream, (floor_log_2(-discriminant) // 2) + 1 - (g_bits - 1))
-//!   g = decode_bigint(bytestream, g_bits)
-//!   assert g_bits == (floor_log_2(g) + 1)
 //!
 //!   a = a_apo * g
 //!   # For a negative discriminant, `a != 0`
@@ -113,13 +120,13 @@
 //! When decoding `a_apo, g`, their bit bounds are such that their product is at most the square
 //! root of the discriminant. Note these bit bounds aren't strictly enforced, solely used to
 //! determine the lengths of the big integers' encodings, and we ensure they're canonical via
-//! validating `g_bits` upon deserialization and ensuring the resulting form is in fact reduced.
+//! validating `g_bytes` upon deserialization and ensuring the resulting form is in fact reduced.
 //! Similarly, when decoding `t_apo_abs, b_0`, their bit bounds are such that their product is at
 //! most the fourth root of the discriminant (if the bit bounds were enforced, where we do validate
 //! `b_0 <= g` and then validate `t` was canonically chosen and therefore `t_apo_abs` was correctly
 //! encoded). This causes the encoding, ignoring the alignment of the big integers to byte
 //! boundaries, to be of length $v + \lfloor log_2(-discriminant)^{3 / 4} \rfloor + 11$ where $v$
-//! is the length of the VarInt encoding of $g_bits$ (experimentally, $1$ in the average case).
+//! is the length of the VarInt encoding of $g_bytes$ (experimentally, $1$ in the average case).
 //! Note most of the $11$ is from using an entire byte to represent the two sign bits, $b_positive$
 //! and $t_positive$.
 
@@ -159,12 +166,13 @@ pub(crate) fn encode_compressed_binary_quadratic_form(
   let b_0 = b_abs / &a_apo;
 
   let g_bits = usize::try_from(g.bits()).unwrap();
-  let mut result = encode_varint(g_bits);
+  let g_bytes = g_bits.div_ceil(8);
+  let mut result = encode_varint(g_bytes);
+  result.extend(&encode_bigint(g.as_ref(), g_bits));
   result.extend(&encode_bigint(
     a_apo.as_ref(),
     ((usize::try_from(discriminant_abs.bits()).unwrap() - 1) / 2) + 1 - (g_bits - 1),
   ));
-  result.extend(&encode_bigint(g.as_ref(), g_bits));
   result.push((u8::from(t_positive) << 1) | u8::from(b_positive));
   result.extend(&encode_bigint(
     &t_apo_abs,
@@ -189,17 +197,19 @@ pub(crate) fn decode_compressed_binary_quadratic_form(
       ((discriminant_abs.bits() - 1) / 4) + 1
   );
 
-  let g_bits = u32::try_from(decode_varint(&mut reader)?).map_err(|_| Error::Overflow)?;
-  if g_bits > (((discriminant_abs.bits() - 1) / 2) + 1) {
+  let g_bytes = u32::try_from(decode_varint(&mut reader)?).map_err(|_| Error::Overflow)?;
+  if g_bytes > (((discriminant_abs.bits() - 1) / 2) + 1).div_ceil(8) {
     Err(Error::Incorrect)?;
   }
-  let a_apo = decode_bigint(&mut reader, ((discriminant_abs.bits() - 1) / 2) + 1 - (g_bits - 1))?;
-  let a_apo = NonZero::new(a_apo).ok_or(Error::Incorrect)?;
-  let g = decode_bigint(&mut reader, g_bits)?;
-  if g.bits() != g_bits {
+  let g = decode_bigint(&mut reader, g_bytes * 8)?;
+  let g_bits = g.bits();
+  if g_bytes != g_bits.div_ceil(8) {
     Err(Error::NonCanonical)?;
   }
   let g = Option::<NonZero<_>>::from(NonZero::new(g)).ok_or(Error::Incorrect)?;
+
+  let a_apo = decode_bigint(&mut reader, ((discriminant_abs.bits() - 1) / 2) + 1 - (g_bits - 1))?;
+  let a_apo = NonZero::new(a_apo).ok_or(Error::Incorrect)?;
   let a = a_apo.concatenating_mul(g.as_ref());
   let a = NonZero::new(a).expect("the product of two non-zero values is itself non-zero");
 
