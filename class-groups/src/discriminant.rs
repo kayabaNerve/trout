@@ -245,19 +245,15 @@ pub trait FundamentalDiscriminant: Discriminant {
     let (a, (b_positive, b_abs), c, discriminant_abs) = unsafe { element.a_b_c_discriminant() };
     assert!(bool::from(le_malleable_eq(self.absolute_value().as_ref(), discriminant_abs.as_ref())));
 
-    let boxed_from_slice = |slice| {
-      BoxedUint::from_le_slice(slice, 8 * u32::try_from(slice.len()).expect("4 GB number?"))
-        .expect("container overflowed despite precision proportional to length of the encoding")
-    };
+    // This is only vartime with regards to the length of the encoding
+    let a = BoxedUint::from_le_slice_vartime(a.as_ref());
+    let b_abs = BoxedUint::from_le_slice_vartime(b_abs.as_ref());
+    let c = BoxedUint::from_le_slice_vartime(c.as_ref());
 
-    let a = boxed_from_slice(a.as_ref());
-    let b_abs = boxed_from_slice(b_abs.as_ref());
-    let c = boxed_from_slice(c.as_ref());
-
-    let discriminant_abs = boxed_from_slice(discriminant_abs.as_ref());
+    let discriminant_abs = BoxedUint::from_le_slice_vartime(discriminant_abs.as_ref());
     let p = {
       let p = p.to_le_bytes();
-      boxed_from_slice(p.as_ref())
+      BoxedUint::from_le_slice_vartime(p.as_ref())
     };
 
     let discriminant_abs = discriminant_abs.concatenating_mul(p.concatenating_square());
@@ -416,6 +412,7 @@ impl
       *,
     };
     use crate::malachite::{natural_from_bytes, natural_to_bytes};
+    use crypto_bigint::BoxedUint;
 
     let p = natural_from_bytes(p_le_bytes.as_ref());
 
@@ -479,19 +476,17 @@ impl
     let p_square = p.clone().pow(2u64);
     let delta_p = &delta_k * Integer::from(p_square.clone());
 
-    let boxed_from_slice = |slice| {
-      use ::crypto_bigint::BoxedUint;
-      BoxedUint::from_le_slice(slice, 8 * u32::try_from(slice.len()).expect("4 GB number?"))
-        .expect("container overflowed despite precision proportional to length of the encoding")
-    };
-
     Some(Cl15p {
       fundamental: Cl15k {
-        p: Odd::new(boxed_from_slice(&natural_to_bytes(&p))).unwrap(),
-        absolute_value: boxed_from_slice(&natural_to_bytes(delta_k.unsigned_abs_ref())),
+        p: Odd::new(BoxedUint::from_le_slice_vartime(&natural_to_bytes(&p))).unwrap(),
+        absolute_value: BoxedUint::from_le_slice_vartime(&natural_to_bytes(
+          delta_k.unsigned_abs_ref(),
+        )),
       },
-      p_square: Odd::new(boxed_from_slice(&natural_to_bytes(&p_square))).unwrap(),
-      absolute_value: boxed_from_slice(&natural_to_bytes(delta_p.unsigned_abs_ref())),
+      p_square: Odd::new(BoxedUint::from_le_slice_vartime(&natural_to_bytes(&p_square))).unwrap(),
+      absolute_value: BoxedUint::from_le_slice_vartime(&natural_to_bytes(
+        delta_p.unsigned_abs_ref(),
+      )),
     })
   }
 }
@@ -598,16 +593,12 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
     let (a, (b_positive, b_abs), c, discriminant_abs) = unsafe { element.a_b_c_discriminant() };
     assert!(bool::from(le_malleable_eq(self.absolute_value().as_ref(), discriminant_abs.as_ref())));
 
-    let boxed_from_slice = |slice| {
-      BoxedUint::from_le_slice(slice, 8 * u32::try_from(slice.len()).expect("4 GB number?"))
-        .expect("container overflowed despite precision proportional to length of the encoding")
-    };
-
-    let a = boxed_from_slice(a.as_ref());
-    let b_abs = boxed_from_slice(b_abs.as_ref());
-    let c = boxed_from_slice(c.as_ref());
+    // This is only vartime with regards to the length of the encoding
+    let a = BoxedUint::from_le_slice_vartime(a.as_ref());
+    let b_abs = BoxedUint::from_le_slice_vartime(b_abs.as_ref());
+    let c = BoxedUint::from_le_slice_vartime(c.as_ref());
     let p = self.fundamental.p.to_le_bytes();
-    let p = boxed_from_slice(p.as_ref());
+    let p = BoxedUint::from_le_slice_vartime(p.as_ref());
 
     let bits_precision = 2 + a.bits_precision().max(b_abs.bits_precision()).max(c.bits_precision());
     let p = p.resize(bits_precision);
@@ -656,7 +647,7 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
     };
 
     let discriminant_abs =
-      boxed_from_slice(self.fundamental_discriminant().absolute_value().as_ref());
+      BoxedUint::from_le_slice_vartime(self.fundamental_discriminant().absolute_value().as_ref());
 
     // TODO: Tighten this
     let log_2_bound =

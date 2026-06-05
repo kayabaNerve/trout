@@ -107,21 +107,12 @@ pub trait Element:
     let b_abs = b_abs.as_ref();
     let discriminant_abs = discriminant_abs.as_ref();
 
-    let a = BoxedUint::from_le_slice(a, u32::try_from(8 * a.len()).expect("4 GB `a` coefficient?"))
-      .expect("container overflowed despite precision proportional to length of the encoding");
+    let a = BoxedUint::from_le_slice_vartime(a);
     let a = NonZero::new(a).expect("`a > 0` when `delta < 0`");
 
-    let b_abs = BoxedUint::from_le_slice(
-      b_abs,
-      u32::try_from(8 * b_abs.len()).expect("4 GB `b` coefficient?"),
-    )
-    .expect("container overflowed despite precision proportional to length of the encoding");
+    let b_abs = BoxedUint::from_le_slice_vartime(b_abs);
 
-    let discriminant_abs = BoxedUint::from_le_slice(
-      discriminant_abs,
-      u32::try_from(8 * discriminant_abs.len()).expect("4 GB discriminant?"),
-    )
-    .expect("container overflowed despite precision proportional to length of the encoding");
+    let discriminant_abs = BoxedUint::from_le_slice_vartime(discriminant_abs);
 
     writer.write_all(&crate::crypto_bigint::encode_compressed_binary_quadratic_form(
       a,
@@ -329,11 +320,7 @@ pub trait Element:
 
     let discriminant_abs = discriminant_abs.as_ref();
     assert_eq!(discriminant_abs[0] & 1, 1, "discriminant wasn't odd");
-    let discriminant_abs = BoxedUint::from_le_slice(
-      discriminant_abs,
-      8 * u32::try_from(discriminant_abs.len()).unwrap(),
-    )
-    .unwrap();
+    let discriminant_abs = BoxedUint::from_le_slice_vartime(discriminant_abs);
     // TODO: Confirm this bound is tightly defined
     assert!(discriminant_abs > BoxedUint::from(200u8));
     // As the discriminant is odd, this integer is less than the fractional square root which we

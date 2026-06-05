@@ -61,13 +61,7 @@ impl<E: ElementExt> ClassGroup<E> {
     let seed = BoxedUint::random_mod_vartime(
       rng,
       &NonZero::new(
-        BoxedUint::from_le_slice(
-          discriminant_abs,
-          8 * u32::try_from(discriminant_abs.len()).unwrap(),
-        )
-        .unwrap()
-        .wrapping_shr_vartime(2)
-        .floor_sqrt(),
+        BoxedUint::from_le_slice_vartime(discriminant_abs).wrapping_shr_vartime(2).floor_sqrt(),
       )
       .unwrap(),
     );
