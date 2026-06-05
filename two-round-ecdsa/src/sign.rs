@@ -39,7 +39,7 @@ fn table_scaled_decryption_ciphertext<
     // uniform-to-the-class-group scalar
     usize::try_from(<P as Parameters<PCG>>::F::NUM_BITS).unwrap() +
       usize::try_from(class_group.unknown_order_bound() + 128).unwrap(),
-    class_group.identity_p().clone(),
+    class_group.identity_p(),
     ciphertext,
   )
 }
@@ -126,7 +126,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
           (Zeroizing::new(alpha_i.0.to_be_bytes()), Zeroizing::new(alpha_i.1.to_be_bytes()));
         let K_i = (
           PCG::multiexp(
-            setup.view().prover_class_group().identity_p(),
+            &setup.view().prover_class_group().identity_p(),
             &[
               (setup.view().prover_G(), &alpha_i_bytes.0),
               (
@@ -136,7 +136,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
             ],
           ),
           PCG::multiexp(
-            setup.view().prover_class_group().identity_p(),
+            &setup.view().prover_class_group().identity_p(),
             &[
               (setup.view().prover_G(), &alpha_i_bytes.1),
               (
@@ -412,7 +412,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Obser
         K_U_i.insert(*participant, (K_i, U_i));
       }
       let K = K_0.unwrap().add(&CG::multiexp(
-        self.setup.class_group().identity_p(),
+        &self.setup.class_group().identity_p(),
         &K_1.iter().map(|(K_1, rho)| (K_1, rho.as_slice())).collect::<Vec<_>>(),
       ));
 
@@ -542,7 +542,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
     }
     // We don't transcript this as it's deterministic to the transcripted setup + signing set
     let C = CG::multiexp(
-      self.setup.class_group().identity_p(),
+      &self.setup.class_group().identity_p(),
       &C.iter()
         .map(|(share_ciphertext, lagrange_bytes)| (*share_ciphertext, lagrange_bytes.as_slice()))
         .collect::<Vec<_>>(),

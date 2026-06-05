@@ -145,7 +145,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
 
     // Nonce commitments for each invocation
     CG::multiexp(
-      class_group.identity_p(),
+      &class_group.identity_p(),
       &[
         (G, &Zeroizing::new(r_delta_i.to_be_bytes())),
         (class_group.f(), &Zeroizing::new(crate::be_bytes(r_x_i.deref()))),
@@ -153,7 +153,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     )
     .compress(&mut *transcript)?;
     CG::multiexp(
-      class_group.identity_p(),
+      &class_group.identity_p(),
       &[
         (G, &Zeroizing::new(r_alpha_i.to_be_bytes())),
         (class_group.f(), &Zeroizing::new(crate::be_bytes(r_k_i.deref()))),
@@ -162,7 +162,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     .compress(&mut *transcript)?;
     CG::mul(G, &Zeroizing::new(r_beta_i.to_be_bytes())).compress(&mut *transcript)?;
     CG::multiexp(
-      class_group.identity_p(),
+      &class_group.identity_p(),
       &[
         (Z, &Zeroizing::new(r_beta_i.to_be_bytes())),
         (neg_U, &Zeroizing::new(r_delta_i.to_be_bytes())),
@@ -170,7 +170,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     )
     .compress(&mut *transcript)?;
     CG::multiexp(
-      class_group.identity_p(),
+      &class_group.identity_p(),
       &[
         (K, &Zeroizing::new(r_beta_i.to_be_bytes())),
         (neg_U, &Zeroizing::new(r_alpha_i.to_be_bytes())),
@@ -202,9 +202,9 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     CG::mul(G, &d_delta_i).compress(&mut *transcript)?;
     CG::mul(G, &d_alpha_i).compress(&mut *transcript)?;
     CG::mul(G, &d_beta_i).compress(&mut *transcript)?;
-    CG::multiexp(class_group.identity_p(), &[(Z, &d_beta_i), (neg_U, &d_delta_i)])
+    CG::multiexp(&class_group.identity_p(), &[(Z, &d_beta_i), (neg_U, &d_delta_i)])
       .compress(&mut *transcript)?;
-    CG::multiexp(class_group.identity_p(), &[(K, &d_beta_i), (neg_U, &d_alpha_i)])
+    CG::multiexp(&class_group.identity_p(), &[(K, &d_beta_i), (neg_U, &d_alpha_i)])
       .compress(&mut *transcript)?;
 
     // Each `e`
@@ -261,11 +261,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     let e_beta_i = crate::ccykc::read_e(&mut *transcript, &modulus)?;
 
     let table = |scalar_bits: u64, point| {
-      Table::new_for_scalar_bits(
-        scalar_bits.try_into().unwrap(),
-        class_group.identity_p().clone(),
-        point,
-      )
+      Table::new_for_scalar_bits(scalar_bits.try_into().unwrap(), class_group.identity_p(), point)
     };
 
     let D_Z_i = table(modulus.significant_bits(), D_Z_i);
@@ -325,7 +321,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     let R_KU_i_scalar = crate::ccykc::natural_to_bytes(&weight_KU_i);
 
     if CG::multiexp(
-      class_group.identity_p(),
+      &class_group.identity_p(),
       &[
         (G, &crate::ccykc::natural_to_bytes(&G_scalar)),
         (class_group.f(), &crate::ccykc::natural_to_bytes(&H_scalar)),
@@ -348,7 +344,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
         (&R_KU_i, &R_KU_i_scalar),
         (neg_U, &crate::ccykc::natural_to_bytes(&neg_U_scalar)),
       ],
-    ) != *class_group.identity_p()
+    ) != class_group.identity_p()
     {
       Err(io::Error::other("invalid proof"))?;
     }

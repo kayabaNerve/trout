@@ -26,6 +26,13 @@ use crypto_bigint::{Choice, CtOption};
 pub trait Element:
   Sized + Send + Sync + Clone + Neg<Output = Self> + PartialEq + Eq + core::fmt::Debug
 {
+  /// The identity element.
+  ///
+  /// The negative discriminant is specified by the little-endian encoding of its absolute value.
+  ///
+  /// This MUST panic if the discriminant is not a valid odd discriminant.
+  fn identity(discriminant_abs: impl AsRef<[u8]>) -> Self;
+
   /// If this element is the identity.
   fn is_identity(&self) -> Choice;
 

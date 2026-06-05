@@ -115,6 +115,18 @@ impl MalachiteElement {
 }
 
 impl crate::Element for MalachiteElement {
+  fn identity(discriminant_abs: impl AsRef<[u8]>) -> Self {
+    let discriminant_abs = discriminant_abs.as_ref();
+    assert_eq!(discriminant_abs[0] & 0b11, 0b11);
+    let discriminant_abs = natural_from_bytes(discriminant_abs);
+    Self {
+      a: Integer::ONE,
+      b: Integer::ONE,
+      c: Integer::from((Natural::ONE + &discriminant_abs) >> 2),
+      L: Integer::from(discriminant_abs.ceiling_root(4)),
+    }
+  }
+
   fn is_identity(&self) -> crypto_bigint::Choice {
     u8::from((self.a == Natural::ONE) && (self.b == Natural::ONE)).into()
   }

@@ -113,7 +113,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     transcript.write_all((P::E::generator() * r_message_0.deref()).to_bytes().as_ref())?;
     // Write `S_1` from the paper
     CG::multiexp(
-      class_group.identity_p(),
+      &class_group.identity_p(),
       &[
         (G, &Zeroizing::new(r_randomness_0.to_be_bytes())),
         (class_group.f(), &Zeroizing::new(crate::be_bytes(r_message_0.deref()))),
@@ -125,7 +125,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     let r_message_1 = Zeroizing::new(P::F::random(&mut *rng));
     transcript.write_all((P::E::generator() * r_message_1.deref()).to_bytes().as_ref())?;
     CG::multiexp(
-      class_group.identity_p(),
+      &class_group.identity_p(),
       &[
         (G, &Zeroizing::new(r_randomness_1.to_be_bytes())),
         (class_group.f(), &Zeroizing::new(crate::be_bytes(r_message_1.deref()))),
@@ -316,7 +316,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
       for (point, scalar) in batch_verifier.additional_class_group {
         let bytes = crate::ccykc::natural_to_bytes(&scalar);
         additional.push((
-          Table::new_for_scalar_bits(bytes.len() * 8, class_group.identity_p().clone(), point),
+          Table::new_for_scalar_bits(bytes.len() * 8, class_group.identity_p(), point),
           bytes,
         ));
       }
@@ -326,7 +326,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
       for (table, scalar) in &additional {
         multiexp.push((table, scalar));
       }
-      if CG::multiexp(class_group.identity_p(), &multiexp) != *class_group.identity_p() {
+      if CG::multiexp(&class_group.identity_p(), &multiexp) != class_group.identity_p() {
         todo!("TODO");
       }
     }

@@ -1,48 +1,14 @@
 use core::marker::PhantomData;
-use core::cmp::Ordering;
 
 use rand::CryptoRng;
 
-use ::malachite::{
-  base::num::{arithmetic::traits::*, basic::traits::*},
-  *,
-};
-
-use crate::{*, malachite::natural_from_bytes};
-
-fn element<E: Element>(a: Natural, b: Integer, discriminant: &Integer) -> E {
-  assert_eq!(discriminant.sign(), Ordering::Less, "discriminant wasn't negative");
-  assert_eq!(
-    discriminant.unsigned_abs_ref() % Natural::from(2u8),
-    Natural::ONE,
-    "discriminant wasn't odd"
-  );
-
-  // `b^2 - 4ac = -|delta|, b^2 + |delta| = 4ac`
-  let c = b.unsigned_abs_ref().square() + discriminant.unsigned_abs_ref();
-  assert_eq!(c.clone() % Natural::from(4u8), Natural::ZERO);
-  let c = c >> 2u32;
-  let (c, zero) = c.div_rem(&a);
-  assert_eq!(zero, Natural::ZERO);
-
-  assert_eq!(
-    a.clone().gcd(b.unsigned_abs_ref().gcd(&c)),
-    Natural::ONE,
-    "discriminant wasn't primitive"
-  );
-
-  E::from(MalachiteElement::reduce(Integer::from(a), b, Integer::from(c), {
-    let tess_root = discriminant.unsigned_abs_ref().ceiling_root(4);
-    Integer::from(tess_root)
-  }))
-}
+use crate::{Table, ElementExt, FundamentalDiscriminant, NegativeDiscriminant, Cl15p};
 
 use ::crypto_bigint::BoxedUint;
 /// A class group.
 #[derive(Clone)]
 pub struct ClassGroup<E: ElementExt> {
   cl15p: Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
-  identity_p: E,
   f_table: Table<E>,
   _E: PhantomData<E>,
 }
@@ -61,15 +27,9 @@ impl<E: ElementExt> ClassGroup<E> {
   // https://eprint.iacr.org/2015/047 Figure 2, slightly modified with regards to `g`
   pub fn setup(rng: &mut impl CryptoRng, lambda: u64, p_le_bytes: Vec<u8>) -> Option<Self> {
     Cl15p::sample(rng, lambda, p_le_bytes).map(|cl15p| {
-      let identity_p: E =
-        element(Natural::ONE, Integer::ONE, &-natural_from_bytes(cl15p.absolute_value().as_ref()));
+      let identity = E::identity(cl15p.absolute_value());
       let f = cl15p.f();
-      Self {
-        cl15p,
-        identity_p: identity_p.clone(),
-        f_table: Table::new(12, identity_p, f),
-        _E: PhantomData,
-      }
+      Self { cl15p, f_table: Table::new(12, identity, f), _E: PhantomData }
     })
   }
 
@@ -87,8 +47,8 @@ impl<E: ElementExt> ClassGroup<E> {
   }
 
   /// The identity element for the discriminant `p`.
-  pub fn identity_p(&self) -> &E {
-    &self.identity_p
+  pub fn identity_p(&self) -> E {
+    E::identity(self.cl15p.absolute_value())
   }
 
   /// Obtain a generator of the squares of the class group with discriminant `p`.
@@ -178,24 +138,24 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   let cg = ClassGroup::<E>::setup(&mut rng, 100, vec![prime]).unwrap();
 
   // Do some complete-ness tests regarding identity
-  assert_eq!(&cg.identity_p().double(), cg.identity_p());
-  assert_eq!(&cg.identity_p().add(cg.identity_p()), cg.identity_p());
-  assert_eq!(&-cg.identity_p().clone(), cg.identity_p());
+  assert_eq!(cg.identity_p().double(), cg.identity_p());
+  assert_eq!(cg.identity_p().add(&cg.identity_p()), cg.identity_p());
+  assert_eq!(-cg.identity_p(), cg.identity_p());
 
   // Select a generator
   let g = cg.generator_p(&mut rng);
-  assert_ne!(&g, cg.identity_p());
-  let g = Table::new(10, cg.identity_p().clone(), g);
+  assert_ne!(g, cg.identity_p());
+  let g = Table::new(10, cg.identity_p(), g);
 
   // Check add is complete with regards to doubling
   assert_eq!(g[1].add(&g[1]), g[1].double());
   // Check add is complete with regards to additive inverses
-  assert_eq!(&g[1].add(&-g[1].clone()), cg.identity_p());
+  assert_eq!(g[1].add(&-g[1].clone()), cg.identity_p());
 
   // Check the table is correctly populated
   {
-    assert_ne!(g[1], cg.identity_p().clone());
-    let mut d = cg.identity_p().clone();
+    assert_ne!(g[1], cg.identity_p());
+    let mut d = cg.identity_p();
     for (i, e) in g.as_ref().iter().enumerate() {
       assert_eq!(&d, e, "{i}");
       d = d.add(&g[1]);
@@ -204,7 +164,7 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
 
   // Check mul is sane
   {
-    let mut res = cg.identity_p().clone();
+    let mut res = cg.identity_p();
     res = res.add(&g[1].double());
     assert_eq!(res, E::mul(&g, &[2]));
 
@@ -224,7 +184,7 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   }
 
   // Check f * prime == identity
-  assert_eq!(&E::mul(cg.f(), &[prime]), cg.identity_p());
+  assert_eq!(E::mul(cg.f(), &[prime]), cg.identity_p());
 
   // Check we can solve for the discrete logarithm of all of our tabled scalings of f
   for (i, f) in cg.f().as_ref().iter().enumerate() {
@@ -245,7 +205,7 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   {
     let mut bytes = vec![];
     cg.identity_p().compress(&mut bytes).unwrap();
-    assert_eq!(&E::decompress(&mut bytes.as_slice(), cg.delta_p()).unwrap(), cg.identity_p());
+    assert_eq!(E::decompress(&mut bytes.as_slice(), cg.delta_p()).unwrap(), cg.identity_p());
   }
 
   // Check we can compress all elements of the g table
@@ -260,7 +220,7 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   // Check we can compress all elements of the f table
   for (i, f) in cg.f().as_ref().iter().enumerate() {
     if (i % usize::from(prime)) == 0 {
-      assert_eq!(f, cg.identity_p());
+      assert_eq!(f, &cg.identity_p());
     }
     let mut bytes = vec![];
     f.compress(&mut bytes).unwrap();

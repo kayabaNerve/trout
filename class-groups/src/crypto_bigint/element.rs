@@ -156,19 +156,10 @@ impl<U: Limbs> PartialEq for CryptoBigintElement<U> {
 }
 impl<U: Limbs> Eq for CryptoBigintElement<U> {}
 
-impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
+#[expect(private_bounds)]
+impl<U: Limbs> CryptoBigintElement<U> {
   /// This is only valid for forms of negative odd discriminant.
-  ///
-  /// This does not zeroize the discriminant, solely the `a, b, c` coefficients, and will set the
-  /// result to the identity element of the same discriminant.
-  fn zeroize(&mut self) {
-    // Zeroize
-    self.a.zeroize();
-    // Best effort, as `Choice: !Zeroize`
-    self.b.0.ct_assign(&Choice::TRUE, Choice::TRUE);
-    self.b.1.zeroize();
-    self.c.zeroize();
-
+  fn identity_from_discriminant(discriminant_abs: U::Wide) -> Self {
     /*
       The identity element has `a = 1`. As composition sets $a_3 = (a_1 * a_2) / gcd(a_1, a_2)^2$,
       it's clear how having one $a_1 = 1$ causes $a_3 = a_2$ (or $a_2 = 1$ causes $a_3 = a_1$). As
@@ -179,18 +170,8 @@ impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
 
       The identity element is primitive as `gcd(a, b, c) = gcd(1, 1, c) = 1`.
     */
-    <_ as AsMut<[Limb]>>::as_mut(&mut self.a)[0] = Limb::ONE;
-    // As we zeroized `a`, this may be unnecessary if `zeroize` literally wrote zeroes, but we
-    // don't assume that here and still manually write zeroes
-    for limb in &mut <_ as AsMut<[Limb]>>::as_mut(&mut self.a)[1 ..] {
-      *limb = Limb::ZERO;
-    }
-
-    self.b.0 = Choice::TRUE;
-    <_ as AsMut<[Limb]>>::as_mut(&mut self.b.1)[0] = Limb::ONE;
-    for limb in &mut <_ as AsMut<[Limb]>>::as_mut(&mut self.b.1)[1 ..] {
-      *limb = Limb::ZERO;
-    }
+    let a = &[1];
+    let b = (Choice::TRUE, &[1]);
 
     /*
       `b^2 - 4ac = delta`
@@ -201,9 +182,9 @@ impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
 
       $(1 + |delta|) / 4 = c$
     */
+    let mut c = discriminant_abs.clone();
     {
-      self.c = self.discriminant_abs.clone();
-      let c = AsMut::<[Limb]>::as_mut(&mut self.c);
+      let c = AsMut::<[Limb]>::as_mut(&mut c);
       let mut i = 0;
       let mut carry = Limb::ONE;
       while i < c.len() {
@@ -227,6 +208,33 @@ impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
         i += 1;
       }
     }
+
+    // SAFETY: This is well-defined, reduced, and primitive
+    unsafe {
+      <Self as crate::Element>::from_coefficients(
+        a,
+        b,
+        U::wide_to_le_bytes(c),
+        U::wide_to_le_bytes(discriminant_abs),
+      )
+    }
+  }
+}
+
+impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
+  /// This is only valid for forms of negative odd discriminant.
+  ///
+  /// This does not zeroize the discriminant, solely the `a, b, c` coefficients, and will set the
+  /// result to the identity element of the same discriminant.
+  fn zeroize(&mut self) {
+    // Zeroize
+    self.a.zeroize();
+    // Best effort, as `Choice: !Zeroize`
+    self.b.0.ct_assign(&Choice::TRUE, Choice::TRUE);
+    self.b.1.zeroize();
+    self.c.zeroize();
+
+    *self = Self::identity_from_discriminant(self.discriminant_abs.clone());
   }
 }
 
@@ -295,6 +303,7 @@ impl<U: Limbs> CryptoBigintElement<U> {
     // `c`'s bound, that it's bounded by the discriminant, is inherently satisfied from there
     Self { a, b, c, discriminant_abs }
   }
+
   /// Reduce an element.
   fn reduce(self) -> Self {
     let discriminant_bits = self.discriminant_abs.bits_vartime();
@@ -321,6 +330,16 @@ impl<U: Limbs> CryptoBigintElement<U> {
 }
 
 impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
+  /// This is only valid for forms of negative odd discriminant.
+  fn identity(discriminant_abs: impl AsRef<[u8]>) -> Self {
+    let discriminant_abs = discriminant_abs.as_ref();
+    assert_eq!(discriminant_abs[0] & 0b11, 0b11, "discriminant was not a valid odd discriminant");
+    Self::identity_from_discriminant(U::wide_from_le_slice(
+      discriminant_abs,
+      8 * u32::try_from(discriminant_abs.len()).expect("4 GB discriminant?"),
+    ))
+  }
+
   /// This MAY return an incorrect result when the form doesn't have an odd, negative discriminant.
   fn is_identity(&self) -> Choice {
     /*

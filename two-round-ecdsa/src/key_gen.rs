@@ -73,14 +73,10 @@ fn class_group<CG: ElementExt, P: Parameters<CG>>(
   let G = class_group.generator_p(&mut class_group_rng);
   // Ensure G is a generator of G_q, not G, as required by the CCYKC proofs
   let G = CG::mul(
-    &Table::new_for_scalar_bits(
-      P::F::NUM_BITS.try_into().unwrap(),
-      class_group.identity_p().clone(),
-      G,
-    ),
+    &Table::new_for_scalar_bits(P::F::NUM_BITS.try_into().unwrap(), class_group.identity_p(), G),
     &p_bytes,
   );
-  let G = Table::new(12, class_group.identity_p().clone(), G);
+  let G = Table::new(12, class_group.identity_p(), G);
 
   (class_group, G)
 }
@@ -145,7 +141,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
 
     let share_ciphertexts = share_ciphertexts
       .into_iter()
-      .map(|(participant, C)| (participant, Table::new(12, class_group.identity_p().clone(), C)))
+      .map(|(participant, C)| (participant, Table::new(12, class_group.identity_p(), C)))
       .collect();
 
     Self {
@@ -286,7 +282,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
         (*participant, {
           let mask = Zeroizing::new(mask.to_be_bytes());
           CG::multiexp(
-            class_group.identity_p(),
+            &class_group.identity_p(),
             &[(&G, &mask), (class_group.f(), &Zeroizing::new(crate::be_bytes(scalar)))],
           )
         })
