@@ -142,50 +142,6 @@ mod crypto_primes {
 }
 pub use crypto_primes::*;
 
-#[cfg(feature = "gmp")]
-mod gmp_primes {
-  use super::*;
-
-  /// A source of primes premised on gmp.
-  ///
-  /// This is here for evaluation purposes. It is not posited to be uniform and accordingly isn't
-  /// posited to be secure.
-  // This isn't uniform as we sample a start position uniform from [0, 2**k] and then call for the
-  // next prime. The distribution of primes isn't uniform over [0, 2**k]. It is presumably
-  // consistent across versions of gmp however as it doesn't use gmp's prime sieving function yet
-  // `next_prime`.
-  pub struct GmpPrimes;
-  impl Primes for GmpPrimes {
-    fn prime(lambda: u32, mut xof: blake3::OutputReader) -> UnsignedInteger {
-      loop {
-        let mut bytes = vec![0; lambda.div_ceil(8).try_into().unwrap()];
-        xof.fill(&mut bytes);
-        let bits_in_top_byte = lambda % 8;
-        // Panics if asked for a 0-bit prime, which doesn't exist
-        bytes[0] &= (1 << bits_in_top_byte) - 1;
-
-        let mut start = rug::Integer::new();
-        unsafe {
-          start.assign_bytes_radix_unchecked(&bytes, 256, false);
-        }
-        let candidate = start.next_prime();
-
-        if candidate.significant_bits() > lambda {
-          continue;
-        }
-        if candidate.is_even() {
-          continue;
-        }
-        break UnsignedInteger::from_be_slice(
-          &candidate.to_digits::<u8>(rug::integer::Order::MsfBe),
-        );
-      }
-    }
-  }
-}
-#[cfg(feature = "gmp")]
-pub use gmp_primes::*;
-
 pub(crate) mod ccykc {
   use std::io::{self, Read, Write};
 

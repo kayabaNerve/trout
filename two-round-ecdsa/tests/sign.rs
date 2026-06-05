@@ -5,14 +5,8 @@ use two_round_ecdsa::{SecurityLevel, Setup, SigningProtocol, Ready};
 #[test]
 fn sign() {
   type ProverElement = class_groups::CryptoBigintStackElement;
-  #[cfg(not(feature = "gmp"))]
   type Element = class_groups::MalachiteElement;
-  #[cfg(not(feature = "gmp"))]
   type Primes = two_round_ecdsa::proofs::CryptoPrimesStackCcykc;
-  #[cfg(feature = "gmp")]
-  type Element = class_groups::GmpElement;
-  #[cfg(feature = "gmp")]
-  type Primes = two_round_ecdsa::proofs::GmpPrimes;
 
   let mut setups = Setup::<ProverElement, Element, two_round_ecdsa::Secp256k1<Primes>>::dealer(
     &mut rand_core::UnwrapErr(SysRng),

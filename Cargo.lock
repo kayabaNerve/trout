@@ -144,7 +144,6 @@ dependencies = [
  "malachite",
  "rand",
  "rand_chacha",
- "rug",
  "zeroize",
 ]
 

@@ -35,5 +35,4 @@ ecdsa = { version = "0.16", default-features = false, features = ["std", "verify
 k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 
 [features]
-gmp = ["rug", "class-groups/gmp"]
 secp256k1 = ["sha2", "k256"]

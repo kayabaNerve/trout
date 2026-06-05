@@ -32,7 +32,3 @@ pub(crate) use sqrt::{legendre_symbol, sqrt_mod_p_vartime};
 #[deprecated]
 pub type CryptoBigintStackElement =
   CryptoBigintElement<crypto_bigint::Uint<{ crypto_bigint::nlimbs((2560u32 + 2).div_ceil(2)) }>>;
-/// A type supporting unbounded discriminants but requiring allocations on the heap.
-#[deprecated]
-#[cfg(feature = "alloc")]
-pub type CryptoBigintHeapElement = CryptoBigintElement<crypto_bigint::BoxedUint>;

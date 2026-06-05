@@ -330,17 +330,11 @@ fn crypto_bigint_stack_class_group() {
     rand::rngs::SysRng,
   ));
 }
-#[expect(deprecated)]
 #[test]
 fn crypto_bigint_heap_class_group() {
-  test_class_group::<crate::CryptoBigintHeapElement>(&mut rand::rand_core::UnwrapErr(
-    rand::rngs::SysRng,
-  ));
-}
-#[cfg(feature = "gmp")]
-#[test]
-fn gmp_class_group() {
-  test_class_group::<crate::GmpElement>(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
+  test_class_group::<crate::CryptoBigintElement<::crypto_bigint::BoxedUint>>(
+    &mut rand::rand_core::UnwrapErr(rand::rngs::SysRng),
+  );
 }
 
 #[expect(deprecated)]
@@ -351,7 +345,7 @@ fn bench() {
   const SEED: [u8; 32] = [0; 32];
   bench_class_group::<crate::MalachiteElement>(ChaCha20Rng::from_seed(SEED));
   bench_class_group::<crate::CryptoBigintStackElement>(ChaCha20Rng::from_seed(SEED));
-  bench_class_group::<crate::CryptoBigintHeapElement>(ChaCha20Rng::from_seed(SEED));
-  #[cfg(feature = "gmp")]
-  bench_class_group::<crate::GmpElement>(ChaCha20Rng::from_seed(SEED));
+  bench_class_group::<crate::CryptoBigintElement<::crypto_bigint::BoxedUint>>(
+    ChaCha20Rng::from_seed(SEED),
+  );
 }

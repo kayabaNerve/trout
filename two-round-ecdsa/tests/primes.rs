@@ -17,6 +17,4 @@ fn primes() {
 
   test::<CryptoPrimesStack<crypto_bigint::U128>>();
   test::<CryptoPrimesHeap>();
-  #[cfg(feature = "gmp")]
-  test::<two_round_ecdsa::proofs::GmpPrimes>();
 }
