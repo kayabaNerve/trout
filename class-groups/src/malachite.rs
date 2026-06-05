@@ -115,7 +115,7 @@ impl MalachiteElement {
 }
 
 impl crate::Element for MalachiteElement {
-  fn is_identity(&self) -> subtle::Choice {
+  fn is_identity(&self) -> crypto_bigint::Choice {
     u8::from((self.a == Natural::ONE) && (self.b == Natural::ONE)).into()
   }
 
@@ -270,7 +270,7 @@ impl crate::Element for MalachiteElement {
     );
     let c = natural_to_bytes(self.c.unsigned_abs_ref());
 
-    let discriminant = ((self.a.clone() * self.c.clone()) << 2u32) - self.b.clone().square();
+    let discriminant = self.b.clone().square() - ((self.a.clone() * self.c.clone()) << 2u32);
     let discriminant = natural_to_bytes(discriminant.unsigned_abs_ref());
 
     (a, b, c, discriminant)

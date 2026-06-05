@@ -29,3 +29,6 @@ mod primes;
 
 mod class_group;
 pub use class_group::ClassGroup;
+
+mod discriminant;
+pub use discriminant::*;

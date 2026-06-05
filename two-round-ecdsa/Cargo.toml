@@ -13,7 +13,7 @@ zeroize = { version = "1", default-features = false, features = ["std", "derive"
 rand = { version = "0.10", default-features = false, features = ["std"] }
 rand_chacha = { version = "0.10", default-features = false, features = ["std"] }
 
-crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "alloc"] }
+crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "alloc", "subtle"] }
 crypto-primes = { version = "=0.7.0", default-features = false }
 malachite = { version = "0.9", default-features = false, features = ["naturals_and_integers"] }
 rug = { version = "1", default-features = false, features = ["std", "integer"], optional = true }

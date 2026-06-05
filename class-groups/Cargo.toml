@@ -8,10 +8,9 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs", "-Z", "unstable-options", "--document-private-items", "--document-hidden-items"]
 
 [dependencies]
-subtle = { version = "2", default-features = false, features = ["std"] }
 zeroize = { version = "1", default-features = false, features = ["std", "derive"] }
 rand = { version = "0.10", default-features = false, features = ["std", "sys_rng"] }
-crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "subtle"] }
+crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize"] }
 crypto-primes = { version = "=0.7.0", default-features = false }
 malachite = { version = "0.9", default-features = false, features = ["naturals_and_integers"] }
 rug = { version = "1", default-features = false, features = ["std", "integer"], optional = true }

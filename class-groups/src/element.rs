@@ -1,6 +1,8 @@
 use core::ops::Neg;
 use std::io;
 
+use crypto_bigint::{Choice, CtOption};
+
 /// An binary quadratic form corresponding to an element of a class group.
 ///
 /// This binary quadratic form is bound to being a primitive positive definite binary
@@ -13,7 +15,8 @@ use std::io;
 /// currently desired use cases.
 ///
 /// This binary quadratic form has a specific discriminant. Operations between binary quadratic
-/// forms with distinct discriminants are _always_ undefined behavior and MUST NOT be done.
+/// forms with distinct discriminants are _always_ undefined behavior (and technically considered
+/// `unsafe` even if not so annotated) and MUST NOT be done.
 ///
 /// Operations with the binary quadratic forms are not notated multiplicatively but additively.
 /// The composition of two forms is referred to as addition, and the composition of a form with
@@ -24,7 +27,7 @@ pub trait Element:
   Sized + Send + Sync + Clone + Neg<Output = Self> + PartialEq + Eq + core::fmt::Debug
 {
   /// If this element is the identity.
-  fn is_identity(&self) -> subtle::Choice;
+  fn is_identity(&self) -> Choice;
 
   /// Double this element.
   ///
@@ -52,12 +55,7 @@ pub trait Element:
   #[expect(clippy::type_complexity)]
   unsafe fn a_b_c_discriminant(
     &self,
-  ) -> (
-    impl AsRef<[u8]>,
-    (crypto_bigint::Choice, impl AsRef<[u8]>),
-    impl AsRef<[u8]>,
-    impl AsRef<[u8]>,
-  );
+  ) -> (impl AsRef<[u8]>, (Choice, impl AsRef<[u8]>), impl AsRef<[u8]>, impl AsRef<[u8]>);
 
   /// Load a form from its coefficients.
   ///
@@ -78,7 +76,7 @@ pub trait Element:
   // (un)compressed encodings which perform validation at time of decode.
   unsafe fn from_coefficients(
     a: impl AsRef<[u8]>,
-    b: (crypto_bigint::Choice, impl AsRef<[u8]>),
+    b: (Choice, impl AsRef<[u8]>),
     c: impl AsRef<[u8]>,
     discriminant_abs: impl AsRef<[u8]>,
   ) -> Self;
@@ -199,7 +197,7 @@ pub trait Element:
   fn uncompressed_decode(
     buf: impl AsRef<[u8]>,
     discriminant_abs: impl AsRef<[u8]>,
-  ) -> crypto_bigint::CtOption<Self>;
+  ) -> CtOption<Self>;
 
   /// Create an element of this type from another element.
   fn from(source: impl Element) -> Self {

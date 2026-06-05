@@ -1,37 +1,14 @@
+use core::marker::PhantomData;
 use core::cmp::Ordering;
 
 use rand::CryptoRng;
 
 use ::malachite::{
-  base::num::{arithmetic::traits::*, basic::traits::*, logic::traits::*},
+  base::num::{arithmetic::traits::*, basic::traits::*},
   *,
 };
 
-use crate::{
-  *,
-  malachite::{natural_from_bytes, natural_to_bytes},
-};
-
-// https://eprint.iacr.org/2015/047 B.2 provides this formula
-fn c(a: &Natural, b: &Natural, discriminant: &Integer) -> Option<Natural> {
-  // b**2 - 4ac = discriminant
-  /*
-    Since a and b are positive for reduced elements, and our discriminants are negative, c must
-    be positive as else we'd have a positive discriminant.
-  */
-  debug_assert_eq!(discriminant.sign(), Ordering::Less);
-  // We solve for c by rewriting as b**2 - discriminant = 4ac, then dividing by 4a.
-  let four_ac: Integer = Integer::from(b.pow(2u64)) - discriminant;
-  if (&four_ac & Integer::from(3u8)) != Natural::ZERO {
-    None?
-  }
-  let ac = four_ac >> 2u8;
-  let (res, rem) = ac.div_rem(Integer::from(a.clone()));
-  if rem != Natural::ZERO {
-    None?
-  }
-  Some(res.try_into().unwrap())
-}
+use crate::{*, malachite::natural_from_bytes};
 
 fn element<E: Element>(a: Natural, b: Integer, discriminant: &Integer) -> E {
   assert_eq!(discriminant.sign(), Ordering::Less, "discriminant wasn't negative");
@@ -60,64 +37,14 @@ fn element<E: Element>(a: Natural, b: Integer, discriminant: &Integer) -> E {
   }))
 }
 
-#[must_use]
-fn make_coprime(
-  mut a: Natural,
-  mut b: Integer,
-  prime: &Natural,
-  delta: &Integer,
-) -> (Natural, Integer) {
-  #[cfg(debug_assertions)]
-  let original_a = a.clone();
-  #[cfg(debug_assertions)]
-  let original_b = b.clone();
-
-  let mut c = Integer::from(c(&a, b.unsigned_abs_ref(), delta).unwrap());
-
-  // (a, b, c) -> (a + b + c, -b - 2a, a)
-  while !(&a).coprime_with(prime) {
-    let int_abc = Integer::from(&a) + &b + &c;
-    c = Integer::from(&a);
-    b = -b;
-    b -= Integer::from(&a << 1);
-    a = int_abc.unsigned_abs();
-  }
-
-  #[cfg(debug_assertions)]
-  {
-    debug_assert_eq!(
-      {
-        let reduced = MalachiteElement::reduce(Integer::from(a.clone()), b.clone(), c.clone(), {
-          let delta = b.clone().square() - ((Integer::from(a.clone()) * c.clone()) << 2u32);
-          let tess_root = delta.unsigned_abs_ref().ceiling_root(4);
-          Integer::from(tess_root)
-        });
-        // SAFETY: `a_b_c_discriminant` is always safe to call
-        let (a, (b_positive, b), _c, _discriminant) = unsafe { reduced.a_b_c_discriminant() };
-        let mut b = Integer::from(natural_from_bytes(b.as_ref()));
-        if !bool::from(b_positive) {
-          b = -b;
-        }
-        (natural_from_bytes(a.as_ref()), b)
-      },
-      (original_a, original_b)
-    );
-  }
-
-  (a, b)
-}
-
+use ::crypto_bigint::BoxedUint;
 /// A class group.
 #[derive(Clone)]
 pub struct ClassGroup<E: ElementExt> {
-  B: Natural,
-  p: Natural,
-  p_le_bytes: Vec<u8>,
-  // TODO identity_k: E,
+  cl15p: Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
   identity_p: E,
   f_table: Table<E>,
-  delta_k: Integer,
-  delta_p: Integer,
+  _E: PhantomData<E>,
 }
 impl<E: ElementExt> ClassGroup<E> {
   /// Perform the setup for a randomly sampled class group with a subgroup where the discrete
@@ -133,104 +60,22 @@ impl<E: ElementExt> ClassGroup<E> {
   /// subgroup.
   // https://eprint.iacr.org/2015/047 Figure 2, slightly modified with regards to `g`
   pub fn setup(rng: &mut impl CryptoRng, lambda: u64, p_le_bytes: Vec<u8>) -> Option<Self> {
-    let p = natural_from_bytes(&p_le_bytes);
-
-    let mu = p.significant_bits();
-
-    // Step 1
-    if lambda < (mu + 2) {
-      None?;
-    }
-
-    // Step 2
-    let q = {
-      let q_bits = (2 * lambda) - mu;
-      let q_bits = u32::try_from(q_bits).unwrap();
-      loop {
-        let mut seed = vec![0; usize::try_from(q_bits).unwrap().div_ceil(8)];
-        rng.fill_bytes(&mut seed);
-        if (q_bits % 8) != 0 {
-          let high_bit = 1 << ((q_bits % 8) - 1);
-          // Ensure the high bit is set
-          seed[0] |= high_bit;
-          // Mask off any higher bits
-          seed[0] &= (high_bit << 1) - 1;
-        }
-        let q = super::primes::next_prime(
-          &mut *rng,
-          seed,
-          ({
-            let kappa = u32::try_from((8 * p_le_bytes.len()) / 2).unwrap();
-            let mut closest_power_of_two = 1u32;
-            while (2 * closest_power_of_two) < kappa {
-              closest_power_of_two <<= 1;
-            }
-
-            // $closest_power_of_two < kappa \le (2 * closest_power_of_two)$
-            if kappa.abs_diff(closest_power_of_two) >= kappa.abs_diff(closest_power_of_two << 1) {
-              closest_power_of_two <<= 1;
-            }
-            closest_power_of_two
-          })
-          .max(128),
-        );
-        let q = natural_from_bytes(q.to_le_bytes().as_ref());
-        debug_assert!((q.significant_bits() - u64::from(q_bits)) < 1);
-        // p * q is congruent to -1 mod 4
-        if ((&p * &q) & Natural::from(3u8)) != 3u8 {
-          continue;
-        }
-        // jacobi of p/q = -1
-        let res = p.clone().jacobi_symbol(&q);
-        if res != -1 {
-          continue;
-        }
-        break q;
+    Cl15p::sample(rng, lambda, p_le_bytes).map(|cl15p| {
+      let identity_p: E =
+        element(Natural::ONE, Integer::ONE, &-natural_from_bytes(cl15p.absolute_value().as_ref()));
+      let f = cl15p.f();
+      Self {
+        cl15p,
+        identity_p: identity_p.clone(),
+        f_table: Table::new(12, identity_p, f),
+        _E: PhantomData,
       }
-    };
-
-    // Step 3
-    let delta_k = -Integer::from(&p * &q);
-
-    let p_square = p.clone().pow(2u64);
-    let delta_p = &delta_k * Integer::from(p_square.clone());
-
-    let identity_p = element::<E>(Natural::ONE, Integer::ONE, &delta_p);
-
-    // Step 4
-    let f = {
-      let a = p_square.clone();
-      let b = p.clone();
-      element::<E>(a, Integer::from(b), &delta_p)
-    };
-
-    let B = {
-      let abs_delta_k: Natural = delta_k.clone().abs().try_into().unwrap();
-      let abs_delta_k_cubed = abs_delta_k.pow(3u64);
-      let mut quad_root = abs_delta_k_cubed.clone().floor_root(4);
-      debug_assert!(quad_root.clone().pow(4u64) < abs_delta_k_cubed);
-      // Transform to ceil root
-      quad_root += Natural::ONE;
-      debug_assert!(quad_root.clone().pow(4u64) >= abs_delta_k_cubed);
-      quad_root
-    };
-
-    Some(ClassGroup {
-      B,
-      p_le_bytes,
-      p,
-      identity_p: identity_p.clone(),
-      // Make a very large table for this as it's static to the setup
-      // This should be ~24 MB
-      f_table: Table::new(12, identity_p, f),
-      delta_k,
-      delta_p,
     })
   }
 
   /// The prime-order of the subgroup where the discrete log problem is easy.
   pub fn p(&self) -> impl AsRef<[u8]> {
-    self.p_le_bytes.iter().copied().rev().collect::<Vec<_>>()
+    self.cl15p.fundamental_discriminant().p().to_be_bytes()
   }
 
   /// The bound on the unknown order, in bits.
@@ -238,7 +83,7 @@ impl<E: ElementExt> ClassGroup<E> {
   /// Scalars for the unknown-order should be sampled from this bound plus a further `k`-bits
   /// representing the desired `2**-k` distance from this bound upon sampling.
   pub fn unknown_order_bound(&self) -> u32 {
-    self.B.significant_bits().try_into().unwrap()
+    self.cl15p.upper_bound_on_order()
   }
 
   /// The identity element for the discriminant `p`.
@@ -251,12 +96,13 @@ impl<E: ElementExt> ClassGroup<E> {
   /// This function executes in variable time.
   pub fn generator_p(&self, rng: &mut impl CryptoRng) -> E {
     use ::crypto_bigint::{NonZero, RandomMod, BoxedUint};
-    let discriminant_abs = natural_to_bytes(self.delta_p.unsigned_abs_ref());
+    let discriminant_abs = self.delta_p();
+    let discriminant_abs = discriminant_abs.as_ref();
     let seed = BoxedUint::random_mod_vartime(
       rng,
       &NonZero::new(
         BoxedUint::from_le_slice(
-          &discriminant_abs,
+          discriminant_abs,
           8 * u32::try_from(discriminant_abs.len()).unwrap(),
         )
         .unwrap()
@@ -285,41 +131,13 @@ impl<E: ElementExt> ClassGroup<E> {
   // well-defined. There's no reason to perform the consistency check, which is non-trivial, in
   // that case.
   pub fn discrete_logarithm(&self, X: &E) -> Option<Vec<u8>> {
-    if X == &self.identity_p {
-      return Some(vec![]);
-    }
-
-    let p = &self.p;
-    let p_int = Integer::from(p.clone());
-
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (_a, (b_sign, b_value), _c, _discriminant) = unsafe { X.a_b_c_discriminant() };
-    let mut b_value = Integer::from(natural_from_bytes(b_value.as_ref()));
-    if !bool::from(b_sign) {
-      b_value = -b_value;
-    }
-
-    let mut x = (&b_value / &p_int) % &p_int;
-    if x.sign() == Ordering::Less {
-      x = p_int + x;
-    }
-    let x = Natural::try_from(x).unwrap();
-    if x == Natural::ZERO {
-      None?
-    }
-    let inverse = x.clone().mod_pow(&(p - Natural::from(2u8)), p);
-    debug_assert_eq!(((&inverse * &x) % p), Natural::ONE);
-    Some(natural_to_bytes(&inverse))
-  }
-
-  /// The little-endian encoding of the fundamental discriminant.
-  pub fn delta_k(&self) -> impl AsRef<[u8]> {
-    natural_to_bytes(self.delta_k.unsigned_abs_ref())
+    Option::<BoxedUint>::from(self.cl15p.discrete_logarithm(X.clone()))
+      .map(|up| up.to_be_bytes().to_vec())
   }
 
   /// The little-endian encoding of the non-fundamental discriminant.
   pub fn delta_p(&self) -> impl AsRef<[u8]> {
-    natural_to_bytes(self.delta_p.unsigned_abs_ref())
+    self.cl15p.absolute_value()
   }
 
   /// Surject an element of the class group of discriminant `p` to the class group of discriminant
@@ -330,26 +148,7 @@ impl<E: ElementExt> ClassGroup<E> {
   /// This function executes in variable time.
   // HJPT98, Algorithm 3, for odd discriminants (b_O = 1)
   pub fn surject(&self, e: &E) -> E {
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, (b_positive, b), _c, _discriminant) = unsafe { e.a_b_c_discriminant() };
-    let a = natural_from_bytes(a.as_ref());
-    let mut b = Integer::from(natural_from_bytes(b.as_ref()));
-    if !bool::from(b_positive) {
-      b = -b;
-    }
-
-    // Ensure `a` and `p` are coprime
-    let (a, mut b) = make_coprime(a, b, &self.p, &self.delta_p);
-
-    // Apply the surjections
-    let (_one, mu, lambda) = (&self.p).extended_gcd(&a);
-    b = (b * mu) + (Integer::from(&a) * lambda);
-
-    let c = Integer::from(c(&a, b.unsigned_abs_ref(), &self.delta_k).unwrap());
-    E::from(MalachiteElement::reduce(Integer::from(a), b, c, {
-      let tess_root = self.delta_k.unsigned_abs_ref().ceiling_root(4);
-      Integer::from(tess_root)
-    }))
+    self.cl15p.surject(e.clone())
   }
 
   /// Inject an element of the class group of discriminant `k` to the class group of discriminant
@@ -360,25 +159,7 @@ impl<E: ElementExt> ClassGroup<E> {
   /// This function executes in variable time.
   // HJPT, Algorithm 2
   pub fn inject(&self, e: E) -> E {
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, (b_positive, b), _c, _discriminant) = unsafe { e.a_b_c_discriminant() };
-    let a = natural_from_bytes(a.as_ref());
-    let mut b = Integer::from(natural_from_bytes(b.as_ref()));
-    if !bool::from(b_positive) {
-      b = -b;
-    }
-
-    // Ensure `a` and `p` are coprime
-    let (a, mut b) = make_coprime(a, b, &self.p, &self.delta_k);
-
-    // Apply the injection
-    b *= Integer::from(&self.p);
-    let c = Integer::from(c(&a, b.unsigned_abs_ref(), &self.delta_p).unwrap());
-
-    E::from(MalachiteElement::reduce(Integer::from(a), b, c, {
-      let tess_root = self.delta_p.unsigned_abs_ref().ceiling_root(4);
-      Integer::from(tess_root)
-    }))
+    self.cl15p.fundamental_discriminant().inject(e, self.cl15p.fundamental_discriminant().p())
   }
 
   /// Apply the coset labelling function for an element in the class group of discriminant `p`.
@@ -387,7 +168,7 @@ impl<E: ElementExt> ClassGroup<E> {
   ///
   /// This function executes in variable time.
   pub fn coset_labelling_function(&self, e: &E) -> E {
-    self.inject(self.surject(e))
+    self.cl15p.coset_labeling_function(e.clone())
   }
 }
 
@@ -397,24 +178,24 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   let cg = ClassGroup::<E>::setup(&mut rng, 100, vec![prime]).unwrap();
 
   // Do some complete-ness tests regarding identity
-  assert_eq!(&cg.identity_p.double(), &cg.identity_p);
-  assert_eq!(&cg.identity_p.add(&cg.identity_p), &cg.identity_p);
-  assert_eq!(&-cg.identity_p.clone(), &cg.identity_p);
+  assert_eq!(&cg.identity_p().double(), cg.identity_p());
+  assert_eq!(&cg.identity_p().add(cg.identity_p()), cg.identity_p());
+  assert_eq!(&-cg.identity_p().clone(), cg.identity_p());
 
   // Select a generator
   let g = cg.generator_p(&mut rng);
-  assert_ne!(g, cg.identity_p);
-  let g = Table::new(10, cg.identity_p.clone(), g);
+  assert_ne!(&g, cg.identity_p());
+  let g = Table::new(10, cg.identity_p().clone(), g);
 
   // Check add is complete with regards to doubling
   assert_eq!(g[1].add(&g[1]), g[1].double());
   // Check add is complete with regards to additive inverses
-  assert_eq!(g[1].add(&-g[1].clone()), cg.identity_p);
+  assert_eq!(&g[1].add(&-g[1].clone()), cg.identity_p());
 
   // Check the table is correctly populated
   {
-    assert!(g[1] != cg.identity_p);
-    let mut d = cg.identity_p.clone();
+    assert_ne!(g[1], cg.identity_p().clone());
+    let mut d = cg.identity_p().clone();
     for (i, e) in g.as_ref().iter().enumerate() {
       assert_eq!(&d, e, "{i}");
       d = d.add(&g[1]);
@@ -423,7 +204,7 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
 
   // Check mul is sane
   {
-    let mut res = cg.identity_p.clone();
+    let mut res = cg.identity_p().clone();
     res = res.add(&g[1].double());
     assert_eq!(res, E::mul(&g, &[2]));
 
@@ -443,7 +224,7 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   }
 
   // Check f * prime == identity
-  assert_eq!(E::mul(&cg.f_table, &[prime]), cg.identity_p);
+  assert_eq!(&E::mul(cg.f(), &[prime]), cg.identity_p());
 
   // Check we can solve for the discrete logarithm of all of our tabled scalings of f
   for (i, f) in cg.f().as_ref().iter().enumerate() {
@@ -451,20 +232,21 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
     while i.last() == Some(&0) {
       i.pop();
     }
-    assert_eq!(cg.discrete_logarithm(f), Some(i));
+    let mut logarithm = cg.discrete_logarithm(f);
+    if let Some(logarithm) = &mut logarithm {
+      while logarithm.first() == Some(&0) {
+        logarithm.remove(0);
+      }
+    }
+    assert_eq!(logarithm, Some(i));
   }
 
   // Check we can compress identity, which is an instance of the `a == b` exceptional
   {
     let mut bytes = vec![];
-    cg.identity_p.compress(&mut bytes).unwrap();
-    assert_eq!(&E::decompress(&mut bytes.as_slice(), cg.delta_p()).unwrap(), &cg.identity_p);
+    cg.identity_p().compress(&mut bytes).unwrap();
+    assert_eq!(&E::decompress(&mut bytes.as_slice(), cg.delta_p()).unwrap(), cg.identity_p());
   }
-
-  // `b == 0` is another exceptional case, yet given `b**2 - 4ac = delta_p`, this would simplify to
-  // `-4ac = delta_p`. Since our discriminants are not divisible by `4`, there is no `ac` (even
-  // unreduced) which would cause this exceptional case to be triggered.
-  assert!(cg.delta_p.clone().div_rem(Integer::from(4i8)).1 != Integer::ZERO);
 
   // Check we can compress all elements of the g table
   for g in g.as_ref() {
@@ -476,9 +258,9 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   }
 
   // Check we can compress all elements of the f table
-  for (i, f) in cg.f_table.as_ref().iter().enumerate() {
+  for (i, f) in cg.f().as_ref().iter().enumerate() {
     if (i % usize::from(prime)) == 0 {
-      assert_eq!(f, &cg.identity_p);
+      assert_eq!(f, cg.identity_p());
     }
     let mut bytes = vec![];
     f.compress(&mut bytes).unwrap();
@@ -489,9 +271,9 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
 
   // Test the coset labelling function
   let label = cg.coset_labelling_function(&g[1]);
-  assert_eq!(label, cg.coset_labelling_function(&(g[1].add(&cg.f_table[1]))));
+  assert_eq!(label, cg.coset_labelling_function(&(g[1].add(&cg.f()[1]))));
   let dlog = cg.discrete_logarithm(&(label.sub(g[1].clone()))).unwrap();
-  assert_eq!(E::mul(&cg.f_table, &dlog), label.sub(g[1].clone()));
+  assert_eq!(E::mul(cg.f(), &dlog), label.sub(g[1].clone()));
 }
 
 #[cfg(test)]

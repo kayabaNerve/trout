@@ -2,7 +2,9 @@ use core::{ops::Neg, fmt::Debug};
 
 use zeroize::Zeroize;
 
-use crypto_bigint::{Choice, CtOption, CtEq, CtGt, CtSelect, CtAssign, BitOps, One, Limb};
+use crypto_bigint::{
+  Choice, CtOption, CtEq, CtGt, CtSelect, CtAssign, BitOps, NonZero, One, Limb, UintRef,
+};
 
 use super::I;
 
@@ -228,9 +230,9 @@ impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
   }
 }
 
-impl<U: Limbs> crypto_bigint::CtSelect for CryptoBigintElement<U> {
+impl<U: Limbs> CtSelect for CryptoBigintElement<U> {
   /// This MAY return an incorrect result for forms of different discriminants.
-  fn ct_select(&self, b: &Self, choice: crypto_bigint::Choice) -> Self {
+  fn ct_select(&self, b: &Self, choice: Choice) -> Self {
     Self {
       a: U::ct_select(&self.a, &b.a, choice),
       b: (<_>::ct_select(&self.b.0, &b.b.0, choice), <_>::ct_select(&self.b.1, &b.b.1, choice)),
@@ -320,7 +322,7 @@ impl<U: Limbs> CryptoBigintElement<U> {
 
 impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   /// This MAY return an incorrect result when the form doesn't have an odd, negative discriminant.
-  fn is_identity(&self) -> subtle::Choice {
+  fn is_identity(&self) -> Choice {
     /*
       TODO: Is there a faster way to check this? If we had a fast way to check equality, we could
       check equality with the identity.
@@ -342,7 +344,7 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
     for limb in &b[1 ..] {
       is_zero |= *limb;
     }
-    (is_one.is_one() & is_zero.is_zero()).into()
+    is_one.is_one() & is_zero.is_zero()
   }
 
   /// This is only correct for forms of the same discriminant where at least one form is primitive.
@@ -375,12 +377,7 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   // required.
   unsafe fn a_b_c_discriminant(
     &self,
-  ) -> (
-    impl AsRef<[u8]>,
-    (crypto_bigint::Choice, impl AsRef<[u8]>),
-    impl AsRef<[u8]>,
-    impl AsRef<[u8]>,
-  ) {
+  ) -> (impl AsRef<[u8]>, (Choice, impl AsRef<[u8]>), impl AsRef<[u8]>, impl AsRef<[u8]>) {
     let reduced = self.clone().reduce();
     (
       reduced.a.to_le_bytes(),
@@ -402,7 +399,7 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   /// underlying container(s).
   unsafe fn from_coefficients(
     a: impl AsRef<[u8]>,
-    (b_positive, b_abs): (crypto_bigint::Choice, impl AsRef<[u8]>),
+    (b_positive, b_abs): (Choice, impl AsRef<[u8]>),
     c: impl AsRef<[u8]>,
     discriminant_abs: impl AsRef<[u8]>,
   ) -> Self {
@@ -463,7 +460,7 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   fn uncompressed_decode(
     buf: impl AsRef<[u8]>,
     discriminant_abs: impl AsRef<[u8]>,
-  ) -> crypto_bigint::CtOption<Self> {
+  ) -> CtOption<Self> {
     let discriminant_abs = discriminant_abs.as_ref();
 
     let invalid_size = CtOption::new(
@@ -498,10 +495,8 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
       discriminant_bits
     };
 
-    let discriminant_bits = crypto_bigint::UintRef::new(
-      U::wide_from_le_slice(discriminant_abs, discriminant_bits).as_ref(),
-    )
-    .bits();
+    let discriminant_bits =
+      UintRef::new(U::wide_from_le_slice(discriminant_abs, discriminant_bits).as_ref()).bits();
     let discriminant_abs = U::wide_from_le_slice(discriminant_abs, discriminant_bits);
 
     let bits_per_element = (discriminant_abs.bits() / 2) + 1;
@@ -520,7 +515,7 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
       (b_abs.as_ref()[0] & Limb::ONE).ct_eq(&(discriminant_abs.as_ref()[0] & Limb::ONE));
     b_abs.as_mut()[0] ^= Limb::from(u8::from(!b_positive));
 
-    crypto_bigint::NonZero::new(a).and_then(|a| {
+    NonZero::new(a).and_then(|a| {
       super::encoding::validate_binary_quadratic_form(a, (b_positive, b_abs), &discriminant_abs)
         .map(|(a, b, c)| Self { a: a.get(), b, c, discriminant_abs })
     })

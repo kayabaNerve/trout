@@ -145,7 +145,6 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rug",
- "subtle",
  "zeroize",
 ]
 

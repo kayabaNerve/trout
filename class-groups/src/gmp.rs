@@ -60,7 +60,7 @@ impl GmpElement {
 }
 
 impl crate::Element for GmpElement {
-  fn is_identity(&self) -> subtle::Choice {
+  fn is_identity(&self) -> crypto_bigint::Choice {
     u8::from((self.a == *Integer::ONE) && (self.b == *Integer::ONE)).into()
   }
 
@@ -255,7 +255,7 @@ impl crate::Element for GmpElement {
     let b = (u8::from(!self.b.is_negative()).into(), self.b.to_digits::<u8>(Order::LsfLe));
     let c = self.c.to_digits::<u8>(Order::LsfLe);
 
-    let discriminant = (((self.a.clone() * self.c.clone()) << 2u32) - self.b.clone().square())
+    let discriminant = (self.b.clone().square() - ((self.a.clone() * self.c.clone()) << 2u32))
       .to_digits::<u8>(Order::LsfLe);
 
     (a, b, c, discriminant)
