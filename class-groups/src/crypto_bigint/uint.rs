@@ -134,28 +134,34 @@ where
   }
 
   #[inline(always)]
-  fn from_le_slice(mut bytes: &[u8], max_bits: u32) -> Self {
-    while ((8 * u32::try_from(bytes.len().saturating_sub(1)).unwrap()) >= max_bits) &&
-      bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false)
-    {
-      bytes = &bytes[.. (bytes.len() - 1)];
-    }
+  fn from_le_slice(bytes: &[u8], max_bits: u32) -> Self {
+    assert!(max_bits <= Self::BITS);
 
     let mut fixed_bytes = <Self as Encoding>::Repr::default();
-    fixed_bytes.as_mut()[.. bytes.len()].copy_from_slice(bytes);
+    {
+      let fixed_bytes = fixed_bytes.as_mut();
+      let mutual_len = fixed_bytes.len().min(bytes.len());
+      for b in bytes.iter().skip(mutual_len) {
+        assert!(bool::from(b.ct_eq(&0)));
+      }
+      fixed_bytes[.. mutual_len].copy_from_slice(&bytes[.. mutual_len]);
+    }
 
     Self::from_le_bytes(fixed_bytes)
   }
   #[inline(always)]
-  fn wide_from_le_slice(mut bytes: &[u8], max_bits: u32) -> Self::Wide {
-    while ((8 * u32::try_from(bytes.len().saturating_sub(1)).unwrap()) >= max_bits) &&
-      bytes.last().map(|byte| bool::from(byte.ct_eq(&0))).unwrap_or(false)
-    {
-      bytes = &bytes[.. (bytes.len() - 1)];
-    }
+  fn wide_from_le_slice(bytes: &[u8], max_bits: u32) -> Self::Wide {
+    assert!(max_bits <= Self::Wide::BITS);
 
     let mut fixed_bytes = <Uint<WIDE_LIMBS> as Encoding>::Repr::default();
-    fixed_bytes.as_mut()[.. bytes.len()].copy_from_slice(bytes);
+    {
+      let fixed_bytes = fixed_bytes.as_mut();
+      let mutual_len = fixed_bytes.len().min(bytes.len());
+      for b in bytes.iter().skip(mutual_len) {
+        assert!(bool::from(b.ct_eq(&0)));
+      }
+      fixed_bytes[.. mutual_len].copy_from_slice(&bytes[.. mutual_len]);
+    }
 
     Self::Wide::from_le_bytes(fixed_bytes)
   }

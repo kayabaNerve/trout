@@ -5,7 +5,7 @@ use two_round_ecdsa::{SecurityLevel, Setup, SigningProtocol, Ready};
 #[test]
 fn sign() {
   type ProverElement = class_groups::CryptoBigintElement<
-    crypto_bigint::Uint<{ crypto_bigint::nlimbs(1000u32.div_ceil(2)) }>,
+    crypto_bigint::Uint<{ crypto_bigint::nlimbs(2048u32.div_ceil(2)) }>,
   >;
   type Element = class_groups::MalachiteElement;
   type Primes = two_round_ecdsa::proofs::CryptoPrimesStackCcykc;
