@@ -277,12 +277,13 @@ fn bench_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
 fn malachite_class_group() {
   test_class_group::<crate::MalachiteElement>(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
 }
-#[expect(deprecated)]
 #[test]
 fn crypto_bigint_stack_class_group() {
-  test_class_group::<crate::CryptoBigintStackElement>(&mut rand::rand_core::UnwrapErr(
-    rand::rngs::SysRng,
-  ));
+  test_class_group::<
+    crate::CryptoBigintElement<
+      ::crypto_bigint::Uint<{ crypto_bigint::nlimbs(256u32.div_ceil(2)) }>,
+    >,
+  >(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
 }
 #[test]
 fn crypto_bigint_heap_class_group() {
@@ -291,14 +292,17 @@ fn crypto_bigint_heap_class_group() {
   );
 }
 
-#[expect(deprecated)]
 #[test]
 fn bench() {
   use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
   const SEED: [u8; 32] = [0; 32];
   bench_class_group::<crate::MalachiteElement>(ChaCha20Rng::from_seed(SEED));
-  bench_class_group::<crate::CryptoBigintStackElement>(ChaCha20Rng::from_seed(SEED));
+  bench_class_group::<
+    crate::CryptoBigintElement<
+      ::crypto_bigint::Uint<{ crypto_bigint::nlimbs((2560u32 + 2).div_ceil(2)) }>,
+    >,
+  >(ChaCha20Rng::from_seed(SEED));
   bench_class_group::<crate::CryptoBigintElement<::crypto_bigint::BoxedUint>>(
     ChaCha20Rng::from_seed(SEED),
   );

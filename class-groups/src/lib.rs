@@ -17,8 +17,6 @@ pub use malachite::MalachiteElement;
 
 mod crypto_bigint;
 pub use crypto_bigint::{Error, CryptoBigintElement};
-#[expect(deprecated)]
-pub use crypto_bigint::CryptoBigintStackElement;
 
 mod primes;
 

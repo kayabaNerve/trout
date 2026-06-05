@@ -13,7 +13,7 @@ zeroize = { version = "1", default-features = false, features = ["std", "derive"
 rand = { version = "0.10", default-features = false, features = ["std"] }
 rand_chacha = { version = "0.10", default-features = false, features = ["std"] }
 
-crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "alloc", "subtle"] }
+crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "subtle", "alloc"] }
 crypto-primes = { version = "=0.7.0", default-features = false }
 malachite = { version = "0.9", default-features = false, features = ["naturals_and_integers"] }
 rug = { version = "1", default-features = false, features = ["std", "integer"], optional = true }
@@ -23,7 +23,7 @@ multiexp = { version = "0.4", default-features = false, features = ["std"] }
 ciphersuite = { version = "=0.4.2", git = "https://github.com/serai-dex/serai", rev = "d48325c69b787b37731a97d5707f48c9c3b962a3", default-features = false, features = ["std"] }
 dkg = { git = "https://github.com/serai-dex/serai", rev = "d48325c69b787b37731a97d5707f48c9c3b962a3", default-features = false, features = ["std"] }
 
-class-groups = { path = "../class-groups" }
+class-groups = { path = "../class-groups", default-features = false, features = ["std"] }
 
 blake3 = { version = "1", default-features = false, features = ["std"] }
 
