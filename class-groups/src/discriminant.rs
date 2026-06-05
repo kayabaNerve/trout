@@ -431,11 +431,13 @@ impl
         let mut seed = vec![0; usize::try_from(q_bits).unwrap().div_ceil(8)];
         rng.fill_bytes(&mut seed);
         if (q_bits % 8) != 0 {
-          let high_bit = 1 << ((q_bits % 8) - 1);
+          let high_bit = 1 << ((q_bits % 8).checked_sub(1).unwrap_or(7));
           // Ensure the high bit is set
           seed[0] |= high_bit;
           // Mask off any higher bits
           seed[0] &= (high_bit << 1) - 1;
+        } else {
+          seed[0] |= 1 << 7;
         }
         let q = super::primes::next_prime(
           &mut rng,
@@ -456,7 +458,7 @@ impl
           .max(128),
         );
         let q = natural_from_bytes(q.to_le_bytes().as_ref());
-        debug_assert!((q.significant_bits() - u64::from(q_bits)) < 1);
+        debug_assert_eq!(q.significant_bits(), u64::from(q_bits));
         // p * q is congruent to -1 mod 4
         if ((&p * &q) & Natural::from(3u8)) != 3u8 {
           continue;
