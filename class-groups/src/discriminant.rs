@@ -620,7 +620,7 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
       it's used in a multiplication).
 
       We do not calculate `a * lambda` but solely `a * (lambda & 1)`, as we know `a` generates a
-      2-subgroup of `2 a` with addition. However, as we have `(mu * p) - 1 = lambda * a`, we also
+      `2`-subgroup of `2 a` with addition. However, as we have `(mu * p) - 1 = lambda * a`, we also
       know that the trailing zero bits in `(mu * p) - 1` is equal to the trailing zero bits in
       `lambda * a`. This lets us determine `(lambda & 1) == 0` as
       `trailing_zeroes((mu * p) - 1) > trailing_zeroes(a)`.
@@ -676,9 +676,14 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
 
     /*
       SAFETY:
-      - This form is well-defined (TODO).
-      - This form is primitive (TODO).
-      - This form is reduced as we've explicitly reduced it.
+
+      This form is well-defined (TODO).
+
+      This form is primitive as it has a fundamental discriminant. Per a remark following
+      Definition 5.2.3 of A Course in Computational Algebraic Number Theory by Henri Cohen,
+      any quadratic form of fundamental discriminant is primitive.
+
+      This form is reduced as we've explicitly reduced it.
     */
     let discriminant_bits = usize::try_from(discriminant_bits).unwrap();
     let sqrt_discriminant_bits = usize::try_from(sqrt_discriminant_bits).unwrap();
