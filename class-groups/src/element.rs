@@ -312,7 +312,9 @@ pub trait Element:
   /// RNG to perform primality tests against the prime numbers with though the RNG is not used to
   /// sample potential coefficients for the binary quadratic form and will not impact the result
   /// (except if a primality test fails). `bits_of_security` parameterizes the statistical odds of
-  /// a sampled prime number actually being prime.
+  /// a sampled prime number actually being prime. The provided implementation MAY panic if
+  /// `bits_of_security` causes there to be no recognized configuration for the Miller-Rabin
+  /// primality tests, for the prime numbers considered as candidates.
   #[cfg(feature = "alloc")]
   fn next_prime_ideal_squared(
     mut rng: impl rand::CryptoRng,
@@ -338,7 +340,14 @@ pub trait Element:
     }
 
     let mut i = 0u64;
-    seed = crate::primes::next_prime(&mut rng, seed.to_be_bytes(), bits_of_security);
+    seed = match super::primes::next_prime(&mut rng, seed, bits_of_security) {
+      Ok(seed) => seed,
+      // Set this past `inclusive_end` so the following code wraps it
+      Err(super::primes::Error::Capacity) => inclusive_end.concatenating_add(BoxedUint::one()),
+      Err(super::primes::Error::NoMillerRabin) => {
+        panic!("bits of security effected no Miller-Rabin configuration")
+      }
+    };
     if seed > inclusive_end {
       seed = BoxedUint::from(3u8);
     }
@@ -351,11 +360,17 @@ pub trait Element:
       b_abs.is_none()
     } {
       i += 1;
-      seed = crate::primes::next_prime(
+      seed = match super::primes::next_prime(
         &mut rng,
-        seed.concatenating_add(BoxedUint::one()).to_be_bytes(),
+        seed.concatenating_add(BoxedUint::one()),
         bits_of_security,
-      );
+      ) {
+        Ok(seed) => seed,
+        Err(super::primes::Error::Capacity) => inclusive_end.concatenating_add(BoxedUint::one()),
+        Err(super::primes::Error::NoMillerRabin) => {
+          panic!("bits of security effected no Miller-Rabin configuration")
+        }
+      };
       if seed > inclusive_end {
         seed = BoxedUint::from(3u8);
       }

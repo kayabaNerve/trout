@@ -54,8 +54,9 @@
 
 use rand::CryptoRng;
 use ::crypto_bigint::{
-  Choice, CtOption, CtEq, CtSelect, Zero, One, NonZero, Odd, Limb, Mul, Div, Gcd, NegMod,
-  InvertMod, BitOps, Encoding,
+  Choice, CtOption, CtEq, CtGt, CtSelect, CtAssign, Zero, One, NonZero, Odd, Limb, CheckedAdd,
+  CheckedSub, Mul, ConcatenatingMul, ConcatenatingSquare, Div, Rem, Gcd, NegMod, MulMod, SquareMod,
+  InvertMod, BitOps, Encoding, RandomBits, RandomMod, UnsignedWithMontyForm,
 };
 
 use crate::Element;
@@ -241,13 +242,13 @@ pub trait FundamentalDiscriminant: Discriminant {
   /// This function MAY panic or return an incorrect result if `element` is not of this
   /// discriminant. This function runs in time only variable to the discriminant, the length of the
   /// encoding of `p`, and `E::a_b_c_discriminant` (which may be implemented in constant-time).
-  #[cfg(feature = "alloc")] // TODO no-`alloc`
+  #[cfg(feature = "alloc")] // TODO: no-`alloc`
   #[must_use]
   fn inject<E: Element>(&self, element: impl Element, p: &impl Encoding) -> E
   where
     Self: NegativeDiscriminant,
   {
-    use crypto_bigint::{ConcatenatingMul as _, ConcatenatingSquare as _, Resize as _, BoxedUint};
+    use crypto_bigint::{Resize as _, BoxedUint};
 
     let (a, (b_positive, b_abs), c, discriminant_abs) = element.a_b_c_discriminant();
     assert!(bool::from(le_malleable_eq(self.absolute_value().as_ref(), discriminant_abs.as_ref())));
@@ -328,6 +329,17 @@ pub trait FundamentalDiscriminant: Discriminant {
   }
 }
 
+struct WithoutTrailingZeroBytes<B: AsRef<[u8]>>(B);
+impl<B: AsRef<[u8]>> AsRef<[u8]> for WithoutTrailingZeroBytes<B> {
+  fn as_ref(&self) -> &[u8] {
+    let mut bytes = self.0.as_ref();
+    while bytes.last() == Some(&0) {
+      bytes = &bytes[.. (bytes.len() - 1)];
+    }
+    bytes
+  }
+}
+
 /// A fundamental discriminant as part of the CL15 cryptosystem.
 ///
 /// This is constructed as detailed in "Linearly Homomorphic Encryption from DDH" by
@@ -343,8 +355,9 @@ pub struct Cl15k<Up, Udk> {
 }
 impl<Up, Udk> Discriminant for Cl15k<Up, Udk> {}
 impl<Up, Udk: Encoding> NegativeDiscriminant for Cl15k<Up, Udk> {
+  /// This runs in time variable to the bit-length of the discriminant.
   fn absolute_value(&self) -> impl AsRef<[u8]> {
-    self.absolute_value.to_le_bytes()
+    WithoutTrailingZeroBytes(self.absolute_value.to_le_bytes())
   }
 }
 impl<Up, Udk> OddDiscriminant for Cl15k<Up, Udk> {}
@@ -371,7 +384,7 @@ impl<Up, Udk> Cl15k<Up, Udk> {
 #[derive(Clone)]
 pub struct Cl15p<Up, Up2, Udk, Udp> {
   fundamental: Cl15k<Up, Udk>,
-  p_square: Odd<Up2>,
+  p_square: Up2,
   absolute_value: Udp,
 }
 impl<Up, Up2, Udk, Udp> Discriminant for Cl15p<Up, Up2, Udk, Udp> {}
@@ -392,8 +405,9 @@ impl<Up: BitOps, Up2, Udk: Encoding, Udp: Encoding> NegativeDiscriminant
     self.fundamental.upper_bound_on_order() + self.fundamental.p.as_ref().bits_vartime()
   }
 
+  /// This runs in time variable to the bit-length of the discriminant.
   fn absolute_value(&self) -> impl AsRef<[u8]> {
-    self.absolute_value.to_le_bytes()
+    WithoutTrailingZeroBytes(self.absolute_value.to_le_bytes())
   }
 }
 impl<Up, Up2, Udk, Udp> OddDiscriminant for Cl15p<Up, Up2, Udk, Udp> {}
@@ -410,13 +424,41 @@ pub enum Cl15Error {
   NoQ,
 }
 
-// TODO: Properly generic
-impl
+impl<
+  Up: Clone
+    + AsRef<[Limb]>
+    + AsMut<[Limb]>
+    + CtAssign
+    + Zero
+    + One
+    + NegMod<Output = Up>
+    + MulMod<Output = Up>
+    + SquareMod<Output = Up>
+    + ConcatenatingSquare
+    + BitOps,
+  Udk: Clone
+    + AsRef<[Limb]>
+    + AsMut<[Limb]>
+    + CtGt
+    + One
+    + CheckedAdd
+    + CheckedSub<Udk>
+    + for<'a> Mul<&'a Up, Output = Udk>
+    // TODO: `for<'a> ConcatenatingMul<&'a <Up as ConcatenatingSquare>::Output, Output: 'static>`
+    + ConcatenatingMul<<Up as ConcatenatingSquare>::Output>
+    + for<'a> Div<&'a NonZero<Up>, Output = Udk>
+    + for<'a> Rem<&'a NonZero<Up>, Output = Up>
+    + BitOps
+    + Encoding
+    + RandomBits
+    + RandomMod
+    + UnsignedWithMontyForm,
+>
   Cl15p<
-    crypto_bigint::BoxedUint,
-    crypto_bigint::BoxedUint,
-    crypto_bigint::BoxedUint,
-    crypto_bigint::BoxedUint,
+    Up,
+    <Up as ConcatenatingSquare>::Output,
+    Udk,
+    <Udk as ConcatenatingMul<<Up as ConcatenatingSquare>::Output>>::Output,
   >
 {
   /// Sample a fundamental discriminant as described by the `Gen` algorithm of CL15.
@@ -440,20 +482,33 @@ impl
     mut rng: impl CryptoRng,
     bits_of_security: u32,
     fundamental_discriminant_bit_length: u32,
-    p: impl AsRef<[u8]>,
+    p: Odd<Up>,
   ) -> Result<Self, Cl15Error> {
-    use crypto_bigint::{
-      CheckedSub as _, ConcatenatingMul as _, ConcatenatingSquare as _, Resize as _, BoxedUint,
+    // TODO: https://github.com/RustCrypto/crypto-bigint/1275
+    #[allow(non_snake_case)]
+    let Udk_zero_with_precision = |bits_precision| -> Udk {
+      struct Zero;
+      impl crypto_bigint::rand_core::TryRng for Zero {
+        type Error = crypto_bigint::rand_core::Infallible;
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+          Ok(0)
+        }
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+          Ok(0)
+        }
+        fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+          for b in dst {
+            *b = 0;
+          }
+          Ok(())
+        }
+      }
+      let result = Udk::random_bits_with_precision(&mut Zero, 0, bits_precision);
+      debug_assert!(bool::from(result.is_zero()));
+      result
     };
 
-    let shrink = |n: BoxedUint| {
-      let bits = n.bits_vartime();
-      n.resize(bits)
-    };
-
-    let p = BoxedUint::from_le_bytes(Box::<[u8]>::from(p.as_ref()));
-    let p = Odd::new(shrink(p)).expect("the input `p` is bound to be an odd prime");
-    let mu = p.bits_vartime();
+    let mu = p.as_ref().bits_vartime();
     /*
       $mu = \lfloor log_2(p) \rfloor + 1$, so to check $p \ge 2^{bits_of_security}$, we need to
       check $\floor log_2(p) \rfloor \ge bits_of_security$.
@@ -479,24 +534,64 @@ impl
         The lower bound is `(1 << (fundamental_discriminant_bit_length - 1)) / p`.
         The upper bound is `((1 << fundamental_discriminant_bit_length) - 1) / p`.
       */
-      let mut lower_bound_inclusive =
-        BoxedUint::one_with_precision(fundamental_discriminant_bit_length + 1);
-      lower_bound_inclusive <<= fundamental_discriminant_bit_length - 1;
+      let mut lower_bound_inclusive = Udk_zero_with_precision(fundamental_discriminant_bit_length);
+      lower_bound_inclusive.set_bit(fundamental_discriminant_bit_length - 1, Choice::TRUE);
       debug_assert_eq!(lower_bound_inclusive.bits_vartime(), fundamental_discriminant_bit_length);
-      lower_bound_inclusive /= p.as_nz_ref();
+      lower_bound_inclusive = lower_bound_inclusive / p.as_nz_ref();
 
-      let mut upper_bound_inclusive =
-        BoxedUint::one_with_precision(fundamental_discriminant_bit_length + 1);
-      upper_bound_inclusive <<= fundamental_discriminant_bit_length;
-      upper_bound_inclusive -= BoxedUint::one();
+      let mut upper_bound_inclusive = Udk_zero_with_precision(fundamental_discriminant_bit_length);
+      for bit in 0 .. fundamental_discriminant_bit_length {
+        upper_bound_inclusive.set_bit(bit, Choice::TRUE);
+      }
       debug_assert_eq!(upper_bound_inclusive.bits_vartime(), fundamental_discriminant_bit_length);
-      upper_bound_inclusive /= p.as_nz_ref();
+      upper_bound_inclusive = upper_bound_inclusive / p.as_nz_ref();
 
-      // Require `q > 4 p`
+      // Require `q >= 4 p` (which is not prime, inherently effecting `q > 4 p`)
       {
-        let four_p = p.as_ref().clone().resize(p.bits_precision() + 2) << 2u32;
-        if lower_bound_inclusive <= four_p {
-          lower_bound_inclusive = four_p + BoxedUint::one();
+        let lower_bound_inclusive_lt_4p = {
+          let lower_bound_inclusive = <_ as AsRef<[Limb]>>::as_ref(&lower_bound_inclusive);
+          let p = <_ as AsRef<[Limb]>>::as_ref(&p);
+
+          let mut borrow = Limb::ZERO;
+          let mut carry = Limb::ZERO;
+          /*
+            The virtual length is the greater length between the two numbers, though we assign an
+            extra virtual limb to `p` as `4 p` may require more limbs to represent. The iterators
+            over the numbers' limbs are extended with `0` up to the virtual length.
+          */
+          let virtual_len = lower_bound_inclusive.len().max(1 + p.len());
+          for (lower_bound_inclusive, p) in lower_bound_inclusive
+            .iter()
+            .chain(core::iter::repeat(&Limb::ZERO))
+            .take(virtual_len)
+            .zip(p.iter().chain(core::iter::repeat(&Limb::ZERO)).take(virtual_len))
+          {
+            let four_p = ((*p) << 2) | carry;
+            carry = (*p) >> (Limb::BITS - 2);
+            let _diff_limb;
+            (_diff_limb, borrow) = lower_bound_inclusive.borrowing_sub(four_p, borrow);
+          }
+          debug_assert!(bool::from(carry.is_zero()));
+          !borrow.is_zero()
+        };
+
+        // If `lower_bound_inclusive < 4 p`, set `lower_bound_inclusive = 4 p`
+        if bool::from(lower_bound_inclusive_lt_4p) {
+          if (2 + p.bits_vartime()) > fundamental_discriminant_bit_length {
+            Err(Cl15Error::NoQ)?;
+          }
+          let mut lower_bound_inclusive =
+            <_ as AsMut<[Limb]>>::as_mut(&mut lower_bound_inclusive).iter_mut();
+          let p = <_ as AsRef<[Limb]>>::as_ref(&p);
+          let mut carry = Limb::ZERO;
+          for (lower_bound_inclusive, p) in (&mut lower_bound_inclusive).zip(p) {
+            let four_p = ((*p) << 2) | carry;
+            carry = (*p) >> (Limb::BITS - 2);
+            *lower_bound_inclusive = four_p;
+          }
+          if bool::from(!carry.is_zero()) {
+            *lower_bound_inclusive.next().unwrap() = carry;
+          }
         }
       }
 
@@ -506,46 +601,67 @@ impl
 
           We do this by sampling from `0 ..= (upper_bound_inclusive - lower_bound_inclusive)` to
           ensure this sampling has a reasonable termination bound. This sampling procedure will
-          always terminate if the first sampled byte is `0`, and therefore should terminate within
-          ~256 runs (even in the worst case where all following bits are `0`).
+          always terminate if the last sampled byte is `0`, and therefore should terminate within
+          ~256 runs (even in the worst case where all other bits are `0`).
         */
         let sample_range =
-          Option::<BoxedUint>::from(upper_bound_inclusive.checked_sub(&lower_bound_inclusive))
+          Option::<Udk>::from(upper_bound_inclusive.checked_sub(&lower_bound_inclusive))
             .ok_or(Cl15Error::NoQ)?;
 
-        let mut starting_point_in_range =
-          vec![0; usize::try_from(sample_range.bits_vartime()).unwrap().div_ceil(8)];
-        while BoxedUint::from_be_bytes(starting_point_in_range.clone().into()) > sample_range {
-          rng.fill_bytes(&mut starting_point_in_range);
+        let mut starting_point_in_range = sample_range.to_le_bytes();
+        for b in starting_point_in_range.as_mut() {
+          *b = 0;
         }
-        let starting_point_in_range =
-          BoxedUint::from_be_bytes(starting_point_in_range.clone().into());
+        while {
+          rng.fill_bytes(
+            &mut starting_point_in_range.as_mut()
+              [.. usize::try_from(sample_range.bits_vartime().div_ceil(8)).unwrap()],
+          );
+          bool::from(Udk::from_le_bytes(starting_point_in_range.clone()).ct_gt(&sample_range))
+        } {}
+        let starting_point_in_range = Udk::from_le_bytes(starting_point_in_range);
 
-        let starting_point = lower_bound_inclusive.concatenating_add(starting_point_in_range);
-        starting_point.to_be_bytes().to_vec()
+        lower_bound_inclusive.checked_add(&starting_point_in_range).expect(
+          "result is less than or equal to `upper_bound_inclusive`, which has the same capacity",
+        )
       };
 
-      let mut looped_to_lower_bound = false;
+      let mut lower_bound_inclusive = Some(lower_bound_inclusive);
       loop {
-        let q = super::primes::next_prime(&mut rng, seed, bits_of_security);
-
-        // If this `q` isn't selected, set the seed to `q + 1`
-        seed = shrink(q.concatenating_add(BoxedUint::one())).to_be_bytes().to_vec();
-
-        // If this `q` is too big, loop around to the smallest candidate and try again
-        if q > upper_bound_inclusive {
-          // If we've done this before, there are no numbers satisfying `q`
-          if looped_to_lower_bound {
-            Err(Cl15Error::NoQ)?;
+        let q = match super::primes::next_prime(&mut rng, seed.clone(), bits_of_security) {
+          Ok(q) => q,
+          // If the next `q` would be too big, loop around to the smallest candidate
+          Err(super::primes::Error::Capacity) => {
+            // If we've looped multiple times, there are no numbers satisfying `q`
+            seed = lower_bound_inclusive.take().ok_or(Cl15Error::NoQ)?;
+            continue;
           }
+          // While there may be a `q`, we are unable to find it with the requirements given to us
+          Err(super::primes::Error::NoMillerRabin) => Err(Cl15Error::NoQ)?,
+        };
 
-          seed = lower_bound_inclusive.to_be_bytes().to_vec();
-          looped_to_lower_bound = true;
-
+        if bool::from(q.ct_gt(&upper_bound_inclusive)) {
+          seed = lower_bound_inclusive.take().ok_or(Cl15Error::NoQ)?;
           continue;
         }
 
-        // Our fundamental discriminant must be congruent to $0$ or $3 \mod 4$, here the latter
+        // In case this `q` isn't selected, advance the seed to `q + 1`
+        seed = match Option::<Udk>::from(q.checked_add(&Udk::one())) {
+          Some(q_plus_one) => q_plus_one,
+          // This `q` is within bounds but the next seed loops around to the lower bound
+          None => lower_bound_inclusive.take().ok_or(Cl15Error::NoQ)?,
+        };
+
+        /*
+          Discriminants must be congruent to $0$ or $3 \mod 4$, here the latter.
+
+          We only take the product of the very first limb, effectively reducing `p, q` by
+          $2^{Limb::BITS}$, as we only need what the result is congruent to $\mod 4$. This is
+          reduction preserves the desired congruency so long as `Limb::BITS >= 2`.
+        */
+        const {
+          assert!(Limb::BITS >= 2);
+        }
         if {
           let product =
             <_ as AsRef<[Limb]>>::as_ref(&p)[0].wrapping_mul(<_ as AsRef<[Limb]>>::as_ref(&q)[0]);
@@ -567,26 +683,28 @@ impl
           With this in mind, we actually check $q$ is a quadratic non-residue modulo $p$ as $p$ is
           a smaller number and therefore offers faster arithmetic to perform the check with.
         */
-        if crate::crypto_bigint::legendre_symbol(q.clone(), &p) !=
-          ::crypto_bigint::JacobiSymbol::MinusOne
-        {
+        if {
+          let q_mod_p = q.clone().rem(p.as_nz_ref());
+          crate::crypto_bigint::legendre_symbol(q_mod_p, &p) !=
+            ::crypto_bigint::JacobiSymbol::MinusOne
+        } {
           continue;
         }
+
         break q;
       }
     };
 
-    let fundamental_discriminant_absolute_value = shrink(q.concatenating_mul(p.as_ref()));
+    let fundamental_discriminant_absolute_value = q.mul(p.as_ref());
     debug_assert_eq!(
       fundamental_discriminant_absolute_value.bits_vartime(),
       fundamental_discriminant_bit_length
     );
 
-    let p_square = Odd::new(shrink(p.as_ref().concatenating_square()))
-      .expect("the square of an odd number is odd");
+    let p_square = p.as_ref().concatenating_square();
 
     let non_fundamental_discriminant_absolute_value =
-      shrink(fundamental_discriminant_absolute_value.concatenating_mul(p_square.as_ref()));
+      fundamental_discriminant_absolute_value.concatenating_mul(p_square.clone());
 
     Ok(Cl15p {
       fundamental: Cl15k { p, absolute_value: fundamental_discriminant_absolute_value },
@@ -608,6 +726,8 @@ impl<Up: Encoding, Up2: Encoding, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: En
   Cl15p<Up, Up2, Udk, Udp>
 {
   /// The element of `p`-order with an easy discrete-log problem.
+  ///
+  /// This runs in time variable to the bit-length of the discriminant.
   #[must_use]
   pub fn f<E: Element>(&self) -> E {
     /*
@@ -640,6 +760,26 @@ impl<Up: Encoding, Up2: Encoding, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: En
       c
     };
 
+    let discriminant_abs = WithoutTrailingZeroBytes(self.absolute_value.to_le_bytes());
+    let discriminant_abs = discriminant_abs.as_ref();
+    let discriminant_bytes = discriminant_abs.len();
+    // This is a lossy approximation
+    let sqrt_discriminant_bytes = discriminant_bytes.div_ceil(2);
+
+    // We bound the encodings of `a, b, c` based on the discriminant
+    let a = self.p_square.to_le_bytes();
+    let a = a.as_ref();
+    let a = &a[.. sqrt_discriminant_bytes.min(a.len())];
+
+    let b_positive = Choice::TRUE;
+    let b_abs = self.fundamental.p.to_le_bytes();
+    let b_abs = b_abs.as_ref();
+    let b_abs = &b_abs[.. sqrt_discriminant_bytes.min(b_abs.len())];
+
+    let c = c.to_le_bytes();
+    let c = c.as_ref();
+    let c = &c[.. discriminant_bytes.min(c.len())];
+
     /*
       SAFETY:
 
@@ -654,14 +794,7 @@ impl<Up: Encoding, Up2: Encoding, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: En
       we require $q > 4 p$ during our setup, where this discriminant is of form $q p^3$. Therefore,
       $p^2 < sqrt(|delta| / 4)$.
     */
-    unsafe {
-      E::from_coefficients(
-        self.p_square.to_le_bytes(),
-        (Choice::TRUE, self.fundamental.p.to_le_bytes()),
-        c.to_le_bytes(),
-        self.absolute_value.to_le_bytes(),
-      )
-    }
+    unsafe { E::from_coefficients(a, (b_positive, b_abs), c, discriminant_abs) }
   }
 }
 
@@ -701,7 +834,7 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
   #[cfg(feature = "alloc")] // TODO: no-`alloc`
   #[must_use]
   pub fn surject<E: Element>(&self, element: impl Element) -> E {
-    use crypto_bigint::{CtGt as _, ConcatenatingMul as _, Resize as _, BoxedUint};
+    use crypto_bigint::{Resize as _, BoxedUint};
 
     let (a, (b_positive, b_abs), c, discriminant_abs) = element.a_b_c_discriminant();
     assert!(bool::from(le_malleable_eq(self.absolute_value().as_ref(), discriminant_abs.as_ref())));
@@ -873,8 +1006,7 @@ impl<
 
     let correct_discriminant =
       le_malleable_eq(self.absolute_value.to_le_bytes().as_ref(), discriminant_abs.as_ref());
-    let correct_a_coefficient =
-      le_malleable_eq(self.p_square.as_ref().to_le_bytes().as_ref(), a.as_ref());
+    let correct_a_coefficient = le_malleable_eq(self.p_square.to_le_bytes().as_ref(), a.as_ref());
 
     let b_abs = b_abs.as_ref();
 
