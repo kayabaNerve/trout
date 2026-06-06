@@ -136,6 +136,7 @@ fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
 /// This function assumes $|delta| \cong 1 \mod 2$, `a_bits = floor(log_2(a)) + 1`, and
 /// `b_bits_bound >= floor(log_2(|b|)) + 1` when `b_lte_a == false`. This function will update
 /// `b_lte_a`, but may inaccurately set it to `true` upon reaching the final necessary iteration.
+/// This function also assumes `b_bits_bound > 0` and may be incorrect or panic in that case.
 #[inline(always)]
 fn should_reduce_to_next_bit_except_final(
   b: (&mut Choice, &mut UintRef),
@@ -176,7 +177,7 @@ fn should_reduce_to_next_bit_except_final(
     result that no further reduction should occur.
   */
   b_gt_a &
-    Choice::from(u8::from(b.1.bit_vartime(b_bits_bound.saturating_sub(1))))
+    Choice::from(u8::from(b.1.bit_vartime(b_bits_bound.wrapping_sub(1))))
       .ct_eq(&!b_needs_negation)
 }
 
@@ -250,6 +251,10 @@ fn reduce_to_next_bit<L: Limbs>(
     debug_assert!(bool::from(a.bits().ct_lt(&c.bits()) | a.bits().ct_eq(&c.bits())));
     debug_assert!(limbs <= <_ as AsRef::<[Limb]>>::as_ref(a).len());
     debug_assert!(limbs <= <_ as AsRef::<[Limb]>>::as_ref(&b.1).len());
+    debug_assert!(bool::from((!should_reduce) | UintRef::new(a.as_ref()).ct_lt(b.1)));
+    debug_assert!(bool::from((!should_reduce) | a_bits.ct_eq(&a.bits())));
+    debug_assert!(bool::from((*b_needs_negation) | (!should_reduce) | b_bits.ct_eq(&b.1.bits())));
+    debug_assert!(bool::from((!should_reduce) | b_bits.ct_lt(&b.1.bits_precision())));
   }
 
   // Calculate `m` (the body of step 3's branch, step 4)
@@ -517,21 +522,6 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
     let mut b_needs_negation = Choice::FALSE;
 
     let mut limbs = original_limbs;
-    /*
-      `reduce_to_next_bit` is documented to need limbs corresponding to one extra bit, which is
-      as `floor(log_2(|b|)) + 1 == floor(log_2(a)) + 1` is a possible input and the function must
-      then calculate `2 m a`.
-
-      We provide one additional bit here as for a value `|b| <= a`, this will only be noticed on
-      the iteration _after_ the condition becomes true, so we need to defer when we move to the
-      smaller amount of limbs until after this later iteration.
-    */
-    #[expect(clippy::as_conversions, clippy::cast_possible_truncation)]
-    const DECREASE_LIMBS_AT: u16 = 2 + (Limb::BITS as u16);
-    #[expect(clippy::as_conversions)]
-    const {
-      assert!(((DECREASE_LIMBS_AT - 2) as u32) == Limb::BITS);
-    }
 
     // `RangeInclusive` doesn't implement `FixedSizeIterator`, so we use a `Range` instead
     #[expect(clippy::range_plus_one)]
@@ -540,10 +530,21 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
     let mut a_bits = a.bits();
     let mut c_bits = c.bits();
 
-    // Handle the partial limb we inherently have by the bound not perfectly aligning to limbs
+    /*
+      Handle the partial limb we may inherently have by the bound not necessarily perfectly
+      aligning to limbs, and two more bits.
+
+      `reduce_to_next_bit` is documented to need limbs corresponding to one extra bit, which is
+      as `floor(log_2(|b|)) + 1 == floor(log_2(a)) + 1` is a possible input and the function must
+      then calculate `2 m a`.
+
+      We provide one additional bit here as for a value `|b| <= a`, this will only be noticed on
+      the iteration _after_ the condition becomes true, so we need to defer when we move to the
+      smaller amount of limbs until after this later iteration.
+    */
     {
-      let progress_in_limb = u16::try_from(Limb::BITS - (log_2_bound % Limb::BITS)).unwrap();
-      for bits in (&mut bits).take(usize::from(DECREASE_LIMBS_AT - progress_in_limb)) {
+      let progress_in_partial_limb = usize::try_from(log_2_bound % Limb::BITS).unwrap();
+      for bits in (&mut bits).take(2 + progress_in_partial_limb) {
         approximate_a_lte_c((&mut a_bits, &mut a), b_sign, (&mut c_bits, &mut c));
         let should_reduce = should_reduce_to_next_bit_except_final(
           (b_sign, b_value),
@@ -562,6 +563,9 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
           a_bits,
           bits,
         );
+        debug_assert!(bool::from(
+          b_needs_negation | (!should_reduce) | b_value.bits().ct_lt(&bits)
+        ));
         c_bits = c.bits();
       }
 
@@ -569,8 +573,11 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
       negate_b((b_sign, b_value), b_needs_negation);
       b_needs_negation = Choice::FALSE;
 
-      limbs -= 1;
-      b_value = b_value.leading_mut(limbs);
+      // Only decrement the amount of `limbs` if we did actually have a partial limb
+      if progress_in_partial_limb != 0 {
+        limbs -= 1;
+        b_value = b_value.leading_mut(limbs);
+      }
     }
 
     /*
@@ -590,13 +597,16 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 
       and place a branch within every single loop body. This achieves a straight-line, other than
       the loops' conditionals themselves (which the compiler appears to handle better, possibly as
-      we may use the constant `DECREASE_LIMBS_AT` for how many steps this inner loop takes).
+      we may use the constant `Limb::BITS` for how many steps this inner loop takes).
 
       `bits.len() != 0` is used as `bits.is_empty()` (`FixedSizeIterator::is_empty`) is
       experimental.
     */
     while bits.len() != 0 {
-      for bits in (&mut bits).take(usize::from(DECREASE_LIMBS_AT)) {
+      debug_assert_ne!(limbs, 0);
+
+      #[expect(clippy::as_conversions)]
+      for bits in (&mut bits).take(const { Limb::BITS as usize }) {
         approximate_a_lte_c((&mut a_bits, &mut a), b_sign, (&mut c_bits, &mut c));
         let should_reduce = should_reduce_to_next_bit_except_final(
           (b_sign, b_value),
@@ -615,6 +625,9 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
           a_bits,
           bits,
         );
+        debug_assert!(bool::from(
+          b_needs_negation | (!should_reduce) | b_value.bits().ct_lt(&bits)
+        ));
         c_bits = c.bits();
       }
 
