@@ -330,6 +330,23 @@ impl<U: Limbs> CryptoBigintElement<U> {
   }
 }
 
+// SAFETY: This reduces the form before yielding it and does return a well-defined form as
+// required.
+unsafe impl<U: Limbs> crate::Coefficients for CryptoBigintElement<U> {
+  /// This function runs in constant time.
+  fn a_b_c_discriminant(
+    self,
+  ) -> (impl AsRef<[u8]>, (Choice, impl AsRef<[u8]>), impl AsRef<[u8]>, impl AsRef<[u8]>) {
+    let reduced = self.reduce();
+    (
+      reduced.a.to_le_bytes(),
+      (reduced.b.0, reduced.b.1.to_le_bytes()),
+      U::wide_to_le_bytes(reduced.c),
+      U::wide_to_le_bytes(reduced.discriminant_abs),
+    )
+  }
+}
+
 impl<U: Limbs> Element for CryptoBigintElement<U> {
   /// This is only valid for forms of negative odd discriminant.
   fn identity(discriminant_abs: impl AsRef<[u8]>) -> Self {
@@ -390,21 +407,6 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
       other.c.clone(),
     );
     Self::partial_reduce(a3, b3, self.discriminant_abs.clone())
-  }
-
-  /// This function runs in constant time.
-  // SAFETY: This reduces the form before yielding it and does return a well-defined form as
-  // required.
-  unsafe fn a_b_c_discriminant(
-    self,
-  ) -> (impl AsRef<[u8]>, (Choice, impl AsRef<[u8]>), impl AsRef<[u8]>, impl AsRef<[u8]>) {
-    let reduced = self.reduce();
-    (
-      reduced.a.to_le_bytes(),
-      (reduced.b.0, reduced.b.1.to_le_bytes()),
-      U::wide_to_le_bytes(reduced.c),
-      U::wide_to_le_bytes(reduced.discriminant_abs),
-    )
   }
 
   /// This function is only valid for primitive reduced positive definite binary quadratic forms of
@@ -543,10 +545,7 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
 }
 
 // TODO
-impl<U: Limbs> crate::ElementExt for CryptoBigintElement<U>
-where
-  Self: Element,
-{
+impl<U: Limbs> crate::ElementExt for CryptoBigintElement<U> {
   const MAX_TABLE_BITS: u32 = 12;
 
   /// This is only correct when `identity` is in fact the identity element for the class group the

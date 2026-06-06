@@ -115,6 +115,30 @@ impl MalachiteElement {
   }
 }
 
+// SAFETY: This always reduces forms and does return a well-defined form as required.
+unsafe impl crate::Coefficients for MalachiteElement {
+  fn a_b_c_discriminant(
+    self,
+  ) -> (
+    impl AsRef<[u8]>,
+    (crypto_bigint::Choice, impl AsRef<[u8]>),
+    impl AsRef<[u8]>,
+    impl AsRef<[u8]>,
+  ) {
+    let a = natural_to_bytes(self.a.unsigned_abs_ref());
+    let b = (
+      u8::from(self.b.sign() != Ordering::Less).into(),
+      natural_to_bytes(self.b.unsigned_abs_ref()),
+    );
+    let c = natural_to_bytes(self.c.unsigned_abs_ref());
+
+    let discriminant = self.b.clone().square() - ((self.a.clone() * self.c.clone()) << 2u32);
+    let discriminant = natural_to_bytes(discriminant.unsigned_abs_ref());
+
+    (a, b, c, discriminant)
+  }
+}
+
 impl crate::Element for MalachiteElement {
   fn identity(discriminant_abs: impl AsRef<[u8]>) -> Self {
     let discriminant_abs = discriminant_abs.as_ref();
@@ -265,28 +289,6 @@ impl crate::Element for MalachiteElement {
 
   fn sub(&self, other: MalachiteElement) -> MalachiteElement {
     self.add(&-other)
-  }
-
-  // SAFETY: This always reduces forms and does return a well-defined form as required.
-  unsafe fn a_b_c_discriminant(
-    self,
-  ) -> (
-    impl AsRef<[u8]>,
-    (crypto_bigint::Choice, impl AsRef<[u8]>),
-    impl AsRef<[u8]>,
-    impl AsRef<[u8]>,
-  ) {
-    let a = natural_to_bytes(self.a.unsigned_abs_ref());
-    let b = (
-      u8::from(self.b.sign() != Ordering::Less).into(),
-      natural_to_bytes(self.b.unsigned_abs_ref()),
-    );
-    let c = natural_to_bytes(self.c.unsigned_abs_ref());
-
-    let discriminant = self.b.clone().square() - ((self.a.clone() * self.c.clone()) << 2u32);
-    let discriminant = natural_to_bytes(discriminant.unsigned_abs_ref());
-
-    (a, b, c, discriminant)
   }
 
   unsafe fn from_coefficients(

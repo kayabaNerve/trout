@@ -7,10 +7,10 @@
 extern crate alloc;
 
 mod element;
-pub use element::*;
+pub use element::{Coefficients, Element};
 
 mod table;
-pub use table::*;
+pub use table::{Table, ElementExt};
 
 mod malachite;
 pub use malachite::MalachiteElement;
@@ -24,4 +24,7 @@ mod class_group;
 pub use class_group::ClassGroup;
 
 mod discriminant;
-pub use discriminant::*;
+pub use discriminant::{
+  Discriminant, NegativeDiscriminant, OddDiscriminant, FundamentalDiscriminant, Cl15Error, Cl15k,
+  Cl15p,
+};

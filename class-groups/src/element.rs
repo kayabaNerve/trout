@@ -1,7 +1,28 @@
-use core::ops::Neg;
+use core::{fmt::Debug, ops::Neg};
 use std::io;
 
 use crypto_bigint::{Choice, CtOption};
+
+/// A primitive positive definite binary quadratic form of negative odd discriminant (not
+/// necessarily fundamental) with `a, b, c` coefficients.
+///
+/// # Safety
+///
+/// Implementations MUST return well-defined coefficients for a primitive _reduced_ positive
+/// definite binary quadratic form of a negative odd discriminant (the one whose value is
+/// yielded). It is undefined behavior to not do so.
+pub unsafe trait Coefficients {
+  /// Fetch the `a, b, c` coefficients of the single reduced form equivalent to this form and the
+  /// absolute value of its negative discriminant.
+  ///
+  /// The coefficients and absolute value of the discriminant are little-endian encoded.
+  /// `b` is represented by a sign bit, if `b` is positive (greater than or equal to zero), and the
+  /// encoding of its absolute value. Values MAY have trailing zeroes.
+  #[expect(clippy::type_complexity)]
+  fn a_b_c_discriminant(
+    self,
+  ) -> (impl AsRef<[u8]>, (Choice, impl AsRef<[u8]>), impl AsRef<[u8]>, impl AsRef<[u8]>);
+}
 
 /// An binary quadratic form corresponding to an element of a class group.
 ///
@@ -24,7 +45,7 @@ use crypto_bigint::{Choice, CtOption};
 ///
 /// Implementations of this trait MAY run in variable time.
 pub trait Element:
-  Sized + Send + Sync + Clone + Neg<Output = Self> + PartialEq + Eq + core::fmt::Debug
+  Sized + Send + Sync + Clone + PartialEq + Eq + Debug + Neg<Output = Self> + Coefficients
 {
   /// The identity element.
   ///
@@ -48,24 +69,6 @@ pub trait Element:
   /// Subtract one element from another.
   #[must_use]
   fn sub(&self, other: Self) -> Self;
-
-  /// Fetch the `a, b, c` coefficients of the single reduced form equivalent to this form and the
-  /// absolute value of its discriminant.
-  ///
-  /// The coefficients and absolute value of the discriminant are little-endian encoded.
-  /// `b` is represented by a sign bit, if `b` is positive (greater than or equal to zero), and the
-  /// encoding of its absolute value. Values MAY have trailing zeroes.
-  ///
-  /// # Safety
-  ///
-  /// Implementations MUST return well-defined coefficients for a primitive _reduced_ positive
-  /// definite binary quadratic form of a negative odd discriminant (the one whose value is
-  /// yielded). It is undefined behavior to not do so, hence this being marked `unsafe`. It is only
-  /// unsafe to _implement_. It MUST NOT be unsafe to _call_.
-  #[expect(clippy::type_complexity)]
-  unsafe fn a_b_c_discriminant(
-    self,
-  ) -> (impl AsRef<[u8]>, (Choice, impl AsRef<[u8]>), impl AsRef<[u8]>, impl AsRef<[u8]>);
 
   /// Load a form from its coefficients.
   ///
@@ -105,8 +108,7 @@ pub trait Element:
   fn compress(self, mut writer: impl io::Write) -> io::Result<()> {
     use crypto_bigint::{NonZero, BoxedUint};
 
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, (b_positive, b_abs), _c, discriminant_abs) = unsafe { self.a_b_c_discriminant() };
+    let (a, (b_positive, b_abs), _c, discriminant_abs) = self.a_b_c_discriminant();
     let a = a.as_ref();
     let b_abs = b_abs.as_ref();
     let discriminant_abs = discriminant_abs.as_ref();
@@ -203,8 +205,7 @@ pub trait Element:
 
   /// Create an element of this type from another element.
   fn from(source: impl Element) -> Self {
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, b, c, discriminant) = unsafe { source.a_b_c_discriminant() };
+    let (a, b, c, discriminant) = source.a_b_c_discriminant();
     /*
       SAFETY: These coefficients must be well-defined for this to be safe,
       and `a_b_c_discriminant` is bounded to return well-defined coefficients.

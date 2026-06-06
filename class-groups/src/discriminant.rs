@@ -249,8 +249,7 @@ pub trait FundamentalDiscriminant: Discriminant {
   {
     use crypto_bigint::{ConcatenatingMul as _, ConcatenatingSquare as _, Resize as _, BoxedUint};
 
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, (b_positive, b_abs), c, discriminant_abs) = unsafe { element.a_b_c_discriminant() };
+    let (a, (b_positive, b_abs), c, discriminant_abs) = element.a_b_c_discriminant();
     assert!(bool::from(le_malleable_eq(self.absolute_value().as_ref(), discriminant_abs.as_ref())));
 
     // This is only vartime with regards to the length of the encoding
@@ -704,8 +703,7 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
   pub fn surject<E: Element>(&self, element: impl Element) -> E {
     use crypto_bigint::{CtGt as _, ConcatenatingMul as _, Resize as _, BoxedUint};
 
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, (b_positive, b_abs), c, discriminant_abs) = unsafe { element.a_b_c_discriminant() };
+    let (a, (b_positive, b_abs), c, discriminant_abs) = element.a_b_c_discriminant();
     assert!(bool::from(le_malleable_eq(self.absolute_value().as_ref(), discriminant_abs.as_ref())));
 
     // This is only vartime with regards to the length of the encoding
@@ -871,8 +869,7 @@ impl<
   #[must_use]
   pub fn discrete_logarithm(&self, element: impl Element) -> CtOption<Up> {
     let identity = element.is_identity();
-    // SAFETY: `a_b_c_discriminant` is always safe to call
-    let (a, (b_positive, b_abs), _c, discriminant_abs) = unsafe { element.a_b_c_discriminant() };
+    let (a, (b_positive, b_abs), _c, discriminant_abs) = element.a_b_c_discriminant();
 
     let correct_discriminant =
       le_malleable_eq(self.absolute_value.to_le_bytes().as_ref(), discriminant_abs.as_ref());
