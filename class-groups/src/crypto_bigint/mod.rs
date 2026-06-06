@@ -25,5 +25,4 @@ mod encoding;
 pub use encoding::*;
 
 mod sqrt;
-#[expect(unused)]
 pub(crate) use sqrt::{legendre_symbol, sqrt_mod_p_vartime};

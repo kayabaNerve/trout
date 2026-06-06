@@ -167,9 +167,13 @@ pub trait Discriminant {}
 pub trait NegativeDiscriminant: Discriminant {
   /// An upper bound on the order of the class group with this discriminant.
   ///
-  /// This function runs in variable time. This MAY panic if this discriminant is ill-defined or
-  /// absurdly large. This returns `k` such that $2^k$ is greater than or equal to the order (class
-  /// number) of this group.
+  /// This returns `k` such that $2^k$ is greater than or equal to the order (class
+  /// number) of this group. The returned `k` is not required to be minimal or calculated by any
+  /// specific formula, so long as $2^k$ is greater than or equal to a proven bound on the order of
+  /// this group.
+  ///
+  /// The provided implementation runs in variable time. The provided implementation MAY panic if
+  /// this discriminant is ill-defined or absurdly large.
   fn upper_bound_on_order(&self) -> u32 {
     /*
       Per Section 5.10.1 of A Course in Computational Algebraic Number Theory by Henri Cohen, for
@@ -390,6 +394,18 @@ impl<Up: BitOps, Up2, Udk: Encoding, Udp: Encoding> NegativeDiscriminant
 }
 impl<Up, Up2, Udk, Udp> OddDiscriminant for Cl15p<Up, Up2, Udk, Udp> {}
 
+/// An error when sampling discriminants for the CL15 cryptosystem.
+#[derive(Debug)]
+pub enum Cl15Error {
+  /// The odd prime `p` was too small.
+  SmallP,
+  /// There were no candidates for the odd prime `q`.
+  ///
+  /// In effect, this means the fundamental discriminant was too small with regards to the
+  /// specified odd prime `p`.
+  NoQ,
+}
+
 // TODO: Properly generic
 impl
   Cl15p<
@@ -399,96 +415,177 @@ impl
     crypto_bigint::BoxedUint,
   >
 {
-  /// Sample a fundamental discriminant as described by the CL15 cryptosystem.
-  // TODO: Result
+  /// Sample a fundamental discriminant as described by the `Gen` algorithm of CL15.
+  ///
+  /// This function runs in variable time.
+  ///
+  /// `bits_of_security` DOES NOT correspond to the hardness of finding the order of the resulting
+  /// group. `bits_of_security` is used to configure the primality tests and for the requirement
+  /// $p > 2^{bits_of_security}$, as (loosely) required for a $2^{-bits_of_security}$ likelihood
+  /// the that unknown order is divisible by `p` (a requirement of the cryptosystem). The relation
+  /// of `bits_of_security` to `fundamental_discriminant_bit_length` is completely unchecked.
+  ///
+  /// `fundamental_discriminant_bit_length` will the bit-length of the fundamental discriminant.
+  /// `1827` is SUGGESTED as the bit-length of the fundamental discriminant for 128-bit security.
+  /// Please review <https://eprint.iacr.org/2020/196> for context on choices.
+  ///
+  /// `p` MUST be an odd prime and is specified by its little-endian encoding. It is undefined
+  /// behavior to specify a `p` which is not actually an odd prime.
+  // TODO: `OddPrime` which is `unsafe` to construct then this which is safe?
   pub fn sample(
     mut rng: impl CryptoRng,
-    lambda: u64,
-    p_le_bytes: impl AsRef<[u8]>,
-  ) -> Option<Self> {
-    // TODO: Remove malachite
-    use ::malachite::{
-      base::num::{arithmetic::traits::*, logic::traits::*},
-      *,
+    bits_of_security: u32,
+    fundamental_discriminant_bit_length: u32,
+    p: impl AsRef<[u8]>,
+  ) -> Result<Self, Cl15Error> {
+    use crypto_bigint::{CheckedSub, ConcatenatingMul, ConcatenatingSquare, Resize, BoxedUint};
+
+    let shrink = |n: BoxedUint| {
+      let bits = n.bits_vartime();
+      n.resize(bits)
     };
-    use crate::malachite::{natural_from_bytes, natural_to_bytes};
-    use crypto_bigint::BoxedUint;
 
-    let p = natural_from_bytes(p_le_bytes.as_ref());
+    let p = BoxedUint::from_le_bytes(Box::<[u8]>::from(p.as_ref()));
+    let p = Odd::new(shrink(p)).expect("the input `p` is bound to be an odd prime");
+    let mu = p.bits_vartime();
+    /*
+      $mu = \lfloor log_2(p) \rfloor + 1$, so to check $p \ge 2^{bits_of_security}$, we need to
+      check $\floor log_2(p) \rfloor \ge bits_of_security$.
 
-    let mu = p.significant_bits();
-
-    // Step 1
-    if lambda < (mu + 2) {
-      None?;
+      As cited in Linearly Homomorphic Encryption from DDH, Conjecture 5.10.1 (Cohen-Lenstra) of
+      A Course in Computational Algebraic Number Theory establishes the probability an odd prime
+      divides the order as $1 - \prod_{1 \le k \le \inf} (1 - p^{-k})$. It's clear that each
+      factor is less than one and therefore the product gets smaller and smaller. For simplicity,
+      we limit the expression to solely $k = 1$ and consider solely $1 - (1 - p^{-1})$ which is
+      equal to probability $1 / p$. In this case, it's clear how requiring the odd prime $p$ to be
+      greater than $2^{bits_of_security}$ is sufficient to achieve this goal. While a tighter bound
+      is possible, we do not bother here.
+    */
+    if (mu - 1) < bits_of_security {
+      Err(Cl15Error::SmallP)?;
     }
 
-    // Step 2
     let q = {
-      let q_bits = (2 * lambda) - mu;
-      let q_bits = u32::try_from(q_bits).unwrap();
-      loop {
-        let mut seed = vec![0; usize::try_from(q_bits).unwrap().div_ceil(8)];
-        rng.fill_bytes(&mut seed);
-        if (q_bits % 8) != 0 {
-          let high_bit = 1 << ((q_bits % 8).checked_sub(1).unwrap_or(7));
-          // Ensure the high bit is set
-          seed[0] |= high_bit;
-          // Mask off any higher bits
-          seed[0] &= (high_bit << 1) - 1;
-        } else {
-          seed[0] |= 1 << 7;
-        }
-        let q = super::primes::next_prime(
-          &mut rng,
-          seed,
-          ({
-            let kappa = u32::try_from((8 * p_le_bytes.as_ref().len()) / 2).unwrap();
-            let mut closest_power_of_two = 1u32;
-            while (2 * closest_power_of_two) < kappa {
-              closest_power_of_two <<= 1;
-            }
+      /*
+        Find the lowest, highest numbers `q` could be while still effecting the desired bit-length
+        of the fundamental_discriminant.
 
-            // $closest_power_of_two < kappa \le (2 * closest_power_of_two)$
-            if kappa.abs_diff(closest_power_of_two) >= kappa.abs_diff(closest_power_of_two << 1) {
-              closest_power_of_two <<= 1;
-            }
-            closest_power_of_two
-          })
-          .max(128),
-        );
-        let q = natural_from_bytes(q.to_le_bytes().as_ref());
-        debug_assert_eq!(q.significant_bits(), u64::from(q_bits));
-        // p * q is congruent to -1 mod 4
-        if ((&p * &q) & Natural::from(3u8)) != 3u8 {
+        The lower bound is `(1 << (fundamental_discriminant_bit_length - 1)) / p`.
+        The upper bound is `((1 << fundamental_discriminant_bit_length) - 1) / p`.
+      */
+      let mut lower_bound_inclusive =
+        BoxedUint::one_with_precision(fundamental_discriminant_bit_length + 1);
+      lower_bound_inclusive <<= fundamental_discriminant_bit_length - 1;
+      debug_assert_eq!(lower_bound_inclusive.bits_vartime(), fundamental_discriminant_bit_length);
+      lower_bound_inclusive /= p.as_nz_ref();
+
+      let mut upper_bound_inclusive =
+        BoxedUint::one_with_precision(fundamental_discriminant_bit_length + 1);
+      upper_bound_inclusive <<= fundamental_discriminant_bit_length;
+      upper_bound_inclusive -= BoxedUint::one();
+      debug_assert_eq!(upper_bound_inclusive.bits_vartime(), fundamental_discriminant_bit_length);
+      upper_bound_inclusive /= p.as_nz_ref();
+
+      // Require `q > 4 p`
+      {
+        let four_p = p.as_ref().clone().resize(p.bits_precision() + 2) << 2u32;
+        if lower_bound_inclusive <= four_p {
+          lower_bound_inclusive = four_p + BoxedUint::one();
+        }
+      }
+
+      let mut seed = {
+        /*
+          Sample a starting point for `q` within `lower_bound_inclusive ..= upper_bound_inclusive`.
+
+          We do this by sampling from `0 ..= (upper_bound_inclusive - lower_bound_inclusive)` to
+          ensure this sampling has a reasonable termination bound. This sampling procedure will
+          always terminate if the first sampled byte is `0`, and therefore should terminate within
+          ~256 runs (even in the worst case where all following bits are `0`).
+        */
+        let sample_range =
+          Option::<BoxedUint>::from(upper_bound_inclusive.checked_sub(&lower_bound_inclusive))
+            .ok_or(Cl15Error::NoQ)?;
+
+        let mut starting_point_in_range =
+          vec![0; usize::try_from(sample_range.bits_vartime()).unwrap().div_ceil(8)];
+        while BoxedUint::from_be_bytes(starting_point_in_range.clone().into()) > sample_range {
+          rng.fill_bytes(&mut starting_point_in_range);
+        }
+        let starting_point_in_range =
+          BoxedUint::from_be_bytes(starting_point_in_range.clone().into());
+
+        let starting_point = lower_bound_inclusive.concatenating_add(starting_point_in_range);
+        starting_point.to_be_bytes().to_vec()
+      };
+
+      let mut looped_to_lower_bound = false;
+      loop {
+        let q = super::primes::next_prime(&mut rng, seed, bits_of_security);
+
+        // If this `q` isn't selected, set the seed to `q + 1`
+        seed = shrink(q.concatenating_add(BoxedUint::one())).to_be_bytes().to_vec();
+
+        // If this `q` is too big, loop around to the smallest candidate and try again
+        if q > upper_bound_inclusive {
+          // If we've done this before, there are no numbers satisfying `q`
+          if looped_to_lower_bound {
+            Err(Cl15Error::NoQ)?;
+          }
+
+          seed = lower_bound_inclusive.to_be_bytes().to_vec();
+          looped_to_lower_bound = true;
+
           continue;
         }
-        // jacobi of p/q = -1
-        let res = p.clone().jacobi_symbol(&q);
-        if res != -1 {
+
+        // Our fundamental discriminant must be congruent to $0$ or $3 \mod 4$, here the latter
+        if {
+          let product =
+            <_ as AsRef<[Limb]>>::as_ref(&p)[0].wrapping_mul(<_ as AsRef<[Limb]>>::as_ref(&q)[0]);
+          (product.0 & 0b11) != 0b11
+        } {
+          continue;
+        }
+
+        /*
+          Ensure $p$ is a quadratic non-residue modulo $q$, as specified within CL15's `Gen`
+          algorithm. The stated reason is so the 2-Sylow subgroup is isomorphic to $Z/2Z$ (stated
+          to require $legendre(p, q) = legendre(q, p) = -1$).
+
+          Note per quadratic reciprocity, $legendre(p, q) = legendre(q, p)$ if and only if not both
+          $p, q$ are congruent to $3 \mod 4$. As their product is congruent to $3 \mod 4$, they
+          cannot each simultaneously be congruent to $3 \mod 4$, as $3 \mod 4$ is not a square.
+          This allows us to solely check one Legendre symbol.
+
+          With this in mind, we actually check $q$ is a quadratic non-residue modulo $p$ as $p$ is
+          a smaller number and therefore offers faster arithmetic to perform the check with.
+        */
+        if crate::crypto_bigint::legendre_symbol(q.clone(), &p) !=
+          ::crypto_bigint::JacobiSymbol::MinusOne
+        {
           continue;
         }
         break q;
       }
     };
 
-    // Step 3
-    let delta_k = -Integer::from(&p * &q);
+    let fundamental_discriminant_absolute_value = shrink(q.concatenating_mul(p.as_ref()));
+    debug_assert_eq!(
+      fundamental_discriminant_absolute_value.bits_vartime(),
+      fundamental_discriminant_bit_length
+    );
 
-    let p_square = p.clone().pow(2u64);
-    let delta_p = &delta_k * Integer::from(p_square.clone());
+    let p_square = Odd::new(shrink(p.as_ref().concatenating_square()))
+      .expect("the square of an odd number is odd");
 
-    Some(Cl15p {
-      fundamental: Cl15k {
-        p: Odd::new(BoxedUint::from_le_slice_vartime(&natural_to_bytes(&p))).unwrap(),
-        absolute_value: BoxedUint::from_le_slice_vartime(&natural_to_bytes(
-          delta_k.unsigned_abs_ref(),
-        )),
-      },
-      p_square: Odd::new(BoxedUint::from_le_slice_vartime(&natural_to_bytes(&p_square))).unwrap(),
-      absolute_value: BoxedUint::from_le_slice_vartime(&natural_to_bytes(
-        delta_p.unsigned_abs_ref(),
-      )),
+    let non_fundamental_discriminant_absolute_value =
+      shrink(fundamental_discriminant_absolute_value.concatenating_mul(p_square.as_ref()));
+
+    Ok(Cl15p {
+      fundamental: Cl15k { p, absolute_value: fundamental_discriminant_absolute_value },
+      p_square,
+      absolute_value: non_fundamental_discriminant_absolute_value,
     })
   }
 }

@@ -26,7 +26,7 @@ impl<E: ElementExt> ClassGroup<E> {
   /// subgroup.
   // https://eprint.iacr.org/2015/047 Figure 2, slightly modified with regards to `g`
   pub fn setup(rng: &mut impl CryptoRng, lambda: u64, p_le_bytes: Vec<u8>) -> Option<Self> {
-    Cl15p::sample(rng, lambda, p_le_bytes).map(|cl15p| {
+    Cl15p::sample(rng, 4, u32::try_from(2 * lambda).unwrap(), p_le_bytes).ok().map(|cl15p| {
       let identity = E::identity(cl15p.absolute_value());
       let f = cl15p.f();
       Self { cl15p, f_table: Table::new(12, identity, f), _E: PhantomData }

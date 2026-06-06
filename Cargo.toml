@@ -22,6 +22,7 @@ class-groups = { opt-level = 3 }
 unwrap_or_default = "allow"
 map_unwrap_or = "allow"
 needless_continue = "allow"
+blocks_in_conditions = "allow"
 borrow_as_ptr = "deny"
 cast_lossless = "deny"
 cast_possible_truncation = "deny"
