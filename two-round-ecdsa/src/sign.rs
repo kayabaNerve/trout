@@ -9,12 +9,12 @@ use zeroize::Zeroizing;
 use rand::CryptoRng;
 
 use group::{
-  ff::{Field as _, PrimeField as _, PrimeFieldBits},
+  ff::{Field as _, PrimeField},
   Group as _, GroupEncoding as _,
 };
 use class_groups::{ElementExt, Table, ClassGroup};
 
-use dkg::Participant;
+use crate::shims::Participant;
 
 use crate::{
   UnsignedInteger, DigestReader, DigestWriter, RoundOneProofs as _, RoundTwoProofs as _,
@@ -667,12 +667,12 @@ pub enum RoundTwoCallerError {
 
 /// An ECDSA signature.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Signature<F: PrimeFieldBits> {
+pub struct Signature<F: PrimeField> {
   r: F,
   s: F,
 }
 
-impl<F: PrimeFieldBits> Signature<F> {
+impl<F: PrimeField> Signature<F> {
   /// The x-coordinate of the nonce commitment, reduced into the scalar field.
   pub fn r(&self) -> F {
     self.r

@@ -1,8 +1,7 @@
 //! Test the signing protocol.
 
 use rand::{rand_core, rngs::SysRng};
-use dkg::Participant;
-use two_round_ecdsa::{SecurityLevel, Setup, SigningProtocol, Ready};
+use two_round_ecdsa::{Participant, SecurityLevel, Setup, SigningProtocol, Ready};
 
 #[test]
 fn sign() {

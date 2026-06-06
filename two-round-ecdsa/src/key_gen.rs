@@ -11,7 +11,7 @@ use group::{
 };
 use class_groups::{ElementExt, Table, ClassGroup};
 
-use dkg::Participant;
+use crate::shims::Participant;
 
 use crate::{UnsignedInteger, Parameters};
 

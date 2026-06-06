@@ -19,23 +19,21 @@ rand_chacha = { version = "0.10", default-features = false, features = ["std"] }
 crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "subtle", "alloc"] }
 crypto-primes = { version = "=0.7.0", default-features = false }
 malachite = { version = "0.9", default-features = false, features = ["naturals_and_integers"] }
-rug = { version = "1", default-features = false, features = ["std", "integer"], optional = true }
 
-group = { version = "0.13", default-features = false, features = ["alloc"] }
-multiexp = { version = "0.4", default-features = false, features = ["std"] }
-ciphersuite = { version = "=0.4.2", git = "https://github.com/serai-dex/serai", rev = "d48325c69b787b37731a97d5707f48c9c3b962a3", default-features = false, features = ["std"] }
-dkg = { git = "https://github.com/serai-dex/serai", rev = "d48325c69b787b37731a97d5707f48c9c3b962a3", default-features = false, features = ["std"] }
+ff = { version = "0.14", default-features = false, features = ["bits"] }
+group = { version = "0.14", default-features = false, features = ["alloc"] }
 
 class-groups = { path = "../class-groups", default-features = false, features = ["std"] }
 
 blake3 = { version = "1", default-features = false, features = ["std"] }
 
+hybrid-array = { version = "0.4", default-features = false, optional = true }
 sha2 = { version = "0.11", default-features = false, features = ["alloc"], optional = true }
-k256 = { version = "0.13", default-features = false, features = ["std", "arithmetic", "bits"], optional = true }
+k256 = { version = "0.14.0-rc.10", default-features = false, features = ["std", "arithmetic"], optional = true }
 
 [dev-dependencies]
-ecdsa = { version = "0.16", default-features = false, features = ["std", "verifying"] }
-k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+ecdsa = { version = "0.17.0-rc.17", default-features = false, features = ["std"] }
+k256 = { version = "0.14.0-rc.10", default-features = false, features = ["ecdsa"] }
 
 [features]
-secp256k1 = ["sha2", "k256"]
+secp256k1 = ["hybrid-array", "sha2", "k256"]

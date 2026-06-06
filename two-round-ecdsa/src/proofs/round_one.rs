@@ -57,7 +57,7 @@ pub trait RoundOneProofs<CG: ElementExt, P: Parameters<CG>> {
   fn queue_verification<R: io::Read>(
     rng: &mut impl CryptoRng,
     batch_verifier: &mut Self::BatchVerifier,
-    participant: dkg::Participant,
+    participant: crate::shims::Participant,
     class_group: &ClassGroup<CG>,
     R_i: (P::E, P::E),
     K_i: (CG, CG),
@@ -72,7 +72,7 @@ pub trait RoundOneProofs<CG: ElementExt, P: Parameters<CG>> {
     class_group: &ClassGroup<CG>,
     G: &Table<CG>,
     batch_verifier: Self::BatchVerifier,
-  ) -> Result<(), Vec<dkg::Participant>>;
+  ) -> Result<(), Vec<crate::shims::Participant>>;
 }
 
 /// The batch verifier for `Ccykc2023RoundOne`.
@@ -202,7 +202,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
   fn queue_verification<R: io::Read>(
     rng: &mut impl CryptoRng,
     batch_verifier: &mut Self::BatchVerifier,
-    _participant: dkg::Participant,
+    _participant: crate::shims::Participant,
     class_group: &ClassGroup<CG>,
     R_i: (P::E, P::E),
     K_i: (CG, CG),
@@ -308,7 +308,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     class_group: &ClassGroup<CG>,
     G: &Table<CG>,
     batch_verifier: Self::BatchVerifier,
-  ) -> Result<(), Vec<dkg::Participant>> {
+  ) -> Result<(), Vec<crate::shims::Participant>> {
     {
       let G_scalar = crate::ccykc::natural_to_bytes(&batch_verifier.G);
       let H_scalar = crate::be_bytes(&batch_verifier.H);
@@ -334,7 +334,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     {
       let mut multiexp = batch_verifier.additional_elliptic_curve;
       multiexp.push((batch_verifier.E, P::E::generator()));
-      if !bool::from(::multiexp::multiexp_vartime(&multiexp).is_identity()) {
+      if !bool::from(crate::shims::multiexp_vartime(&multiexp).is_identity()) {
         todo!("TODO");
       }
     }

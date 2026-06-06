@@ -11,8 +11,11 @@ use std::io;
 use subtle::{Choice, ConditionallySelectable as _};
 use zeroize::{Zeroize, Zeroizing};
 
-use group::{ff::PrimeFieldBits, GroupEncoding, prime::PrimeGroup};
+use group::{GroupEncoding, prime::PrimeGroup};
 use class_groups::ElementExt;
+
+mod shims;
+pub use shims::{Participant, PrimeFieldBits};
 
 mod integer;
 pub use integer::UnsignedInteger;
@@ -51,7 +54,7 @@ impl<F: PrimeFieldBits> Iterator for ToLeBits<F> {
 }
 /// Alternative to `to_le_bits` which returns `Choice` instead of `bool`
 pub(crate) fn const_to_le_bits<F: PrimeFieldBits>(scalar: &F) -> ToLeBits<F> {
-  ToLeBits { underlying: scalar.to_le_bits(), i: 0 }
+  ToLeBits { underlying: scalar.to_le_bits().into(), i: 0 }
 }
 
 pub(crate) fn be_bytes<F: PrimeFieldBits>(scalar: &F) -> Vec<u8> {
@@ -114,18 +117,20 @@ impl<CG: ElementExt, P: Primes> Parameters<CG> for Secp256k1<P> {
     let mut bytes = [0; 64];
     xof.fill(&mut bytes);
     use k256::elliptic_curve::ops::Reduce;
-    <k256::Scalar as Reduce<k256::elliptic_curve::bigint::U512>>::reduce_bytes(&bytes.into())
+    <k256::Scalar as Reduce<hybrid_array::Array<u8, hybrid_array::typenum::U64>>>::reduce(
+      &bytes.into(),
+    )
   }
   fn hash_message(message: &[u8]) -> Self::F {
     use sha2::{Digest as _, Sha256};
     use k256::elliptic_curve::ops::Reduce;
-    <k256::Scalar as Reduce<k256::U256>>::reduce_bytes(
+    <k256::Scalar as Reduce<hybrid_array::Array<u8, hybrid_array::typenum::U32>>>::reduce(
       &<[u8; 32]>::from(Sha256::digest(message)).into(),
     )
   }
   fn x_coordinate(point: &Self::E) -> Self::F {
     use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates as _};
-    <k256::Scalar as Reduce<k256::U256>>::reduce_bytes(
+    <k256::Scalar as Reduce<hybrid_array::Array<u8, hybrid_array::typenum::U32>>>::reduce(
       &<[u8; 32]>::from(point.to_affine().x()).into(),
     )
   }
