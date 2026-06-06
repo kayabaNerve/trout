@@ -20,9 +20,6 @@ pub use crypto_bigint::{Error, CryptoBigintElement};
 
 mod primes;
 
-mod class_group;
-pub use class_group::ClassGroup;
-
 mod discriminant;
 pub use discriminant::{
   Discriminant, NegativeDiscriminant, OddDiscriminant, FundamentalDiscriminant, Cl15Error, Cl15k,

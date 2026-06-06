@@ -4,13 +4,14 @@ use std::io::{self, Read as _, Write as _};
 use zeroize::Zeroizing;
 use rand::CryptoRng;
 
+use crypto_bigint::{Encoding as _, BoxedUint};
 use ::malachite::{base::num::basic::traits::*, *};
 
 use group::{
   ff::{Field as _, PrimeField},
   Group as _, GroupEncoding as _,
 };
-use class_groups::{ElementExt, Table, ClassGroup};
+use class_groups::{ElementExt, Table, NegativeDiscriminant as _, Cl15p};
 
 use crate::{UnsignedInteger, DigestReader, DigestWriter, Primes, Parameters};
 
@@ -27,7 +28,7 @@ pub trait RoundOneProofs<CG: ElementExt, P: Parameters<CG>> {
   /// Prove the round one statements.
   ///
   /// This uses `P::E::generator()`, where `E` is the generic type parameter, for `E`, the elliptic
-  /// curve generator from the academic notation. This also uses `ClassGroup::f()` for `H`.
+  /// curve generator from the academic notation.
   ///
   /// The provided transcript MUST already be binding to `E, G, H, R_i, K_i, U_i`. This
   /// allows the proofs to not transcript these.
@@ -35,8 +36,9 @@ pub trait RoundOneProofs<CG: ElementExt, P: Parameters<CG>> {
   /// If an error is returned, the state of `transcript` is undefined.
   fn prove<W: io::Write>(
     rng: &mut impl CryptoRng,
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     G: &Table<CG>,
+    H: &Table<CG>,
     alpha_i: (&UnsignedInteger, &UnsignedInteger),
     k_i: (&P::F, &P::F),
     beta_i: &UnsignedInteger,
@@ -58,7 +60,7 @@ pub trait RoundOneProofs<CG: ElementExt, P: Parameters<CG>> {
     rng: &mut impl CryptoRng,
     batch_verifier: &mut Self::BatchVerifier,
     participant: crate::shims::Participant,
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     R_i: (P::E, P::E),
     K_i: (CG, CG),
     U_i: CG,
@@ -69,8 +71,9 @@ pub trait RoundOneProofs<CG: ElementExt, P: Parameters<CG>> {
   ///
   /// Returns `Ok(())` or a list of *all* of the *faulty* participants.
   fn verify(
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     G: &Table<CG>,
+    H: &Table<CG>,
     batch_verifier: Self::BatchVerifier,
   ) -> Result<(), Vec<crate::shims::Participant>>;
 }
@@ -94,14 +97,15 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
 
   fn prove<W: io::Write>(
     rng: &mut impl CryptoRng,
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     G: &Table<CG>,
+    H: &Table<CG>,
     alpha_i: (&UnsignedInteger, &UnsignedInteger),
     k_i: (&P::F, &P::F),
     beta_i: &UnsignedInteger,
     transcript: &mut DigestWriter<W>,
   ) -> io::Result<()> {
-    let B = crate::ccykc::B::<P::F, _>(class_group);
+    let B = crate::ccykc::B::<P::F>(class_group);
 
     // Algorithm 6 ZKPoKLog, to prove the integrity of `R_{i_j}, K_{i_j}`, yet omitting what would
     // be the commitment to the randomness for the ciphertext
@@ -113,10 +117,10 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     transcript.write_all((P::E::generator() * r_message_0.deref()).to_bytes().as_ref())?;
     // Write `S_1` from the paper
     CG::multiexp(
-      &class_group.identity_p(),
+      &CG::identity(class_group.absolute_value()),
       &[
         (G, &Zeroizing::new(r_randomness_0.to_be_bytes())),
-        (class_group.f(), &Zeroizing::new(crate::be_bytes(r_message_0.deref()))),
+        (H, &Zeroizing::new(crate::be_bytes(r_message_0.deref()))),
       ],
     )
     .compress(&mut *transcript)?;
@@ -125,10 +129,10 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     let r_message_1 = Zeroizing::new(P::F::random(&mut *rng));
     transcript.write_all((P::E::generator() * r_message_1.deref()).to_bytes().as_ref())?;
     CG::multiexp(
-      &class_group.identity_p(),
+      &CG::identity(class_group.absolute_value()),
       &[
         (G, &Zeroizing::new(r_randomness_1.to_be_bytes())),
-        (class_group.f(), &Zeroizing::new(crate::be_bytes(r_message_1.deref()))),
+        (H, &Zeroizing::new(crate::be_bytes(r_message_1.deref()))),
       ],
     )
     .compress(&mut *transcript)?;
@@ -149,7 +153,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
 
     let c_uint = UnsignedInteger::from_be_slice(&crate::be_bytes(&c));
     let modulus = crypto_bigint::NonZero::new(
-      (&prime * &UnsignedInteger::from_be_slice(class_group.p().as_ref())).0,
+      (&prime * &UnsignedInteger(class_group.fundamental_discriminant().p().clone())).0,
     )
     .unwrap();
 
@@ -203,7 +207,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     rng: &mut impl CryptoRng,
     batch_verifier: &mut Self::BatchVerifier,
     _participant: crate::shims::Participant,
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     R_i: (P::E, P::E),
     K_i: (CG, CG),
     U_i: CG,
@@ -211,12 +215,12 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
   ) -> io::Result<()> {
     // ZKPoKLog commitment
     let R_message_0 = P::read_canonical_E(&mut *transcript)?;
-    let R_ciphertext_0 = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let R_ciphertext_0 = CG::decompress(&mut *transcript, class_group.absolute_value())?;
     let R_message_1 = P::read_canonical_E(&mut *transcript)?;
-    let R_ciphertext_1 = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let R_ciphertext_1 = CG::decompress(&mut *transcript, class_group.absolute_value())?;
 
     // ZKPoKRepS commitment
-    let R_U = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let R_U = CG::decompress(&mut *transcript, class_group.absolute_value())?;
 
     let c = P::from_xof(transcript.0.finalize_xof());
     transcript.0.update(&[0]);
@@ -224,7 +228,9 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     let prime = crate::ccykc::natural_from_bytes(&prime.to_be_bytes());
 
     let c_uint = crate::ccykc::natural_from_bytes(&crate::be_bytes(&c));
-    let modulus = crate::ccykc::natural_from_bytes(class_group.p().as_ref()) * &prime;
+    let modulus =
+      crate::ccykc::natural_from_bytes(&class_group.fundamental_discriminant().p().to_be_bytes()) *
+        &prime;
 
     // ZKPoKLog response
     let mut s_message_0 = <P::F as PrimeField>::Repr::default();
@@ -232,7 +238,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     let s_message_0 = Option::<P::F>::from(P::F::from_repr(s_message_0))
       .ok_or_else(|| io::Error::other("invalid s_message"))?;
 
-    let D_ciphertext_0 = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let D_ciphertext_0 = CG::decompress(&mut *transcript, class_group.absolute_value())?;
     let e_randomness_0 = crate::ccykc::read_e(&mut *transcript, &modulus)?;
 
     let mut s_message_1 = <P::F as PrimeField>::Repr::default();
@@ -240,11 +246,11 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     let s_message_1 = Option::<P::F>::from(P::F::from_repr(s_message_1))
       .ok_or_else(|| io::Error::other("invalid s_message"))?;
 
-    let D_ciphertext_1 = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let D_ciphertext_1 = CG::decompress(&mut *transcript, class_group.absolute_value())?;
     let e_randomness_1 = crate::ccykc::read_e(&mut *transcript, &modulus)?;
 
     // ZKPoKRepS response
-    let D_U = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let D_U = CG::decompress(&mut *transcript, class_group.absolute_value())?;
     let e_beta_i = crate::ccykc::read_e(&mut *transcript, &modulus)?;
 
     // We now start mutating the batch verifier, so it's important we don't error from here on
@@ -305,8 +311,9 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
   }
 
   fn verify(
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     G: &Table<CG>,
+    H: &Table<CG>,
     batch_verifier: Self::BatchVerifier,
   ) -> Result<(), Vec<crate::shims::Participant>> {
     {
@@ -316,17 +323,23 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
       for (point, scalar) in batch_verifier.additional_class_group {
         let bytes = crate::ccykc::natural_to_bytes(&scalar);
         additional.push((
-          Table::new_for_scalar_bits(bytes.len() * 8, class_group.identity_p(), point),
+          Table::new_for_scalar_bits(
+            bytes.len() * 8,
+            CG::identity(class_group.absolute_value()),
+            point,
+          ),
           bytes,
         ));
       }
       let mut multiexp: Vec<(_, &[u8])> = Vec::with_capacity(3 + additional.len());
       multiexp.push((G, &G_scalar));
-      multiexp.push((class_group.f(), &H_scalar));
+      multiexp.push((H, &H_scalar));
       for (table, scalar) in &additional {
         multiexp.push((table, scalar));
       }
-      if CG::multiexp(&class_group.identity_p(), &multiexp) != class_group.identity_p() {
+      if CG::multiexp(&CG::identity(class_group.absolute_value()), &multiexp) !=
+        CG::identity(class_group.absolute_value())
+      {
         todo!("TODO");
       }
     }

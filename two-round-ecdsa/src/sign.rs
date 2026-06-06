@@ -8,11 +8,13 @@ use std::{
 use zeroize::Zeroizing;
 use rand::CryptoRng;
 
+use crypto_bigint::{Encoding as _, BoxedUint};
+
 use group::{
   ff::{Field as _, PrimeField},
   Group as _, GroupEncoding as _,
 };
-use class_groups::{ElementExt, Table, ClassGroup};
+use class_groups::{ElementExt, Table, NegativeDiscriminant as _, Cl15p};
 
 use crate::shims::Participant;
 
@@ -29,7 +31,7 @@ fn table_scaled_decryption_ciphertext<
   CG: ElementExt,
   P: Parameters<PCG> + Parameters<CG>,
 >(
-  class_group: &ClassGroup<PCG>,
+  class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
   ciphertext: CG,
 ) -> Table<PCG> {
   let ciphertext = PCG::from(ciphertext);
@@ -38,8 +40,8 @@ fn table_scaled_decryption_ciphertext<
     // The protocol scales by an elliptic curve scalar yet the proofs presumably scale by a
     // uniform-to-the-class-group scalar
     usize::try_from(<P as Parameters<PCG>>::F::NUM_BITS).unwrap() +
-      usize::try_from(class_group.unknown_order_bound() + 128).unwrap(),
-    class_group.identity_p(),
+      usize::try_from(class_group.upper_bound_on_order() + 128).unwrap(),
+    PCG::identity(class_group.absolute_value()),
     ciphertext,
   )
 }
@@ -114,11 +116,11 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
         // Create the ciphertext for it
         let alpha_i = (
           Zeroizing::new(UnsignedInteger::random(
-            setup.view().class_group().unknown_order_bound() + 128,
+            setup.view().class_group().upper_bound_on_order() + 128,
             &mut *rng,
           )),
           Zeroizing::new(UnsignedInteger::random(
-            setup.view().class_group().unknown_order_bound() + 128,
+            setup.view().class_group().upper_bound_on_order() + 128,
             &mut *rng,
           )),
         );
@@ -126,23 +128,17 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
           (Zeroizing::new(alpha_i.0.to_be_bytes()), Zeroizing::new(alpha_i.1.to_be_bytes()));
         let K_i = (
           PCG::multiexp(
-            &setup.view().prover_class_group().identity_p(),
+            &PCG::identity(setup.view().class_group().absolute_value()),
             &[
               (setup.view().prover_G(), &alpha_i_bytes.0),
-              (
-                setup.view().prover_class_group().f(),
-                &Zeroizing::new(crate::be_bytes(k_i.0.deref())),
-              ),
+              (setup.view().prover_F(), &Zeroizing::new(crate::be_bytes(k_i.0.deref()))),
             ],
           ),
           PCG::multiexp(
-            &setup.view().prover_class_group().identity_p(),
+            &PCG::identity(setup.view().class_group().absolute_value()),
             &[
               (setup.view().prover_G(), &alpha_i_bytes.1),
-              (
-                setup.view().prover_class_group().f(),
-                &Zeroizing::new(crate::be_bytes(k_i.1.deref())),
-              ),
+              (setup.view().prover_F(), &Zeroizing::new(crate::be_bytes(k_i.1.deref()))),
             ],
           ),
         );
@@ -156,7 +152,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
 
       let beta_i = {
         let beta_i = Zeroizing::new(UnsignedInteger::random(
-          setup.view().class_group().unknown_order_bound() + 128,
+          setup.view().class_group().upper_bound_on_order() + 128,
           &mut *rng,
         ));
         let beta_i_bytes = Zeroizing::new(beta_i.to_be_bytes());
@@ -170,8 +166,9 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
 
       <P as Parameters<PCG>>::RoundOneProofs::prove(
         &mut *rng,
-        setup.view().prover_class_group(),
+        setup.view().class_group(),
         setup.view().prover_G(),
+        setup.view().prover_F(),
         (&alpha_i.0, &alpha_i.1),
         (&k_i.0, &k_i.1),
         &beta_i,
@@ -303,17 +300,20 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Obser
         };
         let R_i = (R_i_0, R_i_1);
 
-        let Ok(K_i_0) = CG::decompress(&mut message, self.setup.class_group().delta_p()) else {
+        let Ok(K_i_0) = CG::decompress(&mut message, self.setup.class_group().absolute_value())
+        else {
           faulty.insert(participant);
           continue;
         };
-        let Ok(K_i_1) = CG::decompress(&mut message, self.setup.class_group().delta_p()) else {
+        let Ok(K_i_1) = CG::decompress(&mut message, self.setup.class_group().absolute_value())
+        else {
           faulty.insert(participant);
           continue;
         };
         let K_i = (K_i_0, K_i_1);
 
-        let Ok(U_i) = CG::decompress(&mut message, self.setup.class_group().delta_p()) else {
+        let Ok(U_i) = CG::decompress(&mut message, self.setup.class_group().absolute_value())
+        else {
           faulty.insert(participant);
           continue;
         };
@@ -339,6 +339,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Obser
       match <P as Parameters<CG>>::RoundOneProofs::verify(
         self.setup.class_group(),
         self.setup.G(),
+        self.setup.F(),
         round_one_batch_verifier,
       ) {
         Ok(()) => {}
@@ -402,7 +403,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Obser
         K_1.push((
           Table::new_for_scalar_bits(
             256,
-            self.setup.class_group().identity_p().clone(),
+            CG::identity(self.setup.class_group().absolute_value()),
             K_i.1.clone(),
           ),
           crate::be_bytes(&rho_i),
@@ -412,7 +413,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Obser
         K_U_i.insert(*participant, (K_i, U_i));
       }
       let K = K_0.unwrap().add(&CG::multiexp(
-        &self.setup.class_group().identity_p(),
+        &CG::identity(self.setup.class_group().absolute_value()),
         &K_1.iter().map(|(K_1, rho)| (K_1, rho.as_slice())).collect::<Vec<_>>(),
       ));
 
@@ -542,7 +543,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
     }
     // We don't transcript this as it's deterministic to the transcripted setup + signing set
     let C = CG::multiexp(
-      &self.setup.class_group().identity_p(),
+      &CG::identity(self.setup.class_group().absolute_value()),
       &C.iter()
         .map(|(share_ciphertext, lagrange_bytes)| (*share_ciphertext, lagrange_bytes.as_slice()))
         .collect::<Vec<_>>(),
@@ -552,7 +553,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
     let message_derivative = message_hash * x_coordinate.invert().unwrap();
 
     // Again, not transcripted as deterministic (and therefore already bound) to the transcript
-    let Z = CG::mul(self.setup.class_group().f(), &crate::be_bytes(&message_derivative)).add(&C);
+    let Z = CG::mul(self.setup.F(), &crate::be_bytes(&message_derivative)).add(&C);
 
     Aggregating { observing_signing: self, x_coordinate, message_hash, Z, pending: HashMap::new() }
   }
@@ -602,18 +603,18 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Signi
     let x_i = Zeroizing::new(lagrange * x_i);
 
     let K = table_scaled_decryption_ciphertext::<PCG, CG, P>(
-      self.setup.view().prover_class_group(),
+      self.setup.view().class_group(),
       aggregating.observing_signing.K.clone(),
     );
 
     let Z = table_scaled_decryption_ciphertext::<PCG, CG, P>(
-      self.setup.view().prover_class_group(),
+      self.setup.view().class_group(),
       aggregating.Z.clone(),
     );
 
     let neg_U = Table::new_for_scalar_bits(
-      2 * usize::try_from(self.setup.view().class_group().unknown_order_bound() + 128).unwrap(),
-      self.setup.view().prover_class_group().identity_p().clone(),
+      2 * usize::try_from(self.setup.view().class_group().upper_bound_on_order() + 128).unwrap(),
+      PCG::identity(self.setup.view().class_group().absolute_value()),
       PCG::from(aggregating.observing_signing.neg_U.clone()),
     );
 
@@ -630,8 +631,9 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Signi
 
     <P as Parameters<PCG>>::RoundTwoProofs::prove(
       &mut *rng,
-      self.setup.view().prover_class_group(),
+      self.setup.view().class_group(),
       self.setup.view().prover_G(),
+      self.setup.view().prover_F(),
       &Z,
       &K,
       &neg_U,
@@ -725,11 +727,11 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Aggre
         let message = std::io::Cursor::new(message);
         let mut message = DigestReader(self.observing_signing.transcript.clone(), message);
 
-        let Ok(ZU_i) = CG::decompress(&mut message, setup.class_group().delta_p()) else {
+        let Ok(ZU_i) = CG::decompress(&mut message, setup.class_group().absolute_value()) else {
           faulty.push(participant);
           continue;
         };
-        let Ok(KU_i) = CG::decompress(&mut message, setup.class_group().delta_p()) else {
+        let Ok(KU_i) = CG::decompress(&mut message, setup.class_group().absolute_value()) else {
           faulty.push(participant);
           continue;
         };
@@ -752,8 +754,8 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Aggre
         };
 
         let discrete_logarithm = |element: CG| {
-          let log = setup.class_group().discrete_logarithm(&element).unwrap();
-          be_bytes_to_scalar(log)
+          let log = setup.class_group().discrete_logarithm(element).unwrap();
+          be_bytes_to_scalar(log.to_be_bytes())
         };
 
         // This is `(H(m)*r**-1 + x) * u`, so we need to scale it by `r` for `(H(m) + rx) * u`
@@ -777,17 +779,20 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Aggre
       }
 
       // Verify the proofs to identify any other faulty participants
-      let bits = usize::try_from(setup.class_group().unknown_order_bound()).unwrap();
+      let bits = usize::try_from(setup.class_group().upper_bound_on_order()).unwrap();
       let neg_U = Table::new_for_scalar_bits(
         bits,
-        setup.class_group().identity_p().clone(),
+        CG::identity(setup.class_group().absolute_value()),
         self.observing_signing.neg_U.clone(),
       );
-      let Z =
-        Table::new_for_scalar_bits(bits, setup.class_group().identity_p().clone(), self.Z.clone());
+      let Z = Table::new_for_scalar_bits(
+        bits,
+        CG::identity(setup.class_group().absolute_value()),
+        self.Z.clone(),
+      );
       let K = Table::new_for_scalar_bits(
         bits,
-        setup.class_group().identity_p().clone(),
+        CG::identity(setup.class_group().absolute_value()),
         self.observing_signing.K.clone(),
       );
       for (participant, (mut transcript, ZU_i, KU_i)) in messages {
@@ -801,6 +806,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Aggre
           rng,
           setup.class_group(),
           setup.G(),
+          setup.F(),
           &Z,
           &K,
           &neg_U,
@@ -808,7 +814,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Aggre
           K_i.0.add(&CG::mul(
             &Table::new_for_scalar_bits(
               <P as Parameters<PCG>>::F::NUM_BITS.try_into().unwrap(),
-              setup.class_group().identity_p().clone(),
+              CG::identity(setup.class_group().absolute_value()),
               K_i.1,
             ),
             &crate::be_bytes(

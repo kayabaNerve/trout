@@ -1,7 +1,8 @@
 use core::marker::PhantomData;
 use std::io;
 
-use class_groups::{ElementExt, ClassGroup};
+use crypto_bigint::BoxedUint;
+use class_groups::{ElementExt, NegativeDiscriminant as _, Cl15p};
 
 use crate::UnsignedInteger;
 
@@ -155,7 +156,9 @@ pub(crate) mod ccykc {
   pub(crate) const LAMBDA: u32 = 128;
   const EPSILON_D: u32 = 128;
   const B_CONST: u32 = EPSILON_D + LAMBDA + 2;
-  pub(crate) fn B<F: group::ff::PrimeField, CG: ElementExt>(class_group: &ClassGroup<CG>) -> u32 {
+  pub(crate) fn B<F: group::ff::PrimeField>(
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
+  ) -> u32 {
     /*
       The `1 +` is because the paper says to sample from `[-B, B]`. We sample from the equally
       large range `[0, 2B] which should be as uniform since this is in-effect modulo the unknown
@@ -167,7 +170,7 @@ pub(crate) mod ccykc {
       should still be as uniform since we our log_2 is rounding up. It's arguably slightly more
       inefficient, due to the extra bit, yet avoids calculation of `B`.
     */
-    1 + (B_CONST + F::NUM_BITS + class_group.unknown_order_bound())
+    1 + (B_CONST + F::NUM_BITS + class_group.upper_bound_on_order())
   }
 
   pub(crate) fn write_e<W: Write>(

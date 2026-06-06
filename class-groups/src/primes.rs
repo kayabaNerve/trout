@@ -22,6 +22,7 @@ fn next_prime_candidates<U: Unsigned>(seed: U) -> impl Iterator<Item = U> {
   }
 }
 
+#[derive(Debug)]
 pub(super) enum Error {
   NoMillerRabin,
   Capacity,
@@ -34,7 +35,7 @@ pub(super) enum Error {
 /// The returned value is composite with probability `2^{-bits_of_security}`, per FIPS-186.5, for
 /// parameterization of the Miller-Rabin test, unconditionally followed by a Lucas test.
 pub(super) fn next_prime<U: UnsignedWithMontyForm + RandomMod>(
-  rng: &mut impl CryptoRng,
+  mut rng: impl CryptoRng,
   seed: U,
   bits_of_security: u32,
 ) -> Result<U, Error> {
@@ -44,7 +45,7 @@ pub(super) fn next_prime<U: UnsignedWithMontyForm + RandomMod>(
       crypto_primes::fips::FipsOptions::with_error_bound(candidate.bits(), bits_of_security)
         .ok_or(Error::NoMillerRabin)?
         .with_lucas_test();
-    if crypto_primes::fips::is_prime(rng, crypto_primes::Flavor::Any, &candidate, options) {
+    if crypto_primes::fips::is_prime(&mut rng, crypto_primes::Flavor::Any, &candidate, options) {
       return Ok(candidate);
     }
   }

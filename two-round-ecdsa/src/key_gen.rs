@@ -5,11 +5,12 @@ use zeroize::{Zeroize, Zeroizing};
 use rand::{CryptoRng, SeedableRng as _};
 use rand_chacha::ChaCha20Rng;
 
+use crypto_bigint::{Odd, Encoding as _, BoxedUint};
 use group::{
   ff::{Field as _, PrimeField},
   Group as _, GroupEncoding as _,
 };
-use class_groups::{ElementExt, Table, ClassGroup};
+use class_groups::{ElementExt, Table, NegativeDiscriminant as _, Cl15p};
 
 use crate::shims::Participant;
 
@@ -40,17 +41,17 @@ pub enum SecurityLevel {
 fn class_group<CG: ElementExt, P: Parameters<CG>>(
   seed: [u8; 32],
   security_level: SecurityLevel,
-) -> (ClassGroup<CG>, Table<CG>) {
+) -> (Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>, Table<CG>, Table<CG>) {
   let mut class_group_rng = ChaCha20Rng::from_seed(seed);
 
   // The security level is converted to the lambda parameter of which the fundamental
   // discriminant is twice as large
   let lambda = match security_level {
-    SecurityLevel::Insecure => 300,
-    SecurityLevel::OneHundredTwentyEightBit => 914,
-    SecurityLevel::ConservativeOneHundredTwentyEightBit => 1024,
-    SecurityLevel::VeryConservativeOneHundredTwentyEightBit => 2048,
-    SecurityLevel::ExtremelyConservativeOneHundredTwentyEightBit => 3392,
+    SecurityLevel::Insecure => 1024,
+    SecurityLevel::OneHundredTwentyEightBit => 1827,
+    SecurityLevel::ConservativeOneHundredTwentyEightBit => 2048,
+    SecurityLevel::VeryConservativeOneHundredTwentyEightBit => 4096,
+    SecurityLevel::ExtremelyConservativeOneHundredTwentyEightBit => 6784,
   };
 
   let p_bytes = {
@@ -65,21 +66,40 @@ fn class_group<CG: ElementExt, P: Parameters<CG>>(
     p_bytes
   };
 
-  let class_group = ClassGroup::<CG>::setup(
+  let class_group = Cl15p::<BoxedUint, BoxedUint, BoxedUint, BoxedUint>::sample(
     &mut class_group_rng,
+    128,
     lambda,
-    p_bytes.iter().copied().rev().collect::<Vec<_>>(),
+    Odd::new(BoxedUint::from_be_bytes(p_bytes.clone().into())).unwrap(),
   )
   .unwrap();
-  let G = class_group.generator_p(&mut class_group_rng);
+  let G = {
+    use ::crypto_bigint::{NonZero, RandomMod as _};
+    let discriminant_abs = class_group.absolute_value();
+    let discriminant_abs = discriminant_abs.as_ref();
+    let seed = BoxedUint::random_mod_vartime(
+      &mut class_group_rng,
+      &NonZero::new(
+        BoxedUint::from_le_slice_vartime(discriminant_abs).wrapping_shr_vartime(2).floor_sqrt(),
+      )
+      .unwrap(),
+    );
+    CG::next_prime_ideal_squared(&mut class_group_rng, seed, discriminant_abs, 128)
+  };
   // Ensure G is a generator of G_q, not G, as required by the CCYKC proofs
   let G = CG::mul(
-    &Table::new_for_scalar_bits(P::F::NUM_BITS.try_into().unwrap(), class_group.identity_p(), G),
+    &Table::new_for_scalar_bits(
+      P::F::NUM_BITS.try_into().unwrap(),
+      CG::identity(class_group.absolute_value()),
+      G,
+    ),
     &p_bytes,
   );
-  let G = Table::new(12, class_group.identity_p(), G);
+  let G = Table::new(12, CG::identity(class_group.absolute_value()), G);
 
-  (class_group, G)
+  let F = Table::new(12, CG::identity(class_group.absolute_value()), class_group.f());
+
+  (class_group, F, G)
 }
 
 /// A view of the setup for a multisig.
@@ -88,11 +108,11 @@ pub struct SetupView<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Param
   t: u16,
   class_group_seed: [u8; 32],
 
-  prover_class_group: ClassGroup<PCG>,
+  class_group: Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
   prover_G: Table<PCG>,
-
-  class_group: ClassGroup<CG>,
+  prover_F: Table<PCG>,
   G: Table<CG>,
+  F: Table<CG>,
 
   verification_key: <P as Parameters<PCG>>::E,
   // verification_shares: HashMap<Participant, P::E>,
@@ -138,22 +158,25 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
       }
     }
 
-    let (prover_class_group, prover_G) = class_group::<PCG, P>(class_group_seed, security_level);
-    let (class_group, G) = class_group::<CG, P>(class_group_seed, security_level);
+    let (prover_class_group, prover_F, prover_G) =
+      class_group::<PCG, P>(class_group_seed, security_level);
+    let (class_group, F, G) = class_group::<CG, P>(class_group_seed, security_level);
 
     let share_ciphertexts = share_ciphertexts
       .into_iter()
-      .map(|(participant, C)| (participant, Table::new(12, class_group.identity_p(), C)))
+      .map(|(participant, C)| {
+        (participant, Table::new(12, CG::identity(class_group.absolute_value()), C))
+      })
       .collect();
 
     Self {
       t,
       class_group_seed,
 
-      prover_class_group,
-      prover_G,
-
       class_group,
+      prover_F,
+      prover_G,
+      F,
       G,
 
       verification_key,
@@ -168,14 +191,17 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
   pub(crate) fn n(&self) -> usize {
     self.share_ciphertexts.len()
   }
-  pub(crate) fn prover_class_group(&self) -> &ClassGroup<PCG> {
-    &self.prover_class_group
+  pub(crate) fn class_group(&self) -> &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint> {
+    &self.class_group
+  }
+  pub(crate) fn prover_F(&self) -> &Table<PCG> {
+    &self.prover_F
   }
   pub(crate) fn prover_G(&self) -> &Table<PCG> {
     &self.prover_G
   }
-  pub(crate) fn class_group(&self) -> &ClassGroup<CG> {
-    &self.class_group
+  pub(crate) fn F(&self) -> &Table<CG> {
+    &self.F
   }
   pub(crate) fn G(&self) -> &Table<CG> {
     &self.G
@@ -239,7 +265,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
 
     let mut class_group_seed = [0; 32];
     rng.fill_bytes(&mut class_group_seed);
-    let (class_group, G) = class_group::<CG, P>(class_group_seed, security_level);
+    let (class_group, F, G) = class_group::<CG, P>(class_group_seed, security_level);
 
     // Generate `t` coefficients
     let mut coeffs = Zeroizing::new(vec![<P as Parameters<PCG>>::F::ZERO; usize::from(t)]);
@@ -270,7 +296,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
       share_ciphertext_openings.insert(
         participant,
         Zeroizing::new((
-          UnsignedInteger::random(class_group.unknown_order_bound() + 128, &mut *rng),
+          UnsignedInteger::random(class_group.upper_bound_on_order() + 128, &mut *rng),
           *polynomial(&coeffs, participant),
         )),
       );
@@ -284,8 +310,8 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
         (*participant, {
           let mask = Zeroizing::new(mask.to_be_bytes());
           CG::multiexp(
-            &class_group.identity_p(),
-            &[(&G, &mask), (class_group.f(), &Zeroizing::new(crate::be_bytes(scalar)))],
+            &CG::identity(class_group.absolute_value()),
+            &[(&G, &mask), (&F, &Zeroizing::new(crate::be_bytes(scalar)))],
           )
         })
       })

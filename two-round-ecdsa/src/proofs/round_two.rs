@@ -4,10 +4,11 @@ use std::io::{self, Read as _, Write as _};
 use zeroize::Zeroizing;
 use rand::CryptoRng;
 
+use crypto_bigint::{Encoding as _, BoxedUint};
 use ::malachite::base::num::logic::traits::*;
 
 use group::ff::{Field as _, PrimeField};
-use class_groups::{ElementExt, Table, ClassGroup};
+use class_groups::{ElementExt, Table, NegativeDiscriminant as _, Cl15p};
 
 use crate::{UnsignedInteger, DigestReader, DigestWriter, Primes, Parameters};
 
@@ -38,8 +39,9 @@ pub trait RoundTwoProofs<CG: ElementExt, P: Parameters<CG>> {
   /// If an error is returned, the state of `proof` is undefined.
   fn prove<W: io::Write>(
     rng: &mut impl CryptoRng,
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     G: &Table<CG>,
+    H: &Table<CG>,
     Z: &Table<CG>,
     K: &Table<CG>,
     neg_U: &Table<CG>,
@@ -61,8 +63,9 @@ pub trait RoundTwoProofs<CG: ElementExt, P: Parameters<CG>> {
   /// If an error is returned, `proof` is left in an undefined state.
   fn verify<R: io::Read>(
     rng: &mut impl CryptoRng,
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     G: &Table<CG>,
+    H: &Table<CG>,
     Z: &Table<CG>,
     K: &Table<CG>,
     neg_U: &Table<CG>,
@@ -82,8 +85,9 @@ pub struct NoIdentifiableAborts;
 impl<CG: ElementExt, P: Parameters<CG>> RoundTwoProofs<CG, P> for NoIdentifiableAborts {
   fn prove<W: io::Write>(
     _rng: &mut impl CryptoRng,
-    _class_group: &ClassGroup<CG>,
+    _class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     _G: &Table<CG>,
+    _H: &Table<CG>,
     _Z: &Table<CG>,
     _K: &Table<CG>,
     _neg_U: &Table<CG>,
@@ -99,8 +103,9 @@ impl<CG: ElementExt, P: Parameters<CG>> RoundTwoProofs<CG, P> for NoIdentifiable
 
   fn verify<R: io::Read>(
     _rng: &mut impl CryptoRng,
-    _class_group: &ClassGroup<CG>,
+    _class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     _G: &Table<CG>,
+    _H: &Table<CG>,
     _Z: &Table<CG>,
     _K: &Table<CG>,
     _neg_U: &Table<CG>,
@@ -123,8 +128,9 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
 {
   fn prove<W: io::Write>(
     rng: &mut impl CryptoRng,
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     G: &Table<CG>,
+    H: &Table<CG>,
     Z: &Table<CG>,
     K: &Table<CG>,
     neg_U: &Table<CG>,
@@ -135,7 +141,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     beta_i: &UnsignedInteger,
     transcript: &mut DigestWriter<W>,
   ) -> io::Result<()> {
-    let B = crate::ccykc::B::<P::F, _>(class_group);
+    let B = crate::ccykc::B::<P::F>(class_group);
 
     let r_delta_i = Zeroizing::new(UnsignedInteger::random(B, &mut *rng));
     let r_x_i = Zeroizing::new(P::F::random(&mut *rng));
@@ -145,24 +151,24 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
 
     // Nonce commitments for each invocation
     CG::multiexp(
-      &class_group.identity_p(),
+      &CG::identity(class_group.absolute_value()),
       &[
         (G, &Zeroizing::new(r_delta_i.to_be_bytes())),
-        (class_group.f(), &Zeroizing::new(crate::be_bytes(r_x_i.deref()))),
+        (H, &Zeroizing::new(crate::be_bytes(r_x_i.deref()))),
       ],
     )
     .compress(&mut *transcript)?;
     CG::multiexp(
-      &class_group.identity_p(),
+      &CG::identity(class_group.absolute_value()),
       &[
         (G, &Zeroizing::new(r_alpha_i.to_be_bytes())),
-        (class_group.f(), &Zeroizing::new(crate::be_bytes(r_k_i.deref()))),
+        (H, &Zeroizing::new(crate::be_bytes(r_k_i.deref()))),
       ],
     )
     .compress(&mut *transcript)?;
     CG::mul(G, &Zeroizing::new(r_beta_i.to_be_bytes())).compress(&mut *transcript)?;
     CG::multiexp(
-      &class_group.identity_p(),
+      &CG::identity(class_group.absolute_value()),
       &[
         (Z, &Zeroizing::new(r_beta_i.to_be_bytes())),
         (neg_U, &Zeroizing::new(r_delta_i.to_be_bytes())),
@@ -170,7 +176,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     )
     .compress(&mut *transcript)?;
     CG::multiexp(
-      &class_group.identity_p(),
+      &CG::identity(class_group.absolute_value()),
       &[
         (K, &Zeroizing::new(r_beta_i.to_be_bytes())),
         (neg_U, &Zeroizing::new(r_alpha_i.to_be_bytes())),
@@ -184,7 +190,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     transcript.0.update(&[0]);
     let prime = Pr::prime(crate::ccykc::LAMBDA, transcript.0.finalize_xof());
     let modulus = crypto_bigint::NonZero::new(
-      (&prime * &UnsignedInteger::from_be_slice(class_group.p().as_ref())).0,
+      (&prime * &UnsignedInteger(class_group.fundamental_discriminant().p().clone())).0,
     )
     .unwrap();
 
@@ -202,10 +208,16 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     CG::mul(G, &d_delta_i).compress(&mut *transcript)?;
     CG::mul(G, &d_alpha_i).compress(&mut *transcript)?;
     CG::mul(G, &d_beta_i).compress(&mut *transcript)?;
-    CG::multiexp(&class_group.identity_p(), &[(Z, &d_beta_i), (neg_U, &d_delta_i)])
-      .compress(&mut *transcript)?;
-    CG::multiexp(&class_group.identity_p(), &[(K, &d_beta_i), (neg_U, &d_alpha_i)])
-      .compress(&mut *transcript)?;
+    CG::multiexp(
+      &CG::identity(class_group.absolute_value()),
+      &[(Z, &d_beta_i), (neg_U, &d_delta_i)],
+    )
+    .compress(&mut *transcript)?;
+    CG::multiexp(
+      &CG::identity(class_group.absolute_value()),
+      &[(K, &d_beta_i), (neg_U, &d_alpha_i)],
+    )
+    .compress(&mut *transcript)?;
 
     // Each `e`
     crate::ccykc::write_e(&mut *transcript, &modulus, &e_delta_i)?;
@@ -217,8 +229,9 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
 
   fn verify<R: io::Read>(
     rng: &mut impl CryptoRng,
-    class_group: &ClassGroup<CG>,
+    class_group: &Cl15p<BoxedUint, BoxedUint, BoxedUint, BoxedUint>,
     G: &Table<CG>,
+    H: &Table<CG>,
     Z: &Table<CG>,
     K: &Table<CG>,
     neg_U: &Table<CG>,
@@ -229,24 +242,27 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     KU_i: CG,
     transcript: &mut DigestReader<R>,
   ) -> io::Result<()> {
-    let R_Z_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
-    let R_K_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
-    let R_U_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
-    let R_ZU_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
-    let R_KU_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let R_Z_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
+    let R_K_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
+    let R_U_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
+    let R_ZU_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
+    let R_KU_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
 
     let c = P::from_xof(transcript.0.finalize_xof());
     transcript.0.update(&[0]);
     let prime = Pr::prime(crate::ccykc::LAMBDA, transcript.0.finalize_xof());
     let c = crate::ccykc::natural_from_bytes(&crate::be_bytes(&c));
     let prime = crate::ccykc::natural_from_bytes(&prime.to_be_bytes());
-    let modulus = &prime * &crate::ccykc::natural_from_bytes(class_group.p().as_ref());
+    let modulus = &prime *
+      &crate::ccykc::natural_from_bytes(
+        &class_group.fundamental_discriminant().p().to_be_bytes(),
+      );
 
-    let D_Z_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
-    let D_K_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
-    let D_U_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
-    let D_ZU_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
-    let D_KU_i = CG::decompress(&mut *transcript, class_group.delta_p())?;
+    let D_Z_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
+    let D_K_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
+    let D_U_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
+    let D_ZU_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
+    let D_KU_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
 
     let e_delta_i = crate::ccykc::read_e(&mut *transcript, &modulus)?;
     let mut s_x_i = <P::F as PrimeField>::Repr::default();
@@ -261,7 +277,11 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     let e_beta_i = crate::ccykc::read_e(&mut *transcript, &modulus)?;
 
     let table = |scalar_bits: u64, point| {
-      Table::new_for_scalar_bits(scalar_bits.try_into().unwrap(), class_group.identity_p(), point)
+      Table::new_for_scalar_bits(
+        scalar_bits.try_into().unwrap(),
+        CG::identity(class_group.absolute_value()),
+        point,
+      )
     };
 
     let D_Z_i = table(modulus.significant_bits(), D_Z_i);
@@ -321,10 +341,10 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     let R_KU_i_scalar = crate::ccykc::natural_to_bytes(&weight_KU_i);
 
     if CG::multiexp(
-      &class_group.identity_p(),
+      &CG::identity(class_group.absolute_value()),
       &[
         (G, &crate::ccykc::natural_to_bytes(&G_scalar)),
-        (class_group.f(), &crate::ccykc::natural_to_bytes(&H_scalar)),
+        (H, &crate::ccykc::natural_to_bytes(&H_scalar)),
         (&D_Z_i, &D_Z_i_scalar),
         (&Z_i, &Z_i_scalar),
         (&R_Z_i, &R_Z_i_scalar),
@@ -344,7 +364,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
         (&R_KU_i, &R_KU_i_scalar),
         (neg_U, &crate::ccykc::natural_to_bytes(&neg_U_scalar)),
       ],
-    ) != class_group.identity_p()
+    ) != CG::identity(class_group.absolute_value())
     {
       Err(io::Error::other("invalid proof"))?;
     }
