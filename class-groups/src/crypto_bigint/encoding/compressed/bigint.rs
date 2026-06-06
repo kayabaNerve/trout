@@ -69,7 +69,7 @@ pub(super) fn decode_bigint(mut reader: impl io::Read, bit_bound: u32) -> Result
 
 #[test]
 fn bigint() {
-  use crypto_bigint::{RandomBits, Uint};
+  use crypto_bigint::{RandomBits as _, Uint};
 
   let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
 

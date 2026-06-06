@@ -1,12 +1,13 @@
-use std::{sync::Arc, collections::HashMap};
+use alloc::sync::Arc;
+use std::collections::HashMap;
 
 use zeroize::{Zeroize, Zeroizing};
-use rand::{CryptoRng, SeedableRng};
+use rand::{CryptoRng, SeedableRng as _};
 use rand_chacha::ChaCha20Rng;
 
 use group::{
-  ff::{Field, PrimeField},
-  Group, GroupEncoding,
+  ff::{Field as _, PrimeField},
+  Group as _, GroupEncoding as _,
 };
 use class_groups::{ElementExt, Table, ClassGroup};
 
@@ -118,6 +119,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
     transcript.update(&t.to_le_bytes());
     transcript.update(&n.to_le_bytes());
     transcript.update(&class_group_seed);
+    #[expect(clippy::as_conversions)]
     transcript.update(&[security_level as u8]);
     transcript.update(<P as Parameters<PCG>>::E::generator().to_bytes().as_ref());
     transcript.update(verification_key.to_bytes().as_ref());
@@ -130,7 +132,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
         let ciphertext = &share_ciphertexts[&participant];
 
         // These are canonical and self-prefixing, so there's no risk of malleation here
-        ciphertext.compress(&mut buf).unwrap();
+        ciphertext.clone().compress(&mut buf).unwrap();
         transcript.update(&buf);
         buf.clear();
       }
@@ -182,8 +184,8 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Setup
   pub fn verification_key(&self) -> <P as Parameters<PCG>>::E {
     self.verification_key
   }
-  pub(crate) fn share_ciphertext(&self, participant: &Participant) -> Option<&Table<CG>> {
-    self.share_ciphertexts.get(participant)
+  pub(crate) fn share_ciphertext(&self, participant: Participant) -> Option<&Table<CG>> {
+    self.share_ciphertexts.get(&participant)
   }
 
   /// The transcript of this view of the setup.

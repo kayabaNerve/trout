@@ -3,11 +3,11 @@
 //! We specifically provide the maps from
 //! "A Cryptosystem Based on Non-maximal Imaginary Quadratic Orders with Fast Decryption" by
 //! Detlef Hühnlein, Michael J. Jacobson, Jr., Sachar Paulus, and Tsuyoshi Takagi
-//! (https://link.springer.com/content/pdf/10.1007/bfb0054134.pdf). These maps traditionally note
-//! the prime conductor as `q`, yet the following consistently denote it as `p`. This is as
-//! "Linearly Homomorphic Encryption from DDH" by Guilhem Castagnos and Fabien Laguillaumie
-//! (https://eprint.iacr.org/2025/047) denote the prime conductor as `p` and we prefer consistency
-//! with the latter paper.
+//! (<https://link.springer.com/content/pdf/10.1007/bfb0054134.pdf>). These maps traditionally note
+//! the prime conductor as `q`, yet the following implementations consistently denote it as `p`.
+//! This is as "Linearly Homomorphic Encryption from DDH"
+//! by Guilhem Castagnos and Fabien Laguillaumie (<https://eprint.iacr.org/2025/047>) denote the
+//! prime conductor as `p` and we prefer consistency with the latter paper.
 //!
 //! The two relevant maps from
 //! "A Cryptosystem Based on Non-maximal Imaginary Quadratic Orders with Fast Decryption" require
@@ -141,6 +141,7 @@ fn coprime_form<P, U: AsRef<[Limb]> + AsMut<[Limb]> + CtSelect + Gcd<P, Output: 
 /// considered secrets).
 ///
 /// This function does not check the encodings are canonical and does allow trailing zero bytes.
+#[must_use]
 fn le_malleable_eq(a: &[u8], b: &[u8]) -> Choice {
   let mut eq = Choice::TRUE;
 
@@ -174,6 +175,7 @@ pub trait NegativeDiscriminant: Discriminant {
   ///
   /// The provided implementation runs in variable time. The provided implementation MAY panic if
   /// this discriminant is ill-defined or absurdly large.
+  #[must_use]
   fn upper_bound_on_order(&self) -> u32 {
     /*
       Per Section 5.10.1 of A Course in Computational Algebraic Number Theory by Henri Cohen, for
@@ -206,6 +208,7 @@ pub trait NegativeDiscriminant: Discriminant {
   /// The absolute value of this discriminant.
   ///
   /// This is returned as its little-endian encoding.
+  #[must_use]
   fn absolute_value(&self) -> impl AsRef<[u8]>;
 }
 /// An odd discriminant.
@@ -239,11 +242,12 @@ pub trait FundamentalDiscriminant: Discriminant {
   /// discriminant. This function runs in time only variable to the discriminant, the length of the
   /// encoding of `p`, and `E::a_b_c_discriminant` (which may be implemented in constant-time).
   #[cfg(feature = "alloc")] // TODO no-`alloc`
+  #[must_use]
   fn inject<E: Element>(&self, element: impl Element, p: &impl Encoding) -> E
   where
     Self: NegativeDiscriminant,
   {
-    use crypto_bigint::{ConcatenatingMul, ConcatenatingSquare, Resize, BoxedUint};
+    use crypto_bigint::{ConcatenatingMul as _, ConcatenatingSquare as _, Resize as _, BoxedUint};
 
     // SAFETY: `a_b_c_discriminant` is always safe to call
     let (a, (b_positive, b_abs), c, discriminant_abs) = unsafe { element.a_b_c_discriminant() };
@@ -328,8 +332,8 @@ pub trait FundamentalDiscriminant: Discriminant {
 /// A fundamental discriminant as part of the CL15 cryptosystem.
 ///
 /// This is constructed as detailed in "Linearly Homomorphic Encryption from DDH" by
-/// Guilhem Castagnos and Fabien Laguillaumie (https://eprint.iacr.org/2025/047), corresponding to
-/// $\Delta_K$.
+/// Guilhem Castagnos and Fabien Laguillaumie (<https://eprint.iacr.org/2025/047>), corresponding
+/// to $\Delta_K$.
 ///
 /// `Up` is the numeric type used to represent the prime `p`. `Udk` is the numeric type used to
 /// represent the discriminant's absolute value, the product $q * p$.
@@ -349,6 +353,7 @@ impl<Up, Udk> FundamentalDiscriminant for Cl15k<Up, Udk> {}
 
 impl<Up, Udk> Cl15k<Up, Udk> {
   /// The prime `p` from the setup.
+  #[must_use]
   pub fn p(&self) -> &Up {
     &self.p
   }
@@ -357,7 +362,7 @@ impl<Up, Udk> Cl15k<Up, Udk> {
 /// A non-fundamental discriminant as part of the CL15 cryptosystem.
 ///
 /// This is constructed as detailed in Linearly Homomorphic Encryption from DDH by
-/// Guilhem Castagnos and Fabien Laguillaumie (https://eprint.iacr.org/2025/047), correspond to
+/// Guilhem Castagnos and Fabien Laguillaumie (<https://eprint.iacr.org/2025/047>), correspond to
 /// $\Delta_p$.
 ///
 /// `Up` is the numeric type used to represent the prime `p`. `Udk` is the numeric type used to
@@ -438,7 +443,9 @@ impl
     fundamental_discriminant_bit_length: u32,
     p: impl AsRef<[u8]>,
   ) -> Result<Self, Cl15Error> {
-    use crypto_bigint::{CheckedSub, ConcatenatingMul, ConcatenatingSquare, Resize, BoxedUint};
+    use crypto_bigint::{
+      CheckedSub as _, ConcatenatingMul as _, ConcatenatingSquare as _, Resize as _, BoxedUint,
+    };
 
     let shrink = |n: BoxedUint| {
       let bits = n.bits_vartime();
@@ -592,6 +599,7 @@ impl
 
 impl<Up, Up2, Udk, Udp> Cl15p<Up, Up2, Udk, Udp> {
   /// The fundamental discriminant.
+  #[must_use]
   pub fn fundamental_discriminant(&self) -> &Cl15k<Up, Udk> {
     &self.fundamental
   }
@@ -601,6 +609,7 @@ impl<Up: Encoding, Up2: Encoding, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: En
   Cl15p<Up, Up2, Udk, Udp>
 {
   /// The element of `p`-order with an easy discrete-log problem.
+  #[must_use]
   pub fn f<E: Element>(&self) -> E {
     /*
       $b^2 + |delta| = 4 a c = p^2 + (q p p^2) = (q p + 1) p^2$
@@ -691,8 +700,9 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
   /// discriminant. This function runs in time only variable to this discriminant and
   /// `E::a_b_c_discriminant` (which may or may not be implemented in constant-time).
   #[cfg(feature = "alloc")] // TODO: no-`alloc`
+  #[must_use]
   pub fn surject<E: Element>(&self, element: impl Element) -> E {
-    use crypto_bigint::{CtGt, ConcatenatingMul, Resize, BoxedUint};
+    use crypto_bigint::{CtGt as _, ConcatenatingMul as _, Resize as _, BoxedUint};
 
     // SAFETY: `a_b_c_discriminant` is always safe to call
     let (a, (b_positive, b_abs), c, discriminant_abs) = unsafe { element.a_b_c_discriminant() };
@@ -814,6 +824,7 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
   /// discriminant. This function runs in time only variable to this discriminant and
   /// `E::a_b_c_discriminant` (which may or may not be implemented in constant-time).
   #[cfg(feature = "alloc")] // TODO: no-`alloc`
+  #[must_use]
   pub fn coset_labeling_function<E: Element>(&self, element: impl Element) -> E {
     self.fundamental_discriminant().inject(self.surject::<E>(element), self.fundamental.p.as_ref())
   }
@@ -850,14 +861,16 @@ impl<
   /// The `if` is used to check if the element is identity and therefore has a discrete-logarithm
   /// of `0`. Else, we apply the defined methodology of `Solve` (presented in Figure 2) from
   /// Linearly Homomorphic Encryption from DDH by Guilhem Castagnos and Fabien Laguillaumie
-  /// (https://eprint.iacr.org/2025/047). We explicitly specify the calculation of
+  /// (<https://eprint.iacr.org/2025/047>). We explicitly specify the calculation of
   /// $\tilde{x}^{-1} \mod p$ via `xgcd(x_tilde, p)` as we've already assumed the existence of an
   /// `xgcd` function elsewhere in our specification, though other methods would work as well and
   /// MAY be used instead (such as by Fermat's Little Theorem or a Bernstein-Yang inversion).
   ///
   /// This function runs time only variable to this discriminant and `E::a_b_c_discriminant` (which
   /// may or may not be implemented in constant-time).
+  #[must_use]
   pub fn discrete_logarithm(&self, element: impl Element) -> CtOption<Up> {
+    let identity = element.is_identity();
     // SAFETY: `a_b_c_discriminant` is always safe to call
     let (a, (b_positive, b_abs), _c, discriminant_abs) = unsafe { element.a_b_c_discriminant() };
 
@@ -912,7 +925,7 @@ impl<
         .filter_by(correct_discriminant & correct_a_coefficient & correct_b_coefficient);
     inverse.or(CtOption::new(
       Up::zero_like(self.fundamental.p.as_ref()),
-      correct_discriminant & element.is_identity(),
+      correct_discriminant & identity,
     ))
   }
 }

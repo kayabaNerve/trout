@@ -16,7 +16,7 @@
 //! its optimized variant as "NUCOMP"). Per a remark, and also Chapter 5, Exercise 9, the composite
 //! of two primitive forms is itself primitive.
 
-use crypto_bigint::{CtEq, CtSelect, CtAssign, Choice, Limb};
+use crypto_bigint::{CtEq, CtSelect as _, CtAssign, Choice, Limb};
 
 use super::I;
 
@@ -321,6 +321,7 @@ pub(crate) trait Limbs:
 /// bounds:
 /// - $a' < 2^(floor(log_2(a1 * a2)) + 1)$
 /// - $b' < 2^(1 + max(floor(log_2(|b2|)), floor(log_2(2 * a1 * a2))) + 1)$
+#[expect(clippy::needless_pass_by_value)]
 pub(crate) fn add<U: Limbs>(
   a1: U,
   mut b1: I<U>,
@@ -536,6 +537,7 @@ pub(crate) fn add<U: Limbs>(
 //
 // This is the above `add` function, specialized for the case the forms are the same. Comments
 // which would be duplicated between the two functions are omitted.
+#[expect(clippy::needless_pass_by_value)]
 pub(crate) fn double<U: Limbs>(a: U, b: I<U>, c: U::Wide) -> (U::Wide, I<U::Wide>) {
   // Because we bound that `delta` is _odd_, we know `s` is non-zero, as $b \cong delta \mod 2$
   let s = b.clone();

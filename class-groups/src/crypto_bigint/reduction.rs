@@ -11,7 +11,10 @@
 //! outputs of each function. This is done via brief proofs written in comments within each
 //! function.
 
-use crypto_bigint::{Choice, CtEq, CtSelect, CtLt, CtGt, Zero, BitOps, Limb, UintRef};
+#![expect(clippy::needless_pass_by_value)] // Triggered by `(&mut Choice, &mut L)`
+#![expect(clippy::inline_always)]
+
+use crypto_bigint::{Choice, CtEq, CtSelect, CtLt as _, CtGt as _, Zero, BitOps, Limb, UintRef};
 
 /// A collection of limbs and associated helper methods.
 ///
@@ -109,7 +112,7 @@ fn a_lte_c<L: Limbs>(a: &mut L, b_sign: &mut Choice, c: &mut L) {
 ///
 /// 1) It is still correct. `reduce_to_next_bit`, if called correctly, must be called from the
 ///    current bound to the minimal bound, the current bound decrementing by one bit with each call,
-///    as `reduce_to_next_bit is only guaranteed to reduce `|b|` by a single bit (until `b` is
+///    as `reduce_to_next_bit` is only guaranteed to reduce `|b|` by a single bit (until `b` is
 ///    reduced). Assuming the bound is properly decremented with each call, then we know `|b|` is
 ///    within the bound for each call, as the iteration is either unnecessary (the current bound
 ///    exceeding the actual `floor(log_2(|b|)) + 1`) or will be reduced by at least one bit (and
@@ -173,7 +176,8 @@ fn should_reduce_to_next_bit_except_final(
     result that no further reduction should occur.
   */
   b_gt_a &
-    Choice::from(b.1.bit_vartime(b_bits_bound.saturating_sub(1)) as u8).ct_eq(&!b_needs_negation)
+    Choice::from(u8::from(b.1.bit_vartime(b_bits_bound.saturating_sub(1))))
+      .ct_eq(&!b_needs_negation)
 }
 
 /// If `reduce_to_next_bit` should actually apply.
@@ -522,9 +526,15 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
       the iteration _after_ the condition becomes true, so we need to defer when we move to the
       smaller amount of limbs until after this later iteration.
     */
-    const DECREASE_LIMBS_AT: u32 = 2 + Limb::BITS;
+    #[expect(clippy::as_conversions, clippy::cast_possible_truncation)]
+    const DECREASE_LIMBS_AT: u16 = 2 + (Limb::BITS as u16);
+    #[expect(clippy::as_conversions)]
+    const {
+      assert!(((DECREASE_LIMBS_AT - 2) as u32) == Limb::BITS);
+    }
 
     // `RangeInclusive` doesn't implement `FixedSizeIterator`, so we use a `Range` instead
+    #[expect(clippy::range_plus_one)]
     let mut bits = ((upper_bound + 1) .. (log_2_bound + 1)).rev();
 
     let mut a_bits = a.bits();
@@ -532,8 +542,8 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 
     // Handle the partial limb we inherently have by the bound not perfectly aligning to limbs
     {
-      let progress_in_limb = Limb::BITS - (log_2_bound % Limb::BITS);
-      for bits in (&mut bits).take((DECREASE_LIMBS_AT - progress_in_limb) as usize) {
+      let progress_in_limb = u16::try_from(Limb::BITS - (log_2_bound % Limb::BITS)).unwrap();
+      for bits in (&mut bits).take(usize::from(DECREASE_LIMBS_AT - progress_in_limb)) {
         approximate_a_lte_c((&mut a_bits, &mut a), b_sign, (&mut c_bits, &mut c));
         let should_reduce = should_reduce_to_next_bit_except_final(
           (b_sign, b_value),
@@ -586,7 +596,7 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
       experimental.
     */
     while bits.len() != 0 {
-      for bits in (&mut bits).take(DECREASE_LIMBS_AT as usize) {
+      for bits in (&mut bits).take(usize::from(DECREASE_LIMBS_AT)) {
         approximate_a_lte_c((&mut a_bits, &mut a), b_sign, (&mut c_bits, &mut c));
         let should_reduce = should_reduce_to_next_bit_except_final(
           (b_sign, b_value),

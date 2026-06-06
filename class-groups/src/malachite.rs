@@ -2,7 +2,8 @@ use core::{cmp::Ordering, ops::Neg};
 
 use ::malachite::{
   base::num::{
-    arithmetic::traits::*, basic::traits::*, conversion::traits::*, logic::traits::SignificantBits,
+    arithmetic::traits::*, basic::traits::*, conversion::traits::*,
+    logic::traits::SignificantBits as _,
   },
   *,
 };
@@ -91,7 +92,7 @@ impl MalachiteElement {
     }
     // Step 3, first sentence
     while a > c {
-      std::mem::swap(&mut a, &mut c);
+      core::mem::swap(&mut a, &mut c);
       b = -b;
       // Go to step 2
       normalize(&mut a, &mut b, &mut c);
@@ -268,7 +269,7 @@ impl crate::Element for MalachiteElement {
 
   // SAFETY: This always reduces forms and does return a well-defined form as required.
   unsafe fn a_b_c_discriminant(
-    &self,
+    self,
   ) -> (
     impl AsRef<[u8]>,
     (crypto_bigint::Choice, impl AsRef<[u8]>),

@@ -1,24 +1,24 @@
-use core::{marker::PhantomData, ops::Deref};
+use core::{marker::PhantomData, ops::Deref as _};
+use alloc::sync::Arc;
 use std::{
-  sync::Arc,
   collections::{HashSet, HashMap},
-  io::Write,
+  io::Write as _,
 };
 
 use zeroize::Zeroizing;
 use rand::CryptoRng;
 
 use group::{
-  ff::{Field, PrimeField, PrimeFieldBits},
-  Group, GroupEncoding,
+  ff::{Field as _, PrimeField as _, PrimeFieldBits},
+  Group as _, GroupEncoding as _,
 };
 use class_groups::{ElementExt, Table, ClassGroup};
 
 use dkg::Participant;
 
 use crate::{
-  UnsignedInteger, DigestReader, DigestWriter, RoundOneProofs, RoundTwoProofs, Parameters,
-  SetupView, Setup,
+  UnsignedInteger, DigestReader, DigestWriter, RoundOneProofs as _, RoundTwoProofs as _,
+  Parameters, SetupView, Setup,
 };
 
 /// Table a ciphertext for scaled decryption.
@@ -535,7 +535,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>>
     for (participant, lagrange) in &self.lagrange_coefficients {
       let share_ciphertext = self
         .setup
-        .share_ciphertext(participant)
+        .share_ciphertext(*participant)
         .expect("didn't have the share ciphertext for a participant");
       let lagrange_bytes = crate::be_bytes(lagrange);
       C.push((share_ciphertext, lagrange_bytes));
@@ -794,7 +794,7 @@ impl<PCG: ElementExt, CG: ElementExt, P: Parameters<PCG> + Parameters<CG>> Aggre
         let (K_i, U_i) = self.observing_signing.K_U_i.remove(&participant).unwrap();
         // We do calculate Z prior, but not Z_i prior, so we calculcate this here
         let Z_i = CG::mul(
-          setup.share_ciphertext(&participant).unwrap(),
+          setup.share_ciphertext(participant).unwrap(),
           &crate::be_bytes(&self.observing_signing.lagrange_coefficients[&participant]),
         );
         if <P as Parameters<CG>>::RoundTwoProofs::verify(

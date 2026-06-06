@@ -103,7 +103,7 @@ pub(super) fn decode_varint(mut reader: impl io::Read) -> Result<usize, Error> {
 
 #[test]
 fn varint() {
-  use rand::Rng;
+  use rand::Rng as _;
   let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
 
   let test = |value| {

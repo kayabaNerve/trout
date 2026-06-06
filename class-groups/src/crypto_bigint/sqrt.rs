@@ -1,5 +1,6 @@
 use crypto_bigint::{
-  CtEq, CtAssign, Zero, One, Odd, JacobiSymbol, NegMod, MulMod, SquareMod, BitOps, Limb, UintRef,
+  CtEq as _, CtAssign, Zero, One, Odd, JacobiSymbol, NegMod, MulMod, SquareMod, BitOps, Limb,
+  UintRef,
 };
 
 /// The required view over a collection of limbs to calculate a square root.
@@ -176,7 +177,7 @@ pub(crate) fn sqrt_mod_p_vartime<U: SquareRoot>(n: U, p: &Odd<U>) -> Option<U> {
     debug_assert!(bool::from(carry.is_zero()));
   }
   let mut R = n.clone().pow_mod(Q_plus_1_div_2, p);
-  let mut t = n.clone().pow_mod(Q.clone(), p);
+  let mut t = n.pow_mod(Q.clone(), p);
 
   /*
     Find the least quadratic non-residue within the odd-prime field $p$.

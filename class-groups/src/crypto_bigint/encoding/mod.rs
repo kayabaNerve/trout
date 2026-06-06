@@ -50,7 +50,7 @@
 //! }
 //! ```
 
-use crypto_bigint::{Choice, CtOption, CtEq, CtLt, CtAssign, Zero, One, NonZero, Limb};
+use crypto_bigint::{Choice, CtOption, CtEq as _, CtLt as _, CtAssign, Zero, One, NonZero, Limb};
 
 /// An error encountered while decoding.
 #[derive(Clone, Copy, Debug)]

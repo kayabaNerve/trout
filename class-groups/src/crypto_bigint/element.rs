@@ -3,12 +3,13 @@ use core::{ops::Neg, fmt::Debug};
 use zeroize::Zeroize;
 
 use crypto_bigint::{
-  Choice, CtOption, CtEq, CtGt, CtSelect, CtAssign, BitOps, NonZero, One, Limb, UintRef,
+  Choice, CtOption, CtEq, CtGt as _, CtSelect, CtAssign as _, BitOps, NonZero, One as _, Limb,
+  UintRef,
 };
 
 use super::I;
 
-use crate::Table;
+use crate::{Element, Table};
 
 pub(super) trait Limbs:
   Send
@@ -211,7 +212,7 @@ impl<U: Limbs> CryptoBigintElement<U> {
 
     // SAFETY: This is well-defined, reduced, and primitive
     unsafe {
-      <Self as crate::Element>::from_coefficients(
+      <Self as Element>::from_coefficients(
         a,
         b,
         U::wide_to_le_bytes(c),
@@ -329,7 +330,7 @@ impl<U: Limbs> CryptoBigintElement<U> {
   }
 }
 
-impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
+impl<U: Limbs> Element for CryptoBigintElement<U> {
   /// This is only valid for forms of negative odd discriminant.
   fn identity(discriminant_abs: impl AsRef<[u8]>) -> Self {
     let discriminant_abs = discriminant_abs.as_ref();
@@ -395,9 +396,9 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
   // SAFETY: This reduces the form before yielding it and does return a well-defined form as
   // required.
   unsafe fn a_b_c_discriminant(
-    &self,
+    self,
   ) -> (impl AsRef<[u8]>, (Choice, impl AsRef<[u8]>), impl AsRef<[u8]>, impl AsRef<[u8]>) {
-    let reduced = self.clone().reduce();
+    let reduced = self.reduce();
     (
       reduced.a.to_le_bytes(),
       (reduced.b.0, reduced.b.1.to_le_bytes()),
@@ -544,15 +545,13 @@ impl<U: Limbs> crate::Element for CryptoBigintElement<U> {
 // TODO
 impl<U: Limbs> crate::ElementExt for CryptoBigintElement<U>
 where
-  Self: crate::Element,
+  Self: Element,
 {
   const MAX_TABLE_BITS: u32 = 12;
 
   /// This is only correct when `identity` is in fact the identity element for the class group the
   /// elements in the table belong to.
   fn multiexp(identity: &Self, pairs: &[(&Table<Self>, &[u8])]) -> Self {
-    use crate::Element;
-
     let mut longest_scalar_bits = 0;
     for (_table, scalar) in pairs {
       longest_scalar_bits = longest_scalar_bits.max(scalar.len() * 8);

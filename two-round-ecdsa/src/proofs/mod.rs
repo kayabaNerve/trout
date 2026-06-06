@@ -173,7 +173,7 @@ pub(crate) mod ccykc {
   pub(crate) fn write_e<W: Write>(
     transcript: &mut DigestWriter<W>,
     modulus: &crypto_bigint::NonZero<crypto_bigint::BoxedUint>,
-    e: UnsignedInteger,
+    e: &UnsignedInteger,
   ) -> io::Result<()> {
     let e_bytes = e.to_be_bytes();
     // We can fix the encoded size to the size of the modulus, known to the prover and verifier

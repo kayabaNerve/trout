@@ -3,7 +3,7 @@ use core::ops::{Add, AddAssign, Mul};
 use zeroize::{Zeroize, Zeroizing};
 use rand::CryptoRng;
 
-use crypto_bigint::{Resize, ConcatenatingMul, NonZero, BoxedUint};
+use crypto_bigint::{Resize as _, ConcatenatingMul as _, NonZero, BoxedUint};
 
 /// A constant-time variable-size (dynamically-allocated) unsigned integer.
 // This wraps BoxedUint with a type which re-allocates as necessary to ensure it never wraps.

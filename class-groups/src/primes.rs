@@ -10,19 +10,15 @@ use crypto_bigint::BoxedUint;
 /// This returns the bit-length of the seed and an iterator of candidates.
 ///
 /// This may panic if an obscenely large seed is specified.
-fn next_prime_candidates(seed: impl AsRef<[u8]>) -> (u32, impl Iterator<Item = BoxedUint>) {
-  let seed = seed.as_ref();
-  let seed = BoxedUint::from_be_slice(
-    seed,
-    8 * (1 + u32::try_from(seed.len()).expect("requested a 4 GB prime?")),
-  )
-  .expect("number with more precision than bytes didn't fit within precision");
+fn next_prime_candidates(seed: BoxedUint) -> (u32, impl Iterator<Item = BoxedUint>) {
   let bit_length = seed.bits();
   let max_bit_length = NonZero::new(seed.bits_precision()).unwrap();
   match crypto_primes::hazmat::SmallFactorsSieve::new(seed, max_bit_length, false) {
     Ok(iter) => (bit_length, iter),
     // We explicitly set `max_bit_length = bits_precision`
-    Err(crypto_primes::Error::BitLengthTooLarge { .. }) => unreachable!(),
+    Err(crypto_primes::Error::BitLengthTooLarge { .. }) => {
+      unreachable!("`max_bit_length = bits_precision`")
+    }
     // Inapplicable to this context
     Err(crypto_primes::Error::BitLengthTooSmall { .. }) => unreachable!(),
   }
@@ -43,6 +39,7 @@ pub(super) fn next_prime(
   seed: impl AsRef<[u8]>,
   bits_of_security: u32,
 ) -> BoxedUint {
+  let seed = BoxedUint::from_be_slice_vartime(seed.as_ref());
   let (bit_length, candidates) = next_prime_candidates(seed);
   let options = crypto_primes::fips::FipsOptions::with_error_bound(bit_length, bits_of_security)
     .expect("bits of security lacked corresponding Miller-Rabin profile")
@@ -52,5 +49,6 @@ pub(super) fn next_prime(
       return candidate;
     }
   }
+
   panic!("exhausted all candidates within at least a further 8 bits")
 }

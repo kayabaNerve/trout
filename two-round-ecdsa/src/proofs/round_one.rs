@@ -1,5 +1,5 @@
-use core::{marker::PhantomData, ops::Deref};
-use std::io::{self, Read, Write};
+use core::{marker::PhantomData, ops::Deref as _};
+use std::io::{self, Read as _, Write as _};
 
 use zeroize::Zeroizing;
 use rand::CryptoRng;
@@ -7,8 +7,8 @@ use rand::CryptoRng;
 use ::malachite::{base::num::basic::traits::*, *};
 
 use group::{
-  ff::{Field, PrimeField},
-  Group, GroupEncoding,
+  ff::{Field as _, PrimeField},
+  Group as _, GroupEncoding as _,
 };
 use class_groups::{ElementExt, Table, ClassGroup};
 
@@ -172,7 +172,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
       // Write `D_2` from the paper
       CG::mul(G, &d_randomness).compress(&mut *transcript)?;
       // Write `e_p` from the paper
-      crate::ccykc::write_e(&mut *transcript, &modulus, e_randomness)?;
+      crate::ccykc::write_e(&mut *transcript, &modulus, &e_randomness)?;
     }
 
     // ZKPoKRepS response
@@ -183,7 +183,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
       // Write `D` from the paper
       CG::mul(G, &d_beta_i).compress(&mut *transcript)?;
       // Write `e_0` from the paper
-      crate::ccykc::write_e(&mut *transcript, &modulus, e_beta_i)?;
+      crate::ccykc::write_e(&mut *transcript, &modulus, &e_beta_i)?;
     }
 
     Ok(())

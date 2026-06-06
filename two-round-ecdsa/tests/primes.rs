@@ -1,3 +1,5 @@
+//! Benchmark how long sampling primes takes.
+
 #[test]
 fn primes() {
   use two_round_ecdsa::proofs::{Primes, CryptoPrimesStack, CryptoPrimesHeap};

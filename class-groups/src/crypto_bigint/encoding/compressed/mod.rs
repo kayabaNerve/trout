@@ -136,7 +136,8 @@ use alloc::vec::Vec;
 use std::io;
 
 use crypto_bigint::{
-  Choice, CtEq, CtAssign, NonZero, ConcatenatingMul, ConcatenatingSquare, Gcd, Resize, BoxedUint,
+  Choice, CtEq as _, CtAssign as _, NonZero, ConcatenatingMul as _, ConcatenatingSquare as _,
+  Gcd as _, Resize as _, BoxedUint,
 };
 
 use super::Error;

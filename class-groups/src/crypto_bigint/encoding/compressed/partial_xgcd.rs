@@ -127,7 +127,7 @@
 //! updates during the loop are the potential simultaneously swap of $s', t'$ with $s, t$, also
 //! upholding the invariants.
 
-use crypto_bigint::{Choice, NonZero, Resize, ConcatenatingSquare, BoxedUint};
+use crypto_bigint::{Choice, NonZero, Resize as _, ConcatenatingSquare as _, BoxedUint};
 
 /// The implementation of the `t` function as described in the specification.
 ///
@@ -146,9 +146,13 @@ pub(super) fn t(a: NonZero<BoxedUint>, b: BoxedUint) -> (Choice, NonZero<BoxedUi
   };
 
   let precision = a.bits_precision();
+  #[cfg(debug_assertions)]
+  let original_a = a.clone();
+  #[cfg(debug_assertions)]
+  let original_b = b.clone();
   let (mut s, mut s_apo, mut t, mut t_apo) = (
-    b.clone().resize(precision),
-    a.as_ref().clone(),
+    b.resize(precision),
+    a.get(),
     (Choice::TRUE, BoxedUint::one_with_precision(precision)),
     (Choice::TRUE, BoxedUint::zero_with_precision(precision)),
   );
@@ -157,11 +161,11 @@ pub(super) fn t(a: NonZero<BoxedUint>, b: BoxedUint) -> (Choice, NonZero<BoxedUi
   while s >= ceil_sqrt_a {
     #[cfg(debug_assertions)]
     {
-      use crypto_bigint::CtSelect;
-      let t = <_>::ct_select(&t.1.neg_mod(&a), &t.1, t.0);
-      let t_apo = <_>::ct_select(&t_apo.1.neg_mod(&a), &t_apo.1, t_apo.0);
-      debug_assert_eq!(b.mul_mod(&t, &a), s.rem(&a));
-      debug_assert_eq!(b.mul_mod(&t_apo, &a), s_apo.rem(&a));
+      use crypto_bigint::CtSelect as _;
+      let t = <_>::ct_select(&t.1.neg_mod(&original_a), &t.1, t.0);
+      let t_apo = <_>::ct_select(&t_apo.1.neg_mod(&original_a), &t_apo.1, t_apo.0);
+      debug_assert_eq!(original_b.mul_mod(&t, &original_a), s.rem(&original_a));
+      debug_assert_eq!(original_b.mul_mod(&t_apo, &original_a), s_apo.rem(&original_a));
     }
 
     let log_2_q = (s_apo.bits_vartime() - s.bits_vartime()).saturating_sub(1);
@@ -196,8 +200,8 @@ pub(super) fn t(a: NonZero<BoxedUint>, b: BoxedUint) -> (Choice, NonZero<BoxedUi
 
 #[test]
 fn test() {
-  use rand::Rng;
-  use crypto_bigint::{CtSelect, RandomBits, RandomMod};
+  use rand::Rng as _;
+  use crypto_bigint::{CtSelect as _, RandomBits as _, RandomMod as _};
 
   let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
 

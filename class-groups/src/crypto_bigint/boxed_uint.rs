@@ -1,6 +1,8 @@
+#![expect(clippy::inline_always)]
+
 use crypto_bigint::{
-  CtEq, CtAssign, Resize, Zero, One, ConcatenatingSquare, ConcatenatingMul, Gcd, Choice, NonZero,
-  BoxedUint,
+  CtEq as _, CtAssign as _, Resize as _, Zero, One as _, ConcatenatingSquare as _,
+  ConcatenatingMul as _, Gcd as _, Choice, NonZero, BoxedUint,
 };
 
 impl super::c::Limbs for BoxedUint {
@@ -87,7 +89,7 @@ impl super::composition::Limbs for BoxedUint {
 
     #[cfg(debug_assertions)]
     {
-      use crypto_bigint::CtSelect;
+      use crypto_bigint::CtSelect as _;
       let eq1 = u.concatenating_mul(&self);
       let eq2 = v.concatenating_mul(&other);
       let lhs = <_>::ct_select(

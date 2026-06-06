@@ -1,3 +1,5 @@
+//! Test the signing protocol.
+
 use rand::{rand_core, rngs::SysRng};
 use dkg::Participant;
 use two_round_ecdsa::{SecurityLevel, Setup, SigningProtocol, Ready};
@@ -69,7 +71,7 @@ fn sign() {
   println!("Aggregated!");
 
   {
-    use ecdsa::signature::Verifier;
+    use ecdsa::signature::Verifier as _;
     ecdsa::VerifyingKey::<k256::Secp256k1>::from_affine(
       setups.values().next().unwrap().view().verification_key().to_affine(),
     )

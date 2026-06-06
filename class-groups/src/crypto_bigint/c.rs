@@ -40,7 +40,6 @@ pub(super) trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> {
 /// - $floor(log_2(|a|)) + 1 < <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
 ///
 /// `delta` is specified via its absolute value in `negative_discriminant_abs`.
-#[inline(always)]
 pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L) -> L {
   let (mut b_lo, mut b_hi) = b.1.widening_square();
 

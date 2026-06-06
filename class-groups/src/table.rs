@@ -12,6 +12,7 @@ pub trait ElementExt: Element {
   /// Perform a multiexponentation.
   ///
   /// The implementation provided by this trait runs in variable time.
+  #[must_use]
   fn multiexp(identity: &Self, pairs: &[(&Table<Self>, &[u8])]) -> Self {
     let mut longest_scalar_bits = 0;
     for (_table, scalar) in pairs {
@@ -76,6 +77,7 @@ pub trait ElementExt: Element {
   /// The scalar is expected to be represented by its big-endian bytes.
   ///
   /// The implementation provided by this trait is as-constant-time as `multiexp` is.
+  #[must_use]
   fn mul(table: &Table<Self>, scalar: &[u8]) -> Self {
     Self::multiexp(&table[0], &[(table, scalar)])
   }
@@ -88,6 +90,7 @@ pub trait ElementExt: Element {
   /// The scalar is expected to be represented by its big-endian bytes.
   ///
   /// The implementation provided by this trait is as-constant-time as `double, add, mul` are.
+  #[must_use]
   fn mul_once(identity: Self, element: Self, scalar: &[u8]) -> Self {
     Self::mul(&Table::new_for_scalar_bits(scalar.len() * 8, identity, element), scalar)
   }
@@ -100,6 +103,7 @@ impl<E: ElementExt> Table<E> {
   /// Create a new table.
   ///
   /// This function executes in constant-time w.r.t. `element` if `double, add` are constant-time.
+  #[must_use]
   pub fn new(bits: u32, identity: E, element: E) -> Self {
     let bits = bits.clamp(1, E::MAX_TABLE_BITS);
     let len = 2usize.pow(bits);
@@ -123,12 +127,14 @@ impl<E: ElementExt> Table<E> {
   ///
   /// This is usable in ad-hoc multiplications where creating the table, and performing the
   /// multiplication with it, should not cost more than performing the multiplication out-right.
+  #[must_use]
   pub fn new_for_scalar_bits(scalar_bits: usize, identity: E, element: E) -> Self {
     let mut bits = 0u32;
     let mut adds = usize::MAX;
     while {
       let new_bits = bits + 1;
-      let new_adds = 2usize.pow(new_bits) + (scalar_bits.min(8192) / (new_bits as usize));
+      let new_adds =
+        2usize.pow(new_bits) + (scalar_bits.min(8192) / usize::try_from(new_bits).unwrap());
       if new_adds <= adds {
         bits = new_bits;
         adds = new_adds;
@@ -141,6 +147,7 @@ impl<E: ElementExt> Table<E> {
   }
 
   /// The bits preprocessed by this table.
+  #[must_use]
   pub fn bits(&self) -> usize {
     self.0
   }

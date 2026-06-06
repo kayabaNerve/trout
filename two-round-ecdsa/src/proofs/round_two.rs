@@ -6,7 +6,7 @@ use rand::CryptoRng;
 
 use ::malachite::base::num::logic::traits::*;
 
-use group::ff::{Field, PrimeField};
+use group::ff::{Field as _, PrimeField};
 use class_groups::{ElementExt, Table, ClassGroup};
 
 use crate::{UnsignedInteger, DigestReader, DigestWriter, Primes, Parameters};
@@ -208,11 +208,11 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
       .compress(&mut *transcript)?;
 
     // Each `e`
-    crate::ccykc::write_e(&mut *transcript, &modulus, e_delta_i)?;
+    crate::ccykc::write_e(&mut *transcript, &modulus, &e_delta_i)?;
     transcript.write_all(s_x_i.to_repr().as_ref())?;
-    crate::ccykc::write_e(&mut *transcript, &modulus, e_alpha_i)?;
+    crate::ccykc::write_e(&mut *transcript, &modulus, &e_alpha_i)?;
     transcript.write_all(s_k_i.to_repr().as_ref())?;
-    crate::ccykc::write_e(&mut *transcript, &modulus, e_beta_i)
+    crate::ccykc::write_e(&mut *transcript, &modulus, &e_beta_i)
   }
 
   fn verify<R: io::Read>(

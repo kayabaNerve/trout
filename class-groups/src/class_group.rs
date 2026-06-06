@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use rand::CryptoRng;
 
-use crate::{Table, ElementExt, FundamentalDiscriminant, NegativeDiscriminant, Cl15p};
+use crate::{Table, ElementExt, NegativeDiscriminant as _, Cl15p};
 
 use ::crypto_bigint::BoxedUint;
 /// A class group.
@@ -25,6 +25,7 @@ impl<E: ElementExt> ClassGroup<E> {
   /// `p_le_bytes` is expected to be the little-endian encoding of the odd prime order of the
   /// subgroup.
   // https://eprint.iacr.org/2015/047 Figure 2, slightly modified with regards to `g`
+  #[must_use]
   pub fn setup(rng: &mut impl CryptoRng, lambda: u64, p_le_bytes: Vec<u8>) -> Option<Self> {
     Cl15p::sample(rng, 4, u32::try_from(2 * lambda).unwrap(), p_le_bytes).ok().map(|cl15p| {
       let identity = E::identity(cl15p.absolute_value());
@@ -34,6 +35,7 @@ impl<E: ElementExt> ClassGroup<E> {
   }
 
   /// The prime-order of the subgroup where the discrete log problem is easy.
+  #[must_use]
   pub fn p(&self) -> impl AsRef<[u8]> {
     self.cl15p.fundamental_discriminant().p().to_be_bytes()
   }
@@ -42,11 +44,13 @@ impl<E: ElementExt> ClassGroup<E> {
   ///
   /// Scalars for the unknown-order should be sampled from this bound plus a further `k`-bits
   /// representing the desired `2**-k` distance from this bound upon sampling.
+  #[must_use]
   pub fn unknown_order_bound(&self) -> u32 {
     self.cl15p.upper_bound_on_order()
   }
 
   /// The identity element for the discriminant `p`.
+  #[must_use]
   pub fn identity_p(&self) -> E {
     E::identity(self.cl15p.absolute_value())
   }
@@ -54,8 +58,10 @@ impl<E: ElementExt> ClassGroup<E> {
   /// Obtain a generator of the squares of the class group with discriminant `p`.
   ///
   /// This function executes in variable time.
+  #[cfg(feature = "alloc")]
+  #[must_use]
   pub fn generator_p(&self, rng: &mut impl CryptoRng) -> E {
-    use ::crypto_bigint::{NonZero, RandomMod, BoxedUint};
+    use ::crypto_bigint::{NonZero, RandomMod as _, BoxedUint};
     let discriminant_abs = self.delta_p();
     let discriminant_abs = discriminant_abs.as_ref();
     let seed = BoxedUint::random_mod_vartime(
@@ -69,6 +75,7 @@ impl<E: ElementExt> ClassGroup<E> {
   }
 
   /// The generator for the known-order subgroup over discriminant `p`.
+  #[must_use]
   pub fn f(&self) -> &Table<E> {
     &self.f_table
   }
@@ -76,53 +83,16 @@ impl<E: ElementExt> ClassGroup<E> {
   /// Solve for the discrete logarithm of an element in the class group of discriminant `p`.
   ///
   /// This function executes in variable time.
-  ///
-  /// This is well-defined for elements which have a discrete logarithm over `f`. This is undefined
-  /// for elements which don't have such a discrete logarithm. The caller is expected to check
-  /// `d * f == X`, where `d` is the returned discrete-logarithm, to learn if this is well-defined.
-  //
-  // This method doesn't perform that check itself as the caller may already know the element is
-  // well-defined. There's no reason to perform the consistency check, which is non-trivial, in
-  // that case.
+  #[must_use]
   pub fn discrete_logarithm(&self, X: &E) -> Option<Vec<u8>> {
     Option::<BoxedUint>::from(self.cl15p.discrete_logarithm(X.clone()))
       .map(|up| up.to_be_bytes().to_vec())
   }
 
   /// The little-endian encoding of the non-fundamental discriminant.
+  #[must_use]
   pub fn delta_p(&self) -> impl AsRef<[u8]> {
     self.cl15p.absolute_value()
-  }
-
-  /// Surject an element of the class group of discriminant `p` to the class group of discriminant
-  /// `k`.
-  ///
-  /// This has undefined behavior for an element which isn't of discriminant `p`.
-  ///
-  /// This function executes in variable time.
-  // HJPT98, Algorithm 3, for odd discriminants (b_O = 1)
-  pub fn surject(&self, e: &E) -> E {
-    self.cl15p.surject(e.clone())
-  }
-
-  /// Inject an element of the class group of discriminant `k` to the class group of discriminant
-  /// `p`.
-  ///
-  /// This has undefined behavior for an element which isn't of discriminant `k`.
-  ///
-  /// This function executes in variable time.
-  // HJPT, Algorithm 2
-  pub fn inject(&self, e: E) -> E {
-    self.cl15p.fundamental_discriminant().inject(e, self.cl15p.fundamental_discriminant().p())
-  }
-
-  /// Apply the coset labelling function for an element in the class group of discriminant `p`.
-  ///
-  /// This has undefined behavior for an element which isn't of discriminant `p`.
-  ///
-  /// This function executes in variable time.
-  pub fn coset_labelling_function(&self, e: &E) -> E {
-    self.cl15p.coset_labeling_function(e.clone())
   }
 }
 
@@ -205,7 +175,7 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
   // Check we can compress all elements of the g table
   for g in g.as_ref() {
     let mut bytes = vec![];
-    g.compress(&mut bytes).unwrap();
+    g.clone().compress(&mut bytes).unwrap();
     assert_eq!(&E::decompress(&mut bytes.as_slice(), cg.delta_p()).unwrap(), g);
 
     assert_eq!(&E::uncompressed_decode(g.uncompressed_encode(), cg.delta_p()).unwrap(), g);
@@ -217,15 +187,15 @@ fn test_class_group<E: ElementExt>(mut rng: impl CryptoRng) {
       assert_eq!(f, &cg.identity_p());
     }
     let mut bytes = vec![];
-    f.compress(&mut bytes).unwrap();
+    f.clone().compress(&mut bytes).unwrap();
     assert_eq!(&E::decompress(&mut bytes.as_slice(), cg.delta_p()).unwrap(), f);
 
     assert_eq!(&E::uncompressed_decode(f.uncompressed_encode(), cg.delta_p()).unwrap(), f);
   }
 
   // Test the coset labelling function
-  let label = cg.coset_labelling_function(&g[1]);
-  assert_eq!(label, cg.coset_labelling_function(&(g[1].add(&cg.f()[1]))));
+  let label = cg.cl15p.coset_labeling_function::<E>(g[1].clone());
+  assert_eq!(label, cg.cl15p.coset_labeling_function::<E>(g[1].add(&cg.f()[1])));
   let dlog = cg.discrete_logarithm(&(label.sub(g[1].clone()))).unwrap();
   assert_eq!(E::mul(cg.f(), &dlog), label.sub(g[1].clone()));
 }
@@ -294,7 +264,7 @@ fn crypto_bigint_heap_class_group() {
 
 #[test]
 fn bench() {
-  use rand::SeedableRng;
+  use rand::SeedableRng as _;
   use rand_chacha::ChaCha20Rng;
   const SEED: [u8; 32] = [0; 32];
   bench_class_group::<crate::MalachiteElement>(ChaCha20Rng::from_seed(SEED));

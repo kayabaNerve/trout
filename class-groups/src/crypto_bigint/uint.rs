@@ -1,4 +1,6 @@
-use crypto_bigint::{Choice, CtEq, Encoding, Concat, SplitEven, One, NonZero, Uint};
+#![expect(clippy::inline_always)]
+
+use crypto_bigint::{Choice, CtEq as _, Encoding, Concat, SplitEven, One as _, NonZero, Uint};
 
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where

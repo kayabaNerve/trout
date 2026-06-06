@@ -2,11 +2,13 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 #![allow(non_snake_case, clippy::too_many_arguments, clippy::type_complexity)]
+#![allow(unused, clippy::iter_over_hash_type, clippy::todo)] // TODO
 
 use core::marker::PhantomData;
+extern crate alloc;
 use std::io;
 
-use subtle::{Choice, ConditionallySelectable};
+use subtle::{Choice, ConditionallySelectable as _};
 use zeroize::{Zeroize, Zeroizing};
 
 use group::{ff::PrimeFieldBits, GroupEncoding, prime::PrimeGroup};
@@ -115,14 +117,14 @@ impl<CG: ElementExt, P: Primes> Parameters<CG> for Secp256k1<P> {
     <k256::Scalar as Reduce<k256::elliptic_curve::bigint::U512>>::reduce_bytes(&bytes.into())
   }
   fn hash_message(message: &[u8]) -> Self::F {
-    use sha2::{Digest, Sha256};
+    use sha2::{Digest as _, Sha256};
     use k256::elliptic_curve::ops::Reduce;
     <k256::Scalar as Reduce<k256::U256>>::reduce_bytes(
       &<[u8; 32]>::from(Sha256::digest(message)).into(),
     )
   }
   fn x_coordinate(point: &Self::E) -> Self::F {
-    use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates};
+    use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates as _};
     <k256::Scalar as Reduce<k256::U256>>::reduce_bytes(
       &<[u8; 32]>::from(point.to_affine().x()).into(),
     )

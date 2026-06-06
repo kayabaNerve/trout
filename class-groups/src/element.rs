@@ -40,10 +40,13 @@ pub trait Element:
   ///
   /// This is generally faster than adding an element to itself as it's allowed to specialize on
   /// this special case.
+  #[must_use]
   fn double(&self) -> Self;
   /// Add two elements.
+  #[must_use]
   fn add(&self, other: &Self) -> Self;
   /// Subtract one element from another.
+  #[must_use]
   fn sub(&self, other: Self) -> Self;
 
   /// Fetch the `a, b, c` coefficients of the single reduced form equivalent to this form and the
@@ -61,7 +64,7 @@ pub trait Element:
   /// unsafe to _implement_. It MUST NOT be unsafe to _call_.
   #[expect(clippy::type_complexity)]
   unsafe fn a_b_c_discriminant(
-    &self,
+    self,
   ) -> (impl AsRef<[u8]>, (Choice, impl AsRef<[u8]>), impl AsRef<[u8]>, impl AsRef<[u8]>);
 
   /// Load a form from its coefficients.
@@ -81,6 +84,7 @@ pub trait Element:
   // conditions aren't met. The usage of `unsafe` is simply to allow implementations to introduce
   // `unsafe` operations around these preconditions, when all loaded forms should be from
   // (un)compressed encodings which perform validation at time of decode.
+  #[must_use]
   unsafe fn from_coefficients(
     a: impl AsRef<[u8]>,
     b: (Choice, impl AsRef<[u8]>),
@@ -98,7 +102,7 @@ pub trait Element:
   /// The provided implementation runs in variable time and MAY panic for absurdly large
   /// coefficients.
   #[cfg(feature = "std")]
-  fn compress(&self, mut writer: impl io::Write) -> io::Result<()> {
+  fn compress(self, mut writer: impl io::Write) -> io::Result<()> {
     use crypto_bigint::{NonZero, BoxedUint};
 
     // SAFETY: `a_b_c_discriminant` is always safe to call
@@ -225,7 +229,7 @@ pub trait Element:
   /// squared as the Decisional Diffie-Hellman problem is easy over the entire class group and it's
   /// its squares which form a generally-desirable subgroup
   /// ("Linearly Homomorphic Encryption from DDH" by Guilhem Castagnos and Fabien Laguillaumie,
-  /// https://eprint.iacr.org/2015/047, Appendix B.4).
+  /// <https://eprint.iacr.org/2015/047>, Appendix B.4).
   ///
   /// Implementations MUST implement the specification for sampling a random element of the class
   /// group, as the provided implementation does, with identical results. The provided
@@ -234,7 +238,7 @@ pub trait Element:
   /// (requiring sampling a prime number).
   ///
   /// "How (not) to hash into class groups of imaginary quadratic fields?", by
-  /// István András Seres, Péter Burcsi, and Péter Kutas (https://eprint.iacr.org/2024/034), is
+  /// István András Seres, Péter Burcsi, and Péter Kutas (<https://eprint.iacr.org/2024/034>), is
   /// referred to as primary academic reference for the analysis and justification of such hash
   /// functions. We specify (and implement) the second construction, attributed to the conference
   /// version of "Efficient verifiable delay functions" by Benjamin Wesolowski, and _not_ the
@@ -315,7 +319,7 @@ pub trait Element:
     discriminant_abs: impl AsRef<[u8]>,
     bits_of_security: u32,
   ) -> Self {
-    use ::crypto_bigint::{CtEq, NonZero, Odd, Resize, ConcatenatingSquare, BoxedUint};
+    use crypto_bigint::{CtEq as _, NonZero, Odd, Resize as _, ConcatenatingSquare as _, BoxedUint};
     use crate::crypto_bigint::sqrt_mod_p_vartime;
 
     let discriminant_abs = discriminant_abs.as_ref();
