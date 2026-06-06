@@ -505,8 +505,12 @@ impl<Up: Encoding, Up2: Encoding, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: En
 {
   /// The element of `p`-order with an easy discrete-log problem.
   pub fn f<E: Element>(&self) -> E {
-    // $b^2 + |delta| = p^2 + (q p p^2) = (q p + 1) p^2 = 4 a c$
-    // $a = p^2$ so $c = (q p + 1) / 4$
+    /*
+      $b^2 + |delta| = 4 a c = p^2 + (q p p^2) = (q p + 1) p^2$
+      $a = p^2$ so $c = (q p + 1) / 4$
+
+      This `c` coefficient exists as $q p \cong 3 \mod 4$, per how `q` was chosen during the setup.
+    */
     let c = {
       // `q p`
       let mut c = self.fundamental.absolute_value.clone();
@@ -537,7 +541,9 @@ impl<Up: Encoding, Up2: Encoding, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: En
       This form is well-defined, as we defined (and calculated) the satisfactory `c` coefficient
       above.
 
-      This form is primitive (TODO).
+      This form is primitive as `c = (q p + 1) / 4` and `q p + 1 is coprime to `b = p` when
+      $p \ne 1$. If $p \eq 1$, then $b = 1$ and $gcd(a, b, c) = 1$ (and the form is primitive).
+      However, as $p$ is an odd prime, the case $p \eq 1$ is unnecessary to argue.
 
       This form is reduced as $|b| < a, b \ne a$ and $a < sqrt(|delta| / 4)$. For the latter claim,
       we require $q > 4 p$ during our setup, where this discriminant is of form $q p^3$. Therefore,
