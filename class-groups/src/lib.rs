@@ -12,9 +12,6 @@ pub use element::{Coefficients, Element};
 mod table;
 pub use table::{Table, ElementExt};
 
-mod malachite;
-pub use malachite::MalachiteElement;
-
 mod crypto_bigint;
 pub use crypto_bigint::{Error, CryptoBigintElement};
 

@@ -15,7 +15,6 @@ zeroize = { version = "1", default-features = false, features = ["std", "derive"
 rand = { version = "0.10", default-features = false, features = ["std", "sys_rng"] }
 crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize"] }
 crypto-primes = { version = "=0.7.0", default-features = false }
-malachite = { version = "0.9", default-features = false, features = ["naturals_and_integers"] }
 
 [dev-dependencies]
 rand_chacha = { version = "0.10", default-features = false, features = ["std"] }

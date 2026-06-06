@@ -8,7 +8,7 @@ fn sign() {
   type ProverElement = class_groups::CryptoBigintElement<
     crypto_bigint::Uint<{ crypto_bigint::nlimbs(2048u32.div_ceil(2)) }>,
   >;
-  type Element = class_groups::MalachiteElement;
+  type Element = ProverElement;
   type Primes = two_round_ecdsa::proofs::CryptoPrimesStackCcykc;
 
   let mut setups = Setup::<ProverElement, Element, two_round_ecdsa::Secp256k1<Primes>>::dealer(

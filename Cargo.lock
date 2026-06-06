@@ -118,7 +118,6 @@ version = "0.1.0"
 dependencies = [
  "crypto-bigint",
  "crypto-primes",
- "malachite",
  "rand",
  "rand_chacha",
  "zeroize",
