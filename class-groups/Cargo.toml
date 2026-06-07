@@ -11,7 +11,7 @@ rust-version = "1.85"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs", "--all-features", "-Z", "unstable-options", "--document-private-items", "--document-hidden-items"]
+rustdoc-args = ["--cfg", "docsrs", "-Z", "unstable-options", "--document-private-items", "--document-hidden-items"]
 
 [lints]
 workspace = true
