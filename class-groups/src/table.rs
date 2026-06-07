@@ -83,19 +83,6 @@ pub trait ElementExt: Element {
   fn mul(table: &Table<Self>, scalar: &[u8]) -> Self {
     Self::multiexp(&table[0], &[(table, scalar)])
   }
-
-  /// Perform a multiplication.
-  ///
-  /// `mul` should be preferred where possible. This method is named the way it is as it only makes
-  /// sense for use with elements which will not be scaled multiple times.
-  ///
-  /// The scalar is expected to be represented by its big-endian bytes.
-  ///
-  /// The implementation provided by this trait is as-constant-time as `double, add, mul` are.
-  #[must_use]
-  fn mul_once(identity: Self, element: Self, scalar: &[u8]) -> Self {
-    Self::mul(&Table::new_for_scalar_bits(scalar.len() * 8, identity, element), scalar)
-  }
 }
 
 /// A table to perform multiplications with.
