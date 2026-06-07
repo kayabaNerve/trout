@@ -22,7 +22,10 @@ mod uint;
 mod boxed_uint;
 
 mod encoding;
-pub use encoding::*;
+pub(crate) use encoding::{
+  encode_compressed_binary_quadratic_form, decode_compressed_binary_quadratic_form,
+};
+pub use encoding::Error;
 
 mod sqrt;
 pub(crate) use sqrt::{legendre_symbol, sqrt_mod_p_vartime};

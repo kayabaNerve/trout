@@ -1,4 +1,5 @@
 use core::{fmt::Debug, ops::Neg};
+#[cfg(feature = "std")]
 use std::io;
 
 use crypto_bigint::{Choice, CtOption};
@@ -156,12 +157,12 @@ pub trait Element:
             .map_err(|_| io::Error::other("absurdly large discriminant?"))?,
         )
         .map_err(|e| {
-          io::Error::other(format!(
+          io::Error::other(alloc::format!(
             "container overflowed despite precision proportional to length of the encoding: {e:?}"
           ))
         })?,
       )
-      .map_err(|e| io::Error::other(format!("{e:?}")))?;
+      .map_err(|e| io::Error::other(alloc::format!("{e:?}")))?;
     let a = a.to_le_bytes();
     let b_abs = b_abs.to_le_bytes();
     let c = c.to_le_bytes();
@@ -315,7 +316,7 @@ pub trait Element:
   /// a sampled prime number actually being prime. The provided implementation MAY panic if
   /// `bits_of_security` causes there to be no recognized configuration for the Miller-Rabin
   /// primality tests, for the prime numbers considered as candidates.
-  #[cfg(feature = "alloc")]
+  #[cfg(feature = "alloc")] // TODO: no-`alloc`
   fn next_prime_ideal_squared(
     mut rng: impl rand::CryptoRng,
     seed: crypto_bigint::BoxedUint,

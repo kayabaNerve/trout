@@ -11,12 +11,11 @@ rustdoc-args = ["--cfg", "docsrs", "--all-features", "-Z", "unstable-options", "
 workspace = true
 
 [dependencies]
-subtle = { version = "2", default-features = false, features = ["std"] }
 zeroize = { version = "1", default-features = false, features = ["std", "derive"] }
 rand = { version = "0.10", default-features = false, features = ["std"] }
 rand_chacha = { version = "0.10", default-features = false, features = ["std"] }
 
-crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "subtle", "alloc"] }
+crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "alloc"] }
 crypto-primes = { version = "=0.7.0", default-features = false }
 malachite = { version = "0.9", default-features = false, features = ["naturals_and_integers"] }
 

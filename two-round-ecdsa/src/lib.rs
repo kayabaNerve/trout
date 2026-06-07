@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 extern crate alloc;
 use std::io;
 
-use subtle::{Choice, ConditionallySelectable as _};
+use crypto_bigint::{Choice, CtSelect as _};
 use zeroize::{Zeroize, Zeroizing};
 
 use group::{GroupEncoding, prime::PrimeGroup};
@@ -62,7 +62,7 @@ pub(crate) fn be_bytes<F: PrimeFieldBits>(scalar: &F) -> Vec<u8> {
   for (i, bit) in const_to_le_bits(scalar).enumerate() {
     // The least-significant bit goes into the last unpopulated byte
     let byte = bytes.len() - ((i / 8) + 1);
-    bytes[byte] |= u8::conditional_select(&0, &(1 << (i % 8)), bit);
+    bytes[byte] |= u8::ct_select(&0, &(1 << (i % 8)), bit);
   }
   bytes
 }

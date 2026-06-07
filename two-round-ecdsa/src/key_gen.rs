@@ -74,7 +74,7 @@ fn class_group<CG: ElementExt, P: Parameters<CG>>(
   )
   .unwrap();
   let G = {
-    use ::crypto_bigint::{NonZero, RandomMod as _};
+    use crypto_bigint::{NonZero, RandomMod as _};
     let discriminant_abs = class_group.absolute_value();
     let discriminant_abs = discriminant_abs.as_ref();
     let seed = BoxedUint::random_mod_vartime(

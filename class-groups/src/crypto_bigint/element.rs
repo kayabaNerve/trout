@@ -121,23 +121,12 @@ pub struct CryptoBigintElement<U: Limbs> {
   /// The absolute value of the negative discriminant for this form.
   ///
   /// This is used to recalculate the `c` coefficient after composition.
-  /*
-    TODO: It would save memory, and likely be faster, to calculate `c` during composition. It still
-    has a division, but only operates over integers three times as wide the current value, not four
-    times as wide (as calculating from the discriminant does).
-  */
   discriminant_abs: U::Wide,
 }
 
 impl<U: Limbs> CtEq for CryptoBigintElement<U> {
   /// This MAY return an incorrect result for forms of different discriminants.
   fn ct_eq(&self, other: &Self) -> Choice {
-    /*
-      TODO: Is there a way to check if two forms are equivalent without reducing them? Presumably
-      yes, by the definition of equivalence, which would hopefully solely require one or two calls
-      to a GCD algorithm to find the relevant inputs for.
-    */
-
     let a = self.clone().reduce();
     let other = other.clone().reduce();
 
@@ -263,8 +252,7 @@ impl<U: Limbs> Neg for CryptoBigintElement<U> {
       to be primitive.
 
       Proposition 5.2.5 also includes a very academic description of the inverse, which here is
-      implemented as negating the `b` coefficient. TODO: Provide a better citation/explanation for
-      this?
+      implemented as negating the `b` coefficient.
 
       While `-0` is of unclear validity in this context, we know that this result will _NOT_ be
       `-0` as $b \cong 1 \mod 2$ for odd discriminants (as we bound).
@@ -360,10 +348,6 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
 
   /// This MAY return an incorrect result when the form doesn't have an odd, negative discriminant.
   fn is_identity(&self) -> Choice {
-    /*
-      TODO: Is there a faster way to check this? If we had a fast way to check equality, we could
-      check equality with the identity.
-    */
     let reduced = self.clone().reduce();
 
     let a = AsRef::<[Limb]>::as_ref(&reduced.a);
@@ -545,6 +529,7 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
 }
 
 // TODO
+#[cfg(feature = "alloc")]
 impl<U: Limbs> crate::ElementExt for CryptoBigintElement<U> {
   const MAX_TABLE_BITS: u32 = 12;
 

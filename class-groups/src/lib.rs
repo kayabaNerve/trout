@@ -1,15 +1,20 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
+#![no_std]
 #![deny(missing_docs)]
 #![allow(non_snake_case)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
+#[cfg(any(feature = "std", test))]
+extern crate std;
 
 mod element;
 pub use element::{Coefficients, Element};
 
+#[cfg(feature = "alloc")]
 mod table;
+#[cfg(feature = "alloc")]
 pub use table::{Table, ElementExt};
 
 mod crypto_bigint;

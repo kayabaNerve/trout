@@ -1,5 +1,7 @@
 #![expect(clippy::inline_always)]
 
+use alloc::boxed::Box;
+
 use crypto_bigint::{
   CtEq as _, CtAssign as _, Resize as _, Zero, One as _, ConcatenatingSquare as _,
   ConcatenatingMul as _, Gcd as _, Choice, NonZero, BoxedUint,
