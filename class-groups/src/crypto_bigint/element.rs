@@ -385,13 +385,8 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
 
   /// This is only correct for forms of the same discriminant where at least one form is primitive.
   fn sub(&self, other: Self) -> Self {
-    let (a3, b3) = super::add(
-      self.a.clone(),
-      self.b.clone(),
-      other.a.clone(),
-      (!other.b.0, other.b.1.clone()),
-      other.c.clone(),
-    );
+    let (a3, b3) =
+      super::add(self.a.clone(), self.b.clone(), other.a, (!other.b.0, other.b.1), other.c);
     Self::partial_reduce(a3, b3, self.discriminant_abs.clone())
   }
 
@@ -450,11 +445,11 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
 
   /// This runs in time variable to the size of the discriminant and the size of the underlying
   /// container.
-  fn uncompressed_encode(&self) -> impl AsRef<[u8]> {
+  fn uncompressed_encode(self) -> impl AsRef<[u8]> {
     let bits_per_element = (self.discriminant_abs.bits() / 2) + 1;
     let bytes_per_element = usize::try_from(bits_per_element.div_ceil(8)).unwrap();
 
-    let reduced = self.clone().reduce();
+    let reduced = self.reduce();
     let a = reduced.a.to_le_bytes();
     let mut b = reduced.b.1.to_le_bytes();
     b.as_mut()[0] ^= u8::from(!reduced.b.0);

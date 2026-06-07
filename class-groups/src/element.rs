@@ -185,7 +185,7 @@ pub trait Element:
   ///
   /// This MUST implement the defined specification for the uncompressed encoding of binary
   /// quadratic forms.
-  fn uncompressed_encode(&self) -> impl AsRef<[u8]>;
+  fn uncompressed_encode(self) -> impl AsRef<[u8]>;
 
   /// Decode an element of the specified discriminant without compression.
   ///
