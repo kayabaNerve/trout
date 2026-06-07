@@ -832,6 +832,11 @@ pub(crate) fn reduce<L: Limbs>(
   b: (Choice, L),
   c: L,
 ) -> (L, (Choice, L), L) {
+  debug_assert_eq!(
+    <L as AsRef::<[Limb]>>::as_ref(&a).len(),
+    <L as AsRef::<[Limb]>>::as_ref(&c).len()
+  );
+
   let (mut a, mut b, mut c) = reduce_to_upper_bound(log_2_bound, a, b, c, 0);
 
   a_lte_c(&mut a, &mut b.0, &mut c);

@@ -303,8 +303,8 @@ impl<U: Limbs> CryptoBigintElement<U> {
       // The documentation on our `struct` require `a, b` satisfy this bound
       sqrt_discriminant_bits,
       // Widen these, as `reduce` requires all its arguments have the same capacity
-      U::widen(self.a, discriminant_bits),
-      (self.b.0, U::widen(self.b.1, discriminant_bits)),
+      U::widen(self.a, self.c.bits_precision()),
+      (self.b.0, U::widen(self.b.1, self.c.bits_precision())),
       self.c,
     );
 
