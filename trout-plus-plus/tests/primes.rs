@@ -2,7 +2,7 @@
 
 #[test]
 fn primes() {
-  use threshold_ecdsa::proofs::{Primes, CryptoPrimesStack, CryptoPrimesHeap};
+  use trout_plus_plus::proofs::{Primes, CryptoPrimesStack, CryptoPrimesHeap};
 
   fn test<P: Primes>() {
     let start = std::time::Instant::now();

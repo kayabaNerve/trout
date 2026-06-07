@@ -3,7 +3,7 @@ resolver = "3"
 members = [
   "class-groups",
   "bicycl",
-  "two-round-ecdsa",
+  "trout-plus-plus",
 ]
 
 [profile.dev.package]

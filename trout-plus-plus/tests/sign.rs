@@ -1,7 +1,7 @@
 //! Test the signing protocol.
 
 use rand::{rand_core, rngs::SysRng};
-use threshold_ecdsa::{Participant, SecurityLevel, Setup, SigningProtocol, Ready};
+use trout_plus_plus::{Participant, SecurityLevel, Setup, SigningProtocol, Ready};
 
 #[test]
 fn sign() {
@@ -9,9 +9,9 @@ fn sign() {
     crypto_bigint::Uint<{ crypto_bigint::nlimbs(2048u32.div_ceil(2)) }>,
   >;
   type Element = bicycl::BicyclElement;
-  type Primes = threshold_ecdsa::proofs::CryptoPrimesStackCcykc;
+  type Primes = trout_plus_plus::proofs::CryptoPrimesStackCcykc;
 
-  let mut setups = Setup::<ProverElement, Element, threshold_ecdsa::Secp256k1<Primes>>::dealer(
+  let mut setups = Setup::<ProverElement, Element, trout_plus_plus::Secp256k1<Primes>>::dealer(
     &mut rand_core::UnwrapErr(SysRng),
     SecurityLevel::Insecure,
     2,
@@ -26,12 +26,12 @@ fn sign() {
   let second = setups.remove(&second_i).unwrap();
 
   let (first, first_message) =
-    SigningProtocol::<_, _, threshold_ecdsa::Secp256k1<Primes>>::participate(
+    SigningProtocol::<_, _, trout_plus_plus::Secp256k1<Primes>>::participate(
       &mut rand_core::UnwrapErr(SysRng),
       first,
     );
   let (second, second_message) =
-    SigningProtocol::<_, _, threshold_ecdsa::Secp256k1<Primes>>::participate(
+    SigningProtocol::<_, _, trout_plus_plus::Secp256k1<Primes>>::participate(
       &mut rand_core::UnwrapErr(SysRng),
       second,
     );

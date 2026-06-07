@@ -1,9 +1,9 @@
 [package]
-name = "threshold-ecdsa"
+name = "trout-plus-plus"
 version = "0.0.1-alpha"
 description = "A two-round threshold signing protocol for ECDSA signatures"
 license = "AGPL-3.0-only"
-repository = "https://github.com/kayabaNerve/trout/tree/develop/two-round-ecdsa"
+repository = "https://github.com/kayabaNerve/trout/tree/develop/trout-plus-plus"
 authors = ["Luke Parker <lukeparker5132@gmail.com>"]
 keywords = ["cryptography", "threshold", "ecdsa"]
 edition = "2024"
