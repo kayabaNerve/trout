@@ -22,10 +22,12 @@ mod uint;
 mod boxed_uint;
 
 mod encoding;
+#[cfg(feature = "std")]
 pub(crate) use encoding::{
   encode_compressed_binary_quadratic_form, decode_compressed_binary_quadratic_form,
 };
 pub use encoding::Error;
 
 mod sqrt;
+#[cfg_attr(not(feature = "alloc"), expect(unused_imports))]
 pub(crate) use sqrt::{legendre_symbol, sqrt_mod_p_vartime};

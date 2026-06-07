@@ -9,7 +9,9 @@ use crypto_bigint::{
 
 use super::I;
 
-use crate::{Element, Table};
+use crate::Element;
+#[cfg(feature = "alloc")]
+use crate::Table;
 
 pub(super) trait Limbs:
   Send
