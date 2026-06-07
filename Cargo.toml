@@ -2,13 +2,13 @@
 resolver = "3"
 members = [
   "class-groups",
+  "bicycl",
   "two-round-ecdsa",
 ]
 
 [profile.dev.package]
 crypto-bigint = { opt-level = 3 }
 crypto-primes = { opt-level = 3 }
-malachite = { opt-level = 3 }
 class-groups = { opt-level = 3 }
 
 [workspace.lints.rust]

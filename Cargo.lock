@@ -50,6 +50,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bicycl"
+version = "0.0.1-alpha"
+dependencies = [
+ "class-groups",
+ "crypto-bigint",
+ "crypto-primes",
+ "rand",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -790,6 +800,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 name = "threshold-ecdsa"
 version = "0.0.1-alpha"
 dependencies = [
+ "bicycl",
  "blake3",
  "class-groups",
  "crypto-bigint",

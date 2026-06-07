@@ -1,0 +1,26 @@
+[package]
+name = "bicycl"
+version = "0.0.1-alpha"
+description = "Rust bindings for BICYCL"
+license = "GPL-3.0-or-later AND AGPL-3.0-only"
+repository = "https://github.com/kayabaNerve/trout/tree/develop/bicycl"
+authors = ["Luke Parker <lukeparker5132@gmail.com>"]
+keywords = ["bicycl", "cl15", "class-groups"]
+edition = "2024"
+rust-version = "1.85"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[dependencies]
+crypto-bigint = { version = "0.7", default-features = false, features = ["alloc"] }
+class-groups = { version = "0.0.1-alpha", path = "../class-groups", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+rand = { version = "0.10", default-features = false, features = ["std"] }
+crypto-bigint = { version = "0.7", default-features = false, features = ["extra-sizes"] }
+crypto-primes = { version = "0.7", default-features = false }

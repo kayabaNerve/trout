@@ -31,6 +31,7 @@ allow = [
 ]
 
 exceptions = [
+  { allow = ["GPL-3.0-or-later", "AGPL-3.0-only"], name = "bicycl" },
   { allow = ["AGPL-3.0-only"], name = "class-groups" },
   { allow = ["AGPL-3.0-only"], name = "threshold-ecdsa" },
 ]
