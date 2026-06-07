@@ -80,10 +80,10 @@ pub(super) fn decode_varint(mut reader: impl io::Read) -> Result<usize, Error> {
     let to_shift = next_byte & VARINT_VALUE_MASK;
     {
       let bits_remaining = usize::BITS - i;
-      if let Some(expected_not_set_bits) = u8::BITS.checked_sub(bits_remaining) &&
-        to_shift.leading_zeros() < expected_not_set_bits
-      {
-        Err(Error::Overflow)?;
+      if let Some(expected_not_set_bits) = u8::BITS.checked_sub(bits_remaining) {
+        if to_shift.leading_zeros() < expected_not_set_bits {
+          Err(Error::Overflow)?;
+        }
       }
     }
 

@@ -255,7 +255,6 @@ fn test() {
     };
 
     // Ensure `b == a` a fourth of the time
-    #[expect(clippy::manual_is_multiple_of)]
     if (rng.next_u64() % 4) == 0 {
       b = a.as_ref().clone();
     }

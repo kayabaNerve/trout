@@ -28,9 +28,7 @@ intermediary term to prove their correct calculation within the declared
 bounds) and also be eligible for use with sensitive data such as private keys
 (which would be at risk of being leaked via timing analysis if used with a
 variable-time representation of group elements). The library is modular to the
-backend however, also offering [`MalachiteElement`] as a variable-time backend
-which is roughly ~6x faster (and therefore logical to use for verifying proofs
-or for similar purposes).
+backend however.
 
 This library supports no-`std` and even no-`alloc`, allowing deployment in
 constrained environments with statically-defined (bounded) memory.
@@ -40,4 +38,3 @@ constrained environments with statically-defined (bounded) memory.
 This library is actively being worked on to evolve from a research proof of
 concept to such standards, though much progress has been made. It is not yet
 ready for production use and has not received any external review at this time.
-Once ready, it will be licensed under an OSI-recognized FOSS license.

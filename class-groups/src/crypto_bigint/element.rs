@@ -492,10 +492,10 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
       };
       let discriminant_bits = discriminant_bits - (8 - Limb::from(msb).bits());
 
-      if let Some(max_bits) = U::max_bits() &&
-        (discriminant_bits > (2u32.checked_mul(max_bits).unwrap_or(0).saturating_sub(2)))
-      {
-        return invalid_size;
+      if let Some(max_bits) = U::max_bits() {
+        if discriminant_bits > (2u32.checked_mul(max_bits).unwrap_or(0).saturating_sub(2)) {
+          return invalid_size;
+        }
       }
 
       discriminant_bits

@@ -1,6 +1,12 @@
 [package]
-name = "two-round-ecdsa"
-version = "0.1.0"
+name = "threshold-ecdsa"
+version = "0.0.1-alpha"
+description = "A two-round threshold signing protocol for ECDSA signatures"
+license = "AGPL-3.0-only"
+include = ["../AGPL-3.0"]
+repository = "https://github.com/kayabaNerve/trout/tree/develop/two-round-ecdsa"
+authors = ["Luke Parker <lukeparker5132@gmail.com>"]
+keywords = ["cryptography", "threshold", "ecdsa"]
 edition = "2024"
 
 [package.metadata.docs.rs]
@@ -22,7 +28,7 @@ malachite = { version = "0.9", default-features = false, features = ["naturals_a
 ff = { version = "0.14", default-features = false, features = ["bits"] }
 group = { version = "0.14", default-features = false, features = ["alloc"] }
 
-class-groups = { path = "../class-groups", default-features = false, features = ["std"] }
+class-groups = { version = "0.0.1-alpha", path = "../class-groups", default-features = false, features = ["std"] }
 
 blake3 = { version = "1", default-features = false, features = ["std"] }
 
