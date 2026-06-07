@@ -3,7 +3,6 @@ name = "class-groups"
 version = "0.0.1-alpha"
 description = "A cryptographic library for working with binary quadratic forms (elements of a class group)"
 license = "AGPL-3.0-only"
-include = ["../AGPL-3.0"]
 repository = "https://github.com/kayabaNerve/trout/tree/develop/class-groups"
 authors = ["Luke Parker <lukeparker5132@gmail.com>"]
 keywords = ["cryptography", "cl15", "homomorphic-encryption", "ecdsa", "trout"]
