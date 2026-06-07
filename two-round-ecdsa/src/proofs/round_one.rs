@@ -4,8 +4,7 @@ use std::io::{self, Read as _, Write as _};
 use zeroize::Zeroizing;
 use rand::CryptoRng;
 
-use crypto_bigint::{Encoding as _, BoxedUint};
-use ::malachite::{base::num::basic::traits::*, *};
+use crypto_bigint::{ConcatenatingMul as _, Encoding as _, BoxedUint};
 
 use group::{
   ff::{Field as _, PrimeField},
@@ -80,11 +79,11 @@ pub trait RoundOneProofs<CG: ElementExt, P: Parameters<CG>> {
 
 /// The batch verifier for `Ccykc2023RoundOne`.
 pub struct Ccykc2023RoundOneBatchVerifier<CG: ElementExt, P: Parameters<CG>> {
-  G: Natural,
+  G: BoxedUint,
   H: P::F,
   E: P::F,
   additional_elliptic_curve: Vec<(P::F, P::E)>,
-  additional_class_group: Vec<(CG, Natural)>,
+  additional_class_group: Vec<(CG, BoxedUint)>,
 }
 
 /// Proofs from Cui, Chan, Yuen, Kang, and Chu's Bandwidth-Efficient Zero-Knowledge Proofs for
@@ -195,7 +194,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
 
   fn batch_verifier(proofs: usize) -> Self::BatchVerifier {
     Ccykc2023RoundOneBatchVerifier {
-      G: Natural::ZERO,
+      G: BoxedUint::zero(),
       H: P::F::ZERO,
       E: P::F::ZERO,
       additional_elliptic_curve: Vec::with_capacity(2 * proofs),
@@ -225,12 +224,9 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     let c = P::from_xof(transcript.0.finalize_xof());
     transcript.0.update(&[0]);
     let prime = Pr::prime(crate::ccykc::LAMBDA, transcript.0.finalize_xof());
-    let prime = crate::ccykc::natural_from_bytes(&prime.to_be_bytes());
 
-    let c_uint = crate::ccykc::natural_from_bytes(&crate::be_bytes(&c));
-    let modulus =
-      crate::ccykc::natural_from_bytes(&class_group.fundamental_discriminant().p().to_be_bytes()) *
-        &prime;
+    let c_uint = BoxedUint::from_be_bytes(crate::be_bytes(&c).into());
+    let modulus = class_group.fundamental_discriminant().p().concatenating_mul(&prime.0);
 
     // ZKPoKLog response
     let mut s_message_0 = <P::F as PrimeField>::Repr::default();
@@ -273,38 +269,44 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
 
       {
         let weight_scalar = P::F::random(&mut *rng);
-        let weight = crate::ccykc::natural_from_bytes(&crate::be_bytes(&weight_scalar));
-        batch_verifier.additional_class_group.push((D_ciphertext_0, &weight * &modulus));
-        batch_verifier.G += &weight * &e_randomness_0;
+        let weight = BoxedUint::from_be_bytes(crate::be_bytes(&weight_scalar).into());
+        batch_verifier
+          .additional_class_group
+          .push((D_ciphertext_0, weight.concatenating_mul(&modulus)));
+        batch_verifier.G =
+          batch_verifier.G.concatenating_add(weight.concatenating_mul(&e_randomness_0));
         batch_verifier.H += weight_scalar * s_message_0;
 
         batch_verifier.additional_class_group.push((-R_ciphertext_0, weight.clone()));
-        batch_verifier.additional_class_group.push((-K_i.0, &weight * &c_uint));
+        batch_verifier.additional_class_group.push((-K_i.0, weight.concatenating_mul(&c_uint)));
       }
 
       {
         let weight_scalar = P::F::random(&mut *rng);
-        let weight = crate::ccykc::natural_from_bytes(&crate::be_bytes(&weight_scalar));
-        batch_verifier.additional_class_group.push((D_ciphertext_1, &weight * &modulus));
-        batch_verifier.G += &weight * &e_randomness_1;
+        let weight = BoxedUint::from_be_bytes(crate::be_bytes(&weight_scalar).into());
+        batch_verifier
+          .additional_class_group
+          .push((D_ciphertext_1, weight.concatenating_mul(&modulus)));
+        batch_verifier.G =
+          batch_verifier.G.concatenating_add(weight.concatenating_mul(&e_randomness_1));
         batch_verifier.H += weight_scalar * s_message_1;
 
         batch_verifier.additional_class_group.push((-R_ciphertext_1, weight.clone()));
-        batch_verifier.additional_class_group.push((-K_i.1, &weight * &c_uint));
+        batch_verifier.additional_class_group.push((-K_i.1, weight.concatenating_mul(&c_uint)));
       }
     }
 
     // ZKPoKRepS accumulation
     {
-      let mut weight = [0; 16];
+      let mut weight = vec![0; 16];
       rng.fill_bytes(&mut weight);
-      let weight = crate::ccykc::natural_from_bytes(&weight);
+      let weight = BoxedUint::from_be_bytes(weight.into());
 
-      batch_verifier.additional_class_group.push((D_U, &weight * &modulus));
-      batch_verifier.G += &weight * &e_beta_i;
+      batch_verifier.additional_class_group.push((D_U, weight.concatenating_mul(&modulus)));
+      batch_verifier.G = batch_verifier.G.concatenating_add(weight.concatenating_mul(&e_beta_i));
 
       batch_verifier.additional_class_group.push((-R_U, weight.clone()));
-      batch_verifier.additional_class_group.push((-U_i, &weight * &c_uint));
+      batch_verifier.additional_class_group.push((-U_i, weight.concatenating_mul(&c_uint)));
     }
 
     Ok(())
@@ -317,11 +319,11 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundOneProofs<CG, P>
     batch_verifier: Self::BatchVerifier,
   ) -> Result<(), Vec<crate::shims::Participant>> {
     {
-      let G_scalar = crate::ccykc::natural_to_bytes(&batch_verifier.G);
+      let G_scalar = batch_verifier.G.to_be_bytes();
       let H_scalar = crate::be_bytes(&batch_verifier.H);
       let mut additional = Vec::with_capacity(batch_verifier.additional_class_group.len());
       for (point, scalar) in batch_verifier.additional_class_group {
-        let bytes = crate::ccykc::natural_to_bytes(&scalar);
+        let bytes = scalar.to_be_bytes();
         additional.push((
           Table::new_for_scalar_bits(
             bytes.len() * 8,

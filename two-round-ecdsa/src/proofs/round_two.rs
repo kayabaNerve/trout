@@ -4,8 +4,7 @@ use std::io::{self, Read as _, Write as _};
 use zeroize::Zeroizing;
 use rand::CryptoRng;
 
-use crypto_bigint::{Encoding as _, BoxedUint};
-use ::malachite::base::num::logic::traits::*;
+use crypto_bigint::{ConcatenatingMul as _, Encoding as _, BoxedUint};
 
 use group::ff::{Field as _, PrimeField};
 use class_groups::{ElementExt, Table, NegativeDiscriminant as _, Cl15p};
@@ -250,13 +249,9 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
 
     let c = P::from_xof(transcript.0.finalize_xof());
     transcript.0.update(&[0]);
-    let prime = Pr::prime(crate::ccykc::LAMBDA, transcript.0.finalize_xof());
-    let c = crate::ccykc::natural_from_bytes(&crate::be_bytes(&c));
-    let prime = crate::ccykc::natural_from_bytes(&prime.to_be_bytes());
-    let modulus = &prime *
-      &crate::ccykc::natural_from_bytes(
-        &class_group.fundamental_discriminant().p().to_be_bytes(),
-      );
+    let prime = Pr::prime(crate::ccykc::LAMBDA, transcript.0.finalize_xof()).0;
+    let c = BoxedUint::from_be_bytes(crate::be_bytes(&c).into());
+    let modulus = class_group.fundamental_discriminant().p().concatenating_mul(&prime);
 
     let D_Z_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
     let D_K_i = CG::decompress(&mut *transcript, class_group.absolute_value())?;
@@ -284,26 +279,26 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
       )
     };
 
-    let D_Z_i = table(modulus.significant_bits(), D_Z_i);
-    let D_K_i = table(modulus.significant_bits(), D_K_i);
-    let D_U_i = table(modulus.significant_bits(), D_U_i);
-    let D_ZU_i = table(modulus.significant_bits(), D_ZU_i);
-    let D_KU_i = table(modulus.significant_bits(), D_KU_i);
+    let D_Z_i = table(modulus.bits().into(), D_Z_i);
+    let D_K_i = table(modulus.bits().into(), D_K_i);
+    let D_U_i = table(modulus.bits().into(), D_U_i);
+    let D_ZU_i = table(modulus.bits().into(), D_ZU_i);
+    let D_KU_i = table(modulus.bits().into(), D_KU_i);
     let R_Z_i = table(128, -R_Z_i);
     let R_K_i = table(128, -R_K_i);
     let R_U_i = table(128, -R_U_i);
     let R_ZU_i = table(128, -R_ZU_i);
     let R_KU_i = table(128, -R_KU_i);
-    let Z_i = table(c.significant_bits(), -Z_i);
-    let K_i = table(c.significant_bits(), -K_i);
-    let U_i = table(c.significant_bits(), -U_i);
-    let ZU_i = table(c.significant_bits(), -ZU_i);
-    let KU_i = table(c.significant_bits(), -KU_i);
+    let Z_i = table(c.bits().into(), -Z_i);
+    let K_i = table(c.bits().into(), -K_i);
+    let U_i = table(c.bits().into(), -U_i);
+    let ZU_i = table(c.bits().into(), -ZU_i);
+    let KU_i = table(c.bits().into(), -KU_i);
 
     let mut weight = || {
       let mut weight = [0; 16];
       rng.fill_bytes(&mut weight);
-      crate::ccykc::natural_from_bytes(&weight)
+      BoxedUint::from_be_bytes(weight.into())
     };
     let weight_Z = weight();
     let weight_K = weight();
@@ -311,40 +306,43 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
     let weight_ZU_i = weight();
     let weight_KU_i = weight();
 
-    let D_Z_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_Z * &modulus));
-    let mut G_scalar = &weight_Z * &e_delta_i;
-    let mut H_scalar = &weight_Z * crate::ccykc::natural_from_bytes(&crate::be_bytes(&s_x_i));
-    let Z_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_Z * &c));
-    let R_Z_i_scalar = crate::ccykc::natural_to_bytes(&weight_Z);
+    let D_Z_i_scalar = weight_Z.concatenating_mul(&modulus).to_be_bytes();
+    let mut G_scalar = weight_Z.concatenating_mul(&e_delta_i);
+    let mut H_scalar =
+      weight_Z.concatenating_mul(BoxedUint::from_be_bytes(crate::be_bytes(&s_x_i).into()));
+    let Z_i_scalar = weight_Z.concatenating_mul(&c).to_be_bytes();
+    let R_Z_i_scalar = weight_Z.to_be_bytes();
 
-    let D_K_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_K * &modulus));
-    G_scalar += &weight_K * &e_alpha_i;
-    H_scalar += &weight_K * crate::ccykc::natural_from_bytes(&crate::be_bytes(&s_k_i));
-    let K_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_K * &c));
-    let R_K_i_scalar = crate::ccykc::natural_to_bytes(&weight_K);
+    let D_K_i_scalar = weight_K.concatenating_mul(&modulus).to_be_bytes();
+    G_scalar = G_scalar.concatenating_add(weight_K.concatenating_mul(&e_alpha_i));
+    H_scalar = H_scalar.concatenating_add(
+      weight_K.concatenating_mul(BoxedUint::from_be_bytes(crate::be_bytes(&s_k_i).into())),
+    );
+    let K_i_scalar = weight_K.concatenating_mul(&c).to_be_bytes();
+    let R_K_i_scalar = weight_K.to_be_bytes();
 
-    let D_U_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_U_i * &modulus));
-    G_scalar += &weight_U_i * &e_beta_i;
-    let U_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_U_i * &c));
-    let R_U_i_scalar = crate::ccykc::natural_to_bytes(&weight_U_i);
+    let D_U_i_scalar = weight_U_i.concatenating_mul(&modulus).to_be_bytes();
+    G_scalar = G_scalar.concatenating_add(weight_U_i.concatenating_mul(&e_beta_i));
+    let U_i_scalar = &weight_U_i.concatenating_mul(&c).to_be_bytes();
+    let R_U_i_scalar = weight_U_i.to_be_bytes();
 
-    let D_ZU_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_ZU_i * &modulus));
-    let mut neg_U_scalar = &weight_ZU_i * &e_delta_i;
-    let Z_scalar = crate::ccykc::natural_to_bytes(&(&weight_ZU_i * &e_beta_i));
-    let ZU_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_ZU_i * &c));
-    let R_ZU_i_scalar = crate::ccykc::natural_to_bytes(&weight_ZU_i);
+    let D_ZU_i_scalar = weight_ZU_i.concatenating_mul(&modulus).to_be_bytes();
+    let mut neg_U_scalar = weight_ZU_i.concatenating_mul(&e_delta_i);
+    let Z_scalar = weight_ZU_i.concatenating_mul(&e_beta_i).to_be_bytes();
+    let ZU_i_scalar = weight_ZU_i.concatenating_mul(&c).to_be_bytes();
+    let R_ZU_i_scalar = weight_ZU_i.to_be_bytes();
 
-    let D_KU_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_KU_i * &modulus));
-    neg_U_scalar += &weight_KU_i * &e_alpha_i;
-    let K_scalar = crate::ccykc::natural_to_bytes(&(&weight_KU_i * &e_beta_i));
-    let KU_i_scalar = crate::ccykc::natural_to_bytes(&(&weight_KU_i * &c));
-    let R_KU_i_scalar = crate::ccykc::natural_to_bytes(&weight_KU_i);
+    let D_KU_i_scalar = weight_KU_i.concatenating_mul(&modulus).to_be_bytes();
+    neg_U_scalar = neg_U_scalar.concatenating_add(weight_KU_i.concatenating_mul(&e_alpha_i));
+    let K_scalar = weight_KU_i.concatenating_mul(&e_beta_i).to_be_bytes();
+    let KU_i_scalar = weight_KU_i.concatenating_mul(&c).to_be_bytes();
+    let R_KU_i_scalar = weight_KU_i.to_be_bytes();
 
     if CG::multiexp(
       &CG::identity(class_group.absolute_value()),
       &[
-        (G, &crate::ccykc::natural_to_bytes(&G_scalar)),
-        (H, &crate::ccykc::natural_to_bytes(&H_scalar)),
+        (G, &G_scalar.to_be_bytes()),
+        (H, &H_scalar.to_be_bytes()),
         (&D_Z_i, &D_Z_i_scalar),
         (&Z_i, &Z_i_scalar),
         (&R_Z_i, &R_Z_i_scalar),
@@ -352,7 +350,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
         (&K_i, &K_i_scalar),
         (&R_K_i, &R_K_i_scalar),
         (&D_U_i, &D_U_i_scalar),
-        (&U_i, &U_i_scalar),
+        (&U_i, U_i_scalar),
         (&R_U_i, &R_U_i_scalar),
         (&D_ZU_i, &D_ZU_i_scalar),
         (Z, &Z_scalar),
@@ -362,7 +360,7 @@ impl<CG: ElementExt, P: Parameters<CG>, Pr: Primes> RoundTwoProofs<CG, P>
         (K, &K_scalar),
         (&KU_i, &KU_i_scalar),
         (&R_KU_i, &R_KU_i_scalar),
-        (neg_U, &crate::ccykc::natural_to_bytes(&neg_U_scalar)),
+        (neg_U, &neg_U_scalar.to_be_bytes()),
       ],
     ) != CG::identity(class_group.absolute_value())
     {
