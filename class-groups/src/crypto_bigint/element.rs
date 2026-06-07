@@ -446,7 +446,7 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
   /// This runs in time variable to the size of the discriminant and the size of the underlying
   /// container.
   fn uncompressed_encode(self) -> impl AsRef<[u8]> {
-    let bits_per_element = (self.discriminant_abs.bits() / 2) + 1;
+    let bits_per_element = ((self.discriminant_abs.bits() - 1) / 2) + 1;
     let bytes_per_element = usize::try_from(bits_per_element.div_ceil(8)).unwrap();
 
     let reduced = self.reduce();
