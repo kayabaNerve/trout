@@ -7,7 +7,7 @@ for the subset necessary to fulfill the
 [`class-groups` API](https://docs.rs/class-groups).
 
 These bindings are not written, maintained, or endorsed by the authors of
-BICYCL. BICYCL is licensed under the GPL-3.0 and was written by  Cyril Bouvier,
+BICYCL. BICYCL is licensed under the GPL-3.0 and was written by Cyril Bouvier,
 Guilhem Castagnos, Laurent Imbert, Fabien Laguillaumie and Quentin Combal.
 
 ### Building

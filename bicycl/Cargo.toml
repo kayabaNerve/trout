@@ -18,7 +18,7 @@ workspace = true
 
 [dependencies]
 crypto-bigint = { version = "0.7", default-features = false, features = ["alloc"] }
-class-groups = { version = "0.0.1-alpha", path = "../class-groups", default-features = false, features = ["std"] }
+class-groups = { version = "0.0.2-alpha", path = "../class-groups", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 rand = { version = "0.10", default-features = false, features = ["std"] }

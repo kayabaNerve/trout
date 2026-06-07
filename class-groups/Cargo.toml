@@ -1,6 +1,6 @@
 [package]
 name = "class-groups"
-version = "0.0.1-alpha"
+version = "0.0.2-alpha"
 description = "A cryptographic library for working with binary quadratic forms (elements of a class group)"
 license = "AGPL-3.0-only"
 repository = "https://github.com/kayabaNerve/trout/tree/develop/class-groups"

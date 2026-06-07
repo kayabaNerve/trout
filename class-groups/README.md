@@ -28,7 +28,9 @@ intermediary term to prove their correct calculation within the declared
 bounds) and also be eligible for use with sensitive data such as private keys
 (which would be at risk of being leaked via timing analysis if used with a
 variable-time representation of group elements). The library is modular to the
-backend however.
+backend however and [`bicycl`](https://docs.rs/bicycl) offers a highly
+efficient variable-time backend. Please review its documentation for more
+information and the associated disclaimers.
 
 This library supports no-`std` and even no-`alloc`, allowing deployment in
 constrained environments with statically-defined (bounded) memory.
