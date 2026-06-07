@@ -5,7 +5,7 @@ description = "A cryptographic library for working with binary quadratic forms (
 license = "AGPL-3.0-only"
 repository = "https://github.com/kayabaNerve/trout/tree/develop/class-groups"
 authors = ["Luke Parker <lukeparker5132@gmail.com>"]
-keywords = ["cryptography", "cl15", "homomorphic-encryption", "ecdsa", "trout"]
+keywords = ["cryptography", "cl15", "ecdsa", "trout", "homomorphic"]
 edition = "2024"
 rust-version = "1.85"
 
