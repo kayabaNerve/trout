@@ -14,6 +14,8 @@ use zeroize::{Zeroize, Zeroizing};
 use group::{GroupEncoding, prime::PrimeGroup};
 use class_groups::ElementExt;
 
+mod setup;
+
 mod shims;
 pub use shims::{Participant, PrimeFieldBits};
 

@@ -424,6 +424,66 @@ pub enum Cl15Error {
   NoQ,
 }
 
+/// The parameters for the fundamental discriminant within the CL15 cryptosystem.
+pub struct Cl15kParameters<Udk> {
+  /// The smallest integer such that
+  /// $\lfloor \mathsf{log}_2(p * q) \rfloor + 1 = \mathsf{fundamental_discriminant_bit_length}$.
+  q_min: Udk,
+
+  /// The largest integer such that
+  /// $\lfloor \mathsf{log}_2(p * q) \rfloor + 1 = \mathsf{fundamental_discriminant_bit_length}$.
+  q_max: Udk,
+}
+
+/// A $q'$ value to derive a fundamental discriminant from.
+pub struct QApostraphe<Udk> {
+  parameters: Cl15kParameters<Udk>,
+  q_apostraphe: Udk,
+}
+
+impl<Udk> Cl15kParameters<Udk> {
+  /// Sample a $q'$ within these parameters.
+  ///
+  /// This denotes $q'$, traditionally read "q prime", as "q apostraphe" as we do not wish to
+  /// suggest this value is prime. Statistically, it is not, even though it will be used to sample
+  /// a $q$ which is prime.
+  ///
+  /// We denote $q_\mathsf{max} - q_\mathsf{min}$ as a $k$-bit number. This reads
+  /// $\lfloor k / 8 \rfloor$ bytes from the RNG and interprets them as the little-endian
+  /// representation of a number $n$. If $0 \le n \le q_\mathsf{max} - q_\mathsf{min}$, then $n$ is
+  /// returned. Else, the sample process repeats until it yields such an $n$, which is likely to
+  /// happen within a few hundred iterations at worst.
+  ///
+  /// This returns `None` if the set of candidates for `q` is empty.
+  ///
+  /// This function runs in variable time.
+  pub fn sample_q_apostraphe(self, mut rng: impl CryptoRng) -> CtOption<QApostraphe<Udk>>
+  where
+    Udk: CtGt + CheckedAdd + CheckedSub + BitOps + Encoding,
+  {
+    self.q_max.checked_sub(&self.q_min).map(|sample_range| {
+      let mut starting_point_in_range = sample_range.to_le_bytes();
+      for b in starting_point_in_range.as_mut() {
+        *b = 0;
+      }
+      while {
+        rng.fill_bytes(
+          &mut starting_point_in_range.as_mut()
+            [.. usize::try_from(sample_range.bits_vartime().div_ceil(8)).unwrap()],
+        );
+        bool::from(Udk::from_le_bytes(starting_point_in_range.clone()).ct_gt(&sample_range))
+      } {}
+      let starting_point_in_range = Udk::from_le_bytes(starting_point_in_range);
+
+      let q_apostraphe = self
+        .q_min
+        .checked_add(&starting_point_in_range)
+        .expect("result is less than or equal to `q_max`, which has the same capacity");
+      QApostraphe { parameters: self, q_apostraphe }
+    })
+  }
+}
+
 impl<
   Up: Clone
     + AsRef<[Limb]>
@@ -461,29 +521,14 @@ impl<
     <Udk as ConcatenatingMul<<Up as ConcatenatingSquare>::Output>>::Output,
   >
 {
-  /// Sample a fundamental discriminant as described by the `Gen` algorithm of CL15.
+  /// Derive parameters to sample a fundamental discriminant with, as described by the `Gen`
+  /// algorithm of CL15.
   ///
-  /// This function runs in variable time.
-  ///
-  /// `bits_of_security` DOES NOT correspond to the hardness of finding the order of the resulting
-  /// group. `bits_of_security` is used to configure the primality tests and for the requirement
-  /// $p > 2^{bits_of_security}$, as (loosely) required for a $2^{-bits_of_security}$ likelihood
-  /// the that unknown order is divisible by `p` (a requirement of the cryptosystem). The relation
-  /// of `bits_of_security` to `fundamental_discriminant_bit_length` is completely unchecked.
-  ///
-  /// `fundamental_discriminant_bit_length` will the bit-length of the fundamental discriminant.
-  /// `1827` is SUGGESTED as the bit-length of the fundamental discriminant for 128-bit security.
-  /// Please review <https://eprint.iacr.org/2020/196> for context on choices.
-  ///
-  /// `p` MUST be an odd prime and is specified by its little-endian encoding. It is undefined
-  /// behavior to specify a `p` which is not actually an odd prime.
-  // TODO: `OddPrime` which is `unsafe` to construct then this which is safe?
-  pub fn sample(
-    mut rng: impl CryptoRng,
-    bits_of_security: u32,
+  /// This function runs in time variable to `fundamental_discriminant_bit_length`.
+  pub fn sample_parameters(
     fundamental_discriminant_bit_length: u32,
-    p: Odd<Up>,
-  ) -> Result<Self, Cl15Error> {
+    p: &Odd<Up>,
+  ) -> Result<Cl15kParameters<Udk>, Cl15Error> {
     // TODO: https://github.com/RustCrypto/crypto-bigint/1275
     #[allow(non_snake_case)]
     let Udk_zero_with_precision = |bits_precision| -> Udk {
@@ -508,124 +553,134 @@ impl<
       result
     };
 
-    let mu = p.as_ref().bits_vartime();
     /*
-      $mu = \lfloor log_2(p) \rfloor + 1$, so to check $p \ge 2^{bits_of_security}$, we need to
-      check $\floor log_2(p) \rfloor \ge bits_of_security$.
+      Find the lowest, highest numbers `q` could be while still effecting the desired bit-length
+      of the fundamental_discriminant.
 
-      As cited in Linearly Homomorphic Encryption from DDH, Conjecture 5.10.1 (Cohen-Lenstra) of
-      A Course in Computational Algebraic Number Theory establishes the probability an odd prime
-      divides the order as $1 - \prod_{1 \le k \le \inf} (1 - p^{-k})$. It's clear that each
-      factor is less than one and therefore the product gets smaller and smaller. For simplicity,
-      we limit the expression to solely $k = 1$ and consider solely $1 - (1 - p^{-1})$ which is
-      equal to probability $1 / p$. In this case, it's clear how requiring the odd prime $p$ to be
-      greater than $2^{bits_of_security}$ is sufficient to achieve this goal. While a tighter bound
-      is possible, we do not bother here.
+      The lower bound is `(1 << (fundamental_discriminant_bit_length - 1)) / p`.
+      The upper bound is `((1 << fundamental_discriminant_bit_length) - 1) / p`.
     */
-    if (mu - 1) < bits_of_security {
-      Err(Cl15Error::SmallP)?;
+    let mut lower_bound_inclusive = Udk_zero_with_precision(fundamental_discriminant_bit_length);
+    lower_bound_inclusive.set_bit(fundamental_discriminant_bit_length - 1, Choice::TRUE);
+    debug_assert_eq!(lower_bound_inclusive.bits_vartime(), fundamental_discriminant_bit_length);
+    lower_bound_inclusive = lower_bound_inclusive / p.as_nz_ref();
+
+    let mut upper_bound_inclusive = Udk_zero_with_precision(fundamental_discriminant_bit_length);
+    for bit in 0 .. fundamental_discriminant_bit_length {
+      upper_bound_inclusive.set_bit(bit, Choice::TRUE);
+    }
+    debug_assert_eq!(upper_bound_inclusive.bits_vartime(), fundamental_discriminant_bit_length);
+    upper_bound_inclusive = upper_bound_inclusive / p.as_nz_ref();
+
+    // Require `q >= 4 p` (which is not prime, inherently effecting `q > 4 p`)
+    {
+      let lower_bound_inclusive_lt_4p = {
+        let lower_bound_inclusive = <_ as AsRef<[Limb]>>::as_ref(&lower_bound_inclusive);
+        let p = <_ as AsRef<[Limb]>>::as_ref(&p);
+
+        let mut borrow = Limb::ZERO;
+        let mut carry = Limb::ZERO;
+        /*
+          The virtual length is the greater length between the two numbers, though we assign an
+          extra virtual limb to `p` as `4 p` may require more limbs to represent. The iterators
+          over the numbers' limbs are extended with `0` up to the virtual length.
+        */
+        let virtual_len = lower_bound_inclusive.len().max(1 + p.len());
+        for (lower_bound_inclusive, p) in lower_bound_inclusive
+          .iter()
+          .chain(core::iter::repeat(&Limb::ZERO))
+          .take(virtual_len)
+          .zip(p.iter().chain(core::iter::repeat(&Limb::ZERO)).take(virtual_len))
+        {
+          let four_p = ((*p) << 2) | carry;
+          carry = (*p) >> (Limb::BITS - 2);
+          let _diff_limb;
+          (_diff_limb, borrow) = lower_bound_inclusive.borrowing_sub(four_p, borrow);
+        }
+        debug_assert!(bool::from(carry.is_zero()));
+        !borrow.is_zero()
+      };
+
+      // If `lower_bound_inclusive < 4 p`, set `lower_bound_inclusive = 4 p`
+      if bool::from(lower_bound_inclusive_lt_4p) {
+        if (2 + p.bits_vartime()) > fundamental_discriminant_bit_length {
+          Err(Cl15Error::NoQ)?;
+        }
+        let mut lower_bound_inclusive =
+          <_ as AsMut<[Limb]>>::as_mut(&mut lower_bound_inclusive).iter_mut();
+        let p = <_ as AsRef<[Limb]>>::as_ref(&p);
+        let mut carry = Limb::ZERO;
+        for (lower_bound_inclusive, p) in (&mut lower_bound_inclusive).zip(p) {
+          let four_p = ((*p) << 2) | carry;
+          carry = (*p) >> (Limb::BITS - 2);
+          *lower_bound_inclusive = four_p;
+        }
+        if bool::from(!carry.is_zero()) {
+          *lower_bound_inclusive.next().unwrap() = carry;
+        }
+      }
+    }
+
+    Ok(Cl15kParameters { q_min: lower_bound_inclusive.clone(), q_max: upper_bound_inclusive })
+  }
+
+  /// Derive a fundamental discriminant from a $q'$.
+  ///
+  /// `bits_of_security` DOES NOT correspond to the hardness of finding the order of the resulting
+  /// group. `bits_of_security` is used to configure the primality tests and for the requirement
+  /// $p > 2^{bits_of_security}$, as (loosely) required for a $2^{-bits_of_security}$ likelihood
+  /// the that unknown order is divisible by `p` (a requirement of the cryptosystem). The relation
+  /// of `bits_of_security` to `fundamental_discriminant_bit_length` is completely unchecked.
+  ///
+  /// `fundamental_discriminant_bit_length` will the bit-length of the fundamental discriminant.
+  /// `1827` is SUGGESTED as the bit-length of the fundamental discriminant for 128-bit security.
+  /// Please review <https://eprint.iacr.org/2020/196> for context on choices.
+  ///
+  /// `p` MUST be an odd prime and is specified by its little-endian encoding. It is undefined
+  /// behavior to specify a `p` which is not actually an odd prime.
+  ///
+  /// The result is completely deterministic to the parameters, except with statistical
+  /// negligibility (if the primality tests disagree). The RNG is only used for entropy for said
+  /// primality tests.
+  ///
+  /// This function runs in variable time.
+  /*
+    TODO: While primality tests will reject primes without such confidence, that's distinct from
+    saying primality tests disagree only with such statistical negligibility.
+  */
+  // TODO: `OddPrime` which is `unsafe` to construct then this which is safe?
+  pub fn derive(
+    mut rng: impl CryptoRng,
+    bits_of_security: u32,
+    fundamental_discriminant_bit_length: u32,
+    p: Odd<Up>,
+    q_apostraphe: QApostraphe<Udk>,
+  ) -> Result<Self, Cl15Error> {
+    {
+      let mu = p.as_ref().bits_vartime();
+      /*
+        $mu = \lfloor log_2(p) \rfloor + 1$, so to check $p \ge 2^{bits_of_security}$, we need to
+        check $\floor log_2(p) \rfloor \ge bits_of_security$.
+
+        As cited in Linearly Homomorphic Encryption from DDH, Conjecture 5.10.1 (Cohen-Lenstra) of
+        A Course in Computational Algebraic Number Theory establishes the probability an odd prime
+        divides the order as $1 - \prod_{1 \le k \le \inf} (1 - p^{-k})$. It's clear that each
+        factor is less than one and therefore the product gets smaller and smaller. For simplicity,
+        we limit the expression to solely $k = 1$ and consider solely $1 - (1 - p^{-1})$ which is
+        equal to probability $1 / p$. In this case, it's clear how requiring the odd prime $p$ to
+        be greater than $2^{bits_of_security}$ is sufficient to achieve this goal. While a tighter
+        bound is possible, we do not bother here.
+      */
+      if (mu - 1) < bits_of_security {
+        Err(Cl15Error::SmallP)?;
+      }
     }
 
     let q = {
-      /*
-        Find the lowest, highest numbers `q` could be while still effecting the desired bit-length
-        of the fundamental_discriminant.
-
-        The lower bound is `(1 << (fundamental_discriminant_bit_length - 1)) / p`.
-        The upper bound is `((1 << fundamental_discriminant_bit_length) - 1) / p`.
-      */
-      let mut lower_bound_inclusive = Udk_zero_with_precision(fundamental_discriminant_bit_length);
-      lower_bound_inclusive.set_bit(fundamental_discriminant_bit_length - 1, Choice::TRUE);
-      debug_assert_eq!(lower_bound_inclusive.bits_vartime(), fundamental_discriminant_bit_length);
-      lower_bound_inclusive = lower_bound_inclusive / p.as_nz_ref();
-
-      let mut upper_bound_inclusive = Udk_zero_with_precision(fundamental_discriminant_bit_length);
-      for bit in 0 .. fundamental_discriminant_bit_length {
-        upper_bound_inclusive.set_bit(bit, Choice::TRUE);
-      }
-      debug_assert_eq!(upper_bound_inclusive.bits_vartime(), fundamental_discriminant_bit_length);
-      upper_bound_inclusive = upper_bound_inclusive / p.as_nz_ref();
-
-      // Require `q >= 4 p` (which is not prime, inherently effecting `q > 4 p`)
-      {
-        let lower_bound_inclusive_lt_4p = {
-          let lower_bound_inclusive = <_ as AsRef<[Limb]>>::as_ref(&lower_bound_inclusive);
-          let p = <_ as AsRef<[Limb]>>::as_ref(&p);
-
-          let mut borrow = Limb::ZERO;
-          let mut carry = Limb::ZERO;
-          /*
-            The virtual length is the greater length between the two numbers, though we assign an
-            extra virtual limb to `p` as `4 p` may require more limbs to represent. The iterators
-            over the numbers' limbs are extended with `0` up to the virtual length.
-          */
-          let virtual_len = lower_bound_inclusive.len().max(1 + p.len());
-          for (lower_bound_inclusive, p) in lower_bound_inclusive
-            .iter()
-            .chain(core::iter::repeat(&Limb::ZERO))
-            .take(virtual_len)
-            .zip(p.iter().chain(core::iter::repeat(&Limb::ZERO)).take(virtual_len))
-          {
-            let four_p = ((*p) << 2) | carry;
-            carry = (*p) >> (Limb::BITS - 2);
-            let _diff_limb;
-            (_diff_limb, borrow) = lower_bound_inclusive.borrowing_sub(four_p, borrow);
-          }
-          debug_assert!(bool::from(carry.is_zero()));
-          !borrow.is_zero()
-        };
-
-        // If `lower_bound_inclusive < 4 p`, set `lower_bound_inclusive = 4 p`
-        if bool::from(lower_bound_inclusive_lt_4p) {
-          if (2 + p.bits_vartime()) > fundamental_discriminant_bit_length {
-            Err(Cl15Error::NoQ)?;
-          }
-          let mut lower_bound_inclusive =
-            <_ as AsMut<[Limb]>>::as_mut(&mut lower_bound_inclusive).iter_mut();
-          let p = <_ as AsRef<[Limb]>>::as_ref(&p);
-          let mut carry = Limb::ZERO;
-          for (lower_bound_inclusive, p) in (&mut lower_bound_inclusive).zip(p) {
-            let four_p = ((*p) << 2) | carry;
-            carry = (*p) >> (Limb::BITS - 2);
-            *lower_bound_inclusive = four_p;
-          }
-          if bool::from(!carry.is_zero()) {
-            *lower_bound_inclusive.next().unwrap() = carry;
-          }
-        }
-      }
-
-      let mut seed = {
-        /*
-          Sample a starting point for `q` within `lower_bound_inclusive ..= upper_bound_inclusive`.
-
-          We do this by sampling from `0 ..= (upper_bound_inclusive - lower_bound_inclusive)` to
-          ensure this sampling has a reasonable termination bound. This sampling procedure will
-          always terminate if the last sampled byte is `0`, and therefore should terminate within
-          ~256 runs (even in the worst case where all other bits are `0`).
-        */
-        let sample_range =
-          Option::<Udk>::from(upper_bound_inclusive.checked_sub(&lower_bound_inclusive))
-            .ok_or(Cl15Error::NoQ)?;
-
-        let mut starting_point_in_range = sample_range.to_le_bytes();
-        for b in starting_point_in_range.as_mut() {
-          *b = 0;
-        }
-        while {
-          rng.fill_bytes(
-            &mut starting_point_in_range.as_mut()
-              [.. usize::try_from(sample_range.bits_vartime().div_ceil(8)).unwrap()],
-          );
-          bool::from(Udk::from_le_bytes(starting_point_in_range.clone()).ct_gt(&sample_range))
-        } {}
-        let starting_point_in_range = Udk::from_le_bytes(starting_point_in_range);
-
-        lower_bound_inclusive.checked_add(&starting_point_in_range).expect(
-          "result is less than or equal to `upper_bound_inclusive`, which has the same capacity",
-        )
-      };
-
+      let QApostraphe {
+        parameters: Cl15kParameters { q_min: lower_bound_inclusive, q_max: upper_bound_inclusive },
+        q_apostraphe: mut seed,
+      } = q_apostraphe;
       let mut lower_bound_inclusive = Some(lower_bound_inclusive);
       loop {
         let q = match super::primes::next_prime(&mut rng, seed.clone(), bits_of_security) {
@@ -711,6 +766,26 @@ impl<
       p_square,
       absolute_value: non_fundamental_discriminant_absolute_value,
     })
+  }
+
+  /// Sample a fundamental discriminant as described by the `Gen` algorithm of CL15.
+  ///
+  /// This function is a composition of [`Cl15p::sample_parameters`],
+  /// [`Cl15kParameters::sample_q_apostraphe`], and [`Cl15p::derive`], using the provided RNG both
+  /// to sample $q'$ and as entropy for the primality tests. Please read those methods'
+  /// documentation to understand the bounds on and expectations of this method.
+  ///
+  /// This function runs in variable time.
+  pub fn sample(
+    mut rng: impl CryptoRng,
+    bits_of_security: u32,
+    fundamental_discriminant_bit_length: u32,
+    p: Odd<Up>,
+  ) -> Result<Self, Cl15Error> {
+    let parameters = Self::sample_parameters(fundamental_discriminant_bit_length, &p)?;
+    let q_apostraphe = Option::<QApostraphe<Udk>>::from(parameters.sample_q_apostraphe(&mut rng))
+      .ok_or(Cl15Error::NoQ)?;
+    Self::derive(rng, bits_of_security, fundamental_discriminant_bit_length, p, q_apostraphe)
   }
 }
 

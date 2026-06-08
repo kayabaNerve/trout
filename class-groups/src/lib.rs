@@ -24,6 +24,6 @@ mod primes;
 
 mod discriminant;
 pub use discriminant::{
-  Discriminant, NegativeDiscriminant, OddDiscriminant, FundamentalDiscriminant, Cl15Error, Cl15k,
-  Cl15p,
+  Discriminant, NegativeDiscriminant, OddDiscriminant, FundamentalDiscriminant, Cl15Error,
+  Cl15kParameters, QApostraphe, Cl15k, Cl15p,
 };

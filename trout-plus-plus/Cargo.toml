@@ -20,13 +20,14 @@ zeroize = { version = "1", default-features = false, features = ["std", "derive"
 rand = { version = "0.10", default-features = false, features = ["std"] }
 rand_chacha = { version = "0.10", default-features = false, features = ["std"] }
 
+cshake = { version = "0.2", default-features = false }
 crypto-bigint = { version = "0.7", default-features = false, features = ["zeroize", "alloc"] }
 crypto-primes = { version = "=0.7.0", default-features = false }
 
 ff = { version = "0.14", default-features = false, features = ["bits"] }
 group = { version = "0.14", default-features = false, features = ["alloc"] }
 
-class-groups = { version = "0.0.2-alpha", path = "../class-groups", default-features = false, features = ["std"] }
+class-groups = { version = "0.0.2-alpha", path = "../class-groups", default-features = false, features = ["alloc", "std"] }
 
 blake3 = { version = "1", default-features = false, features = ["std"] }
 
