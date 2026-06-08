@@ -3,6 +3,36 @@
 
 using namespace BICYCL;
 
+// https://gmplib.org/manual/Integer-Import-and-Export
+static const int MPZ_LE = -1;
+
+static uint8_t* mpz_to_le_bytes(const mpz_srcptr op, uint32_t* len, bool* is_negative = nullptr) {
+  // 1 + log2(op).div_ceil(8)
+  // The `1 +` ensures this isn't a zero-sized allocation
+  void* buf = malloc(1 + ((mpz_sizeinbase(op, 2) + 7) / 8));
+  if (!buf)
+    abort();
+  size_t actual_len;
+  mpz_export(buf, &actual_len, MPZ_LE, 1, MPZ_LE, 0, op);
+  *len = actual_len;
+  if (is_negative)
+    *is_negative = mpz_sgn(op) == -1;
+  return (uint8_t*) buf;
+}
+
+static Mpz mpz_from_le_bytes(uint8_t* const le_bytes, uint32_t const len, bool const is_negative) {
+  // We convert to a big-endian vector here because upstream doesn't show a clear way of
+  // converting from little endian bytes. Upstream does have a way to construct from a vector.
+  std::vector<unsigned char> be_bytes_vector;
+  be_bytes_vector.reserve(len);
+  for (uint32_t i = len; i > 0; --i)
+    be_bytes_vector.push_back(static_cast<unsigned char>(le_bytes[i - 1]));
+  Mpz mpz(be_bytes_vector);
+  if (is_negative)
+    mpz.neg();
+  return mpz;
+}
+
 class QFIWrapper : public QFI {
   std::shared_ptr<Mpz> L_;
 
@@ -59,127 +89,49 @@ void cleanup_qfi(QFIWrapper* const qfi) {
 
 extern "C" {
   void* rust_bicycl_identity_bicycl_qfi(
-    uint8_t* const discriminant_abs_be_bytes, uint32_t const discriminant_abs_len
+    uint8_t* const discriminant_abs_le_bytes, uint32_t const discriminant_abs_len
   ) {
-    Mpz discriminant = Mpz();
-    for (uint32_t i = 0; i < (8 * discriminant_abs_len); i++) {
-      if ((discriminant_abs_be_bytes[i / 8] >> (7 - (i % 8))) & 1) {
-        size_t bit = (discriminant_abs_len * 8) - (i + 1);
-        discriminant.setbit(bit);
-      }
-    }
-    discriminant.neg();
-
+    const Mpz discriminant = mpz_from_le_bytes(discriminant_abs_le_bytes, discriminant_abs_len, true/*is_negative*/);
     QFI one = ClassGroup(discriminant).one();
     return ((void*) new QFIWrapper(one.a(), one.b(), one.c()));
   }
 
   void* rust_bicycl_new_bicycl_qfi(
-    uint8_t* const a_be_bytes, uint32_t const a_len,
-    uint8_t* const b_be_bytes, uint32_t const b_len, bool const b_is_negative,
-    uint8_t* const c_be_bytes, uint32_t const c_len
+    uint8_t* const a_le_bytes, uint32_t const a_len,
+    uint8_t* const b_le_bytes, uint32_t const b_len, bool const b_is_negative,
+    uint8_t* const c_le_bytes, uint32_t const c_len
   ) {
-    Mpz a = Mpz();
-    for (uint32_t i = 0; i < (8 * a_len); i++) {
-      if ((a_be_bytes[i / 8] >> (7 - (i % 8))) & 1) {
-        size_t bit = (a_len * 8) - (i + 1);
-        a.setbit(bit);
-      }
-    }
-    Mpz b = Mpz();
-    for (uint32_t i = 0; i < (8 * b_len); i++) {
-      if ((b_be_bytes[i / 8] >> (7 - (i % 8))) & 1) {
-        size_t bit = (b_len * 8) - (i + 1);
-        b.setbit(bit);
-      }
-    }
-    if (b_is_negative) {
-      b.neg();
-    }
-    Mpz c = Mpz();
-    for (uint32_t i = 0; i < (8 * c_len); i++) {
-      if ((c_be_bytes[i / 8] >> (7 - (i % 8))) & 1) {
-        size_t bit = (c_len * 8) - (i + 1);
-        c.setbit(bit);
-      }
-    }
+    const Mpz a = mpz_from_le_bytes(a_le_bytes, a_len, false/*is_negative*/);
+    const Mpz b = mpz_from_le_bytes(b_le_bytes, b_len, b_is_negative);
+    const Mpz c = mpz_from_le_bytes(c_le_bytes, c_len, false/*is_negative*/);
     return (void*) (new QFIWrapper(a, b, c));
   }
 
   void* rust_bicycl_new_bicycl_qfi_discriminant(
-    uint8_t* const a_be_bytes, uint32_t const a_len,
-    uint8_t* const b_be_bytes, uint32_t const b_len, bool const b_is_negative,
-    uint8_t* const discriminant_abs_be_bytes, uint32_t const discriminant_abs_len
+    uint8_t* const a_le_bytes, uint32_t const a_len,
+    uint8_t* const b_le_bytes, uint32_t const b_len, bool const b_is_negative,
+    uint8_t* const discriminant_abs_le_bytes, uint32_t const discriminant_abs_len
   ) {
-    Mpz a = Mpz();
-    for (uint32_t i = 0; i < (8 * a_len); i++) {
-      if ((a_be_bytes[i / 8] >> (7 - (i % 8))) & 1) {
-        size_t bit = (a_len * 8) - (i + 1);
-        a.setbit(bit);
-      }
-    }
-    Mpz b = Mpz();
-    for (uint32_t i = 0; i < (8 * b_len); i++) {
-      if ((b_be_bytes[i / 8] >> (7 - (i % 8))) & 1) {
-        size_t bit = (b_len * 8) - (i + 1);
-        b.setbit(bit);
-      }
-    }
-    if (b_is_negative) {
-      b.neg();
-    }
-    Mpz discriminant = Mpz();
-    for (uint32_t i = 0; i < (8 * discriminant_abs_len); i++) {
-      if ((discriminant_abs_be_bytes[i / 8] >> (7 - (i % 8))) & 1) {
-        size_t bit = (discriminant_abs_len * 8) - (i + 1);
-        discriminant.setbit(bit);
-      }
-    }
-    discriminant.neg();
+    const Mpz a = mpz_from_le_bytes(a_le_bytes, a_len, false/*is_negative*/);
+    const Mpz b = mpz_from_le_bytes(b_le_bytes, b_len, b_is_negative);
+    const Mpz discriminant = mpz_from_le_bytes(discriminant_abs_le_bytes, discriminant_abs_len, true/*is_negative*/);
     return (void*) (new QFIWrapper(a, b, discriminant, true));
   }
 
   uint8_t* rust_bicycl_qfi_a(void* const qfi, uint32_t* len) {
-    // 1 + log2(a).div_ceil(8)
-    // The `1 +` ensures this isn't a zero-sized allocation
-    void* buf = malloc(1 + ((mpz_sizeinbase(mpz_srcptr(((QFIWrapper* const) qfi)->a()), 2) + 7) / 8));
-    size_t actual_len;
-    mpz_export(buf, &actual_len, 1, 1, 1, 0, mpz_srcptr(((QFIWrapper* const) qfi)->a()));
-    *len = actual_len;
-    return (uint8_t*) buf;
+    return mpz_to_le_bytes(mpz_srcptr(((QFIWrapper* const) qfi)->a()), len);
   }
 
   uint8_t* rust_bicycl_qfi_b(void* const qfi, uint32_t* len, bool* is_negative) {
-    void* buf = malloc(1 + ((mpz_sizeinbase(mpz_srcptr(((QFIWrapper* const) qfi)->b()), 2) + 7) / 8));
-    size_t actual_len;
-    mpz_export(buf, &actual_len, 1, 1, 1, 0, mpz_srcptr(((QFIWrapper* const) qfi)->b()));
-    *len = actual_len;
-    if (mpz_sgn(mpz_srcptr(((QFIWrapper* const) qfi)->b())) == -1) {
-      *is_negative = true;
-    } else {
-      *is_negative = false;
-    }
-    return (uint8_t*) buf;
+    return mpz_to_le_bytes(mpz_srcptr(((QFIWrapper* const) qfi)->b()), len, is_negative);
   }
 
   uint8_t* rust_bicycl_qfi_c(void* const qfi, uint32_t* len) {
-    // 1 + log2(a).div_ceil(8)
-    // The `1 +` ensures this isn't a zero-sized allocation
-    void* buf = malloc(1 + ((mpz_sizeinbase(mpz_srcptr(((QFIWrapper* const) qfi)->c()), 2) + 7) / 8));
-    size_t actual_len;
-    mpz_export(buf, &actual_len, 1, 1, 1, 0, mpz_srcptr(((QFIWrapper* const) qfi)->c()));
-    *len = actual_len;
-    return (uint8_t*) buf;
+    return mpz_to_le_bytes(mpz_srcptr(((QFIWrapper* const) qfi)->c()), len);
   }
 
   uint8_t* rust_bicycl_qfi_discriminant_abs(void* const qfi, uint32_t* len) {
-    // 1 + log2(a).div_ceil(8)
-    // The `1 +` ensures this isn't a zero-sized allocation
-    void* buf = malloc(1 + ((mpz_sizeinbase(mpz_srcptr(((QFIWrapper* const) qfi)->discriminant()), 2) + 7) / 8));
-    size_t actual_len;
-    mpz_export(buf, &actual_len, 1, 1, 1, 0, mpz_srcptr(((QFIWrapper* const) qfi)->discriminant()));
-    *len = actual_len;
-    return (uint8_t*) buf;
+    return mpz_to_le_bytes(mpz_srcptr(((QFIWrapper* const) qfi)->discriminant()), len);
   }
 
   void rust_bicycl_qfi_delete(void* qfi) {
