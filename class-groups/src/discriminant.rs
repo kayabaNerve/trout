@@ -873,6 +873,127 @@ impl<Up: Encoding, Up2: Encoding, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: En
   }
 }
 
+impl<
+  Up: AsRef<[Limb]>
+    + CtSelect
+    + NegMod<Output = Up>
+    + for<'a> ConcatenatingMul<&'a Up, Output: Encoding>
+    + ConcatenatingSquare<Output: Encoding>
+    + InvertMod<Output = Up>
+    + BitOps,
+  Up2: Encoding,
+  Udk: Clone + AsMut<[Limb]> + Encoding,
+  Udp: Encoding,
+> Cl15p<Up, Up2, Udk, Udp>
+{
+  /// The element of `p`-order with an easy discrete-log problem, scaled by the scalar `u`.
+  ///
+  /// This runs in time variable to the bit-length of the discriminant.
+  ///
+  /// This function assumes $0 \le u < p$.
+  #[must_use]
+  pub fn f_scaled<E: CtSelect + Element>(&self, u: &Up) -> E {
+    /*
+      This method effectively performs the opposite of the discrete logarithm function, finding the
+      element whose discrete logarithm can be solved for to equal `u`. Its own variables are
+      notated to maintain parity with the discrete logairthm function.
+
+      The [BICYCL paper](https://eprint.iacr.org/2022/1466) presents fast exponentations (which we
+      notate as multiplications) of `f` and was the inspiration for this method. They do not
+      present pseudo-code for their theory and describe their premise in terms of the ideals, while
+      this is discussed in terms of the binary quadratic forms. Its correctness is on the premise
+      it does output a well-defined, primitive, reduced element of the class group for which the
+      discrete logarithm function outputs `u`. However, one can question if the discrete logarithm
+      function outputting a solution for this element actually means this element is within the
+      subgroup (or if the discrete logarithm simply works for certain elements outside of the
+      subgroup it's presented to work with regards to), leaving the correctness of this mildly
+      incomplete.
+    */
+    u.invert_mod(self.fundamental.p.as_nz_ref())
+      .map(|x_tilde| {
+        /*
+          $b^2 + |delta| = 4 a c = (x_tilde p)^2 + (q p p^2) = (q p + x_tilde^2) p^2$
+          $a = p^2$ so $c = (q p + x_tilde^2) / 4$
+
+          $q p \cong 3 \mod 4$, per how `q` was chosen during the setup. If `x_tilde` is odd, then
+          $x_tilde^2 \cong 1 \mod 4$ and $4 | (q p + x_tilde^2)$. If `x_tilde` is even, then we
+          negate it and adjust the $b$ coefficient accordingly to ensure it's odd and there is a
+          $c$ coefficient.
+        */
+        let b_positive = (<_ as AsRef<[Limb]>>::as_ref(&x_tilde)[0] & Limb::ONE).ct_eq(&Limb::ONE);
+        let x_tilde =
+          <_>::ct_select(&x_tilde.neg_mod(self.fundamental.p.as_nz_ref()), &x_tilde, b_positive);
+        let b_abs = x_tilde.concatenating_mul(self.fundamental.p.as_ref());
+
+        let c = {
+          // `q p`
+          let mut c = self.fundamental.absolute_value.clone();
+          {
+            let c = <_ as AsMut<[Limb]>>::as_mut(&mut c);
+            let x_tilde_squared = x_tilde.concatenating_square();
+            // `q p` -> `q p + x_tilde^2`
+            // `q p > x_tilde^2` as `x_tilde < p < q`
+            let mut carry = Limb::ZERO;
+            for (c_limb, x_tilde_squared_limb) in c.iter_mut().zip(
+              <_ as AsRef<[Limb]>>::as_ref(&x_tilde_squared)
+                .iter()
+                .chain(core::iter::repeat(&Limb::ZERO)),
+            ) {
+              let new_limb;
+              (new_limb, carry) = c_limb.carrying_add(*x_tilde_squared_limb, carry);
+              *c_limb = new_limb;
+            }
+            // Shift right by two to divide by four
+            carry <<= Limb::BITS - 2;
+            for c_limb in c.iter_mut().rev() {
+              let new_limb = carry | ((*c_limb) >> 2);
+              carry = (*c_limb) << (Limb::BITS - 2);
+              *c_limb = new_limb;
+            }
+            debug_assert!(bool::from(carry.is_zero()));
+          }
+          c
+        };
+
+        let discriminant_abs = WithoutTrailingZeroBytes(self.absolute_value.to_le_bytes());
+        let discriminant_abs = discriminant_abs.as_ref();
+        let discriminant_bytes = discriminant_abs.len();
+        // This is a lossy approximation
+        let sqrt_discriminant_bytes = discriminant_bytes.div_ceil(2);
+
+        // We bound the encodings of `a, b, c` based on the discriminant
+        let a = self.p_square.to_le_bytes();
+        let a = a.as_ref();
+        let a = &a[.. sqrt_discriminant_bytes.min(a.len())];
+
+        let b_abs = b_abs.to_le_bytes();
+        let b_abs = b_abs.as_ref();
+        let b_abs = &b_abs[.. sqrt_discriminant_bytes.min(b_abs.len())];
+
+        let c = c.to_le_bytes();
+        let c = c.as_ref();
+        let c = &c[.. discriminant_bytes.min(c.len())];
+
+        /*
+          SAFETY:
+
+          This form is well-defined, as we defined (and calculated) the satisfactory `c`
+          coefficient above.
+
+          This form is primitive as `c = (q p + x_tilde^2) / 4` and `x_tilde` is coprime to `p`
+          (as `p` is an odd prime and `0 < x_tilde < p`, `0 < x_tilde` as this is the branch where
+          `x_tilde` has a multiplicative inverse and is therefore not congruent to `0` modulo `p`).
+
+          This form is reduced as $|b| < a, b \ne a$ and $a < sqrt(|delta| / 4)$. For the latter
+          claim, we require $q > 4 p$ during our setup, where this discriminant is of form $q p^3$.
+          Therefore, $p^2 < sqrt(|delta| / 4)$.
+        */
+        unsafe { E::from_coefficients(a, (b_positive, b_abs), c, discriminant_abs) }
+      })
+      .unwrap_or(E::identity(self.absolute_value()))
+  }
+}
+
 impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Encoding>
   Cl15p<Up, Up2, Udk, Udp>
 {
