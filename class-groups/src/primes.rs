@@ -22,9 +22,12 @@ fn next_prime_candidates<U: Unsigned>(seed: U) -> impl Iterator<Item = U> {
   }
 }
 
+/// An error when determining the next prime.
 #[derive(Debug)]
-pub(super) enum Error {
+pub enum Error {
+  /// No Miller-Rabin parameters satisfy this request.
   NoMillerRabin,
+  /// The container ran out of capacity.
   Capacity,
 }
 
@@ -34,7 +37,7 @@ pub(super) enum Error {
 ///
 /// The returned value is composite with probability `2^{-bits_of_security}`, per FIPS-186.5, for
 /// parameterization of the Miller-Rabin test, unconditionally followed by a Lucas test.
-pub(super) fn next_prime<U: UnsignedWithMontyForm + RandomMod>(
+pub fn next_prime<U: UnsignedWithMontyForm + RandomMod>(
   mut rng: impl CryptoRng,
   seed: U,
   bits_of_security: u32,

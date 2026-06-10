@@ -18,7 +18,8 @@ pub use mul::Table;
 mod crypto_bigint;
 pub use crypto_bigint::{Error, CryptoBigintElement};
 
-mod primes;
+#[doc(hidden)]
+pub mod primes;
 
 mod discriminant;
 pub use discriminant::{

@@ -1,161 +1,254 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
-#![allow(non_snake_case, clippy::too_many_arguments, clippy::type_complexity)]
-#![allow(unused, clippy::iter_over_hash_type, clippy::todo)] // TODO
+#![expect(non_snake_case)]
+#![no_std]
 
-use core::marker::PhantomData;
+use core::ops::{Deref, DerefMut};
 extern crate alloc;
+use alloc::vec;
+extern crate std;
 use std::io;
 
-use crypto_bigint::{Choice, CtSelect as _};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
+use rand::CryptoRng;
 
-use group::{GroupEncoding, prime::PrimeGroup};
-use class_groups::ElementExt;
+use group::{
+  ff::{Field as _, PrimeField as _},
+  Group,
+  prime::PrimeGroup,
+};
+
+use crypto_bigint::{
+  Choice, CtSelect, Zero, Limb, NegMod, ConcatenatingMul, ConcatenatingSquare, InvertMod, BitOps,
+  Encoding, RandomBits, Resize as _, BoxedUint,
+};
+
+use cshake::digest::{CustomizedInit, Update, ExtendableOutput, XofReader};
+
+mod non_interactive_setup;
+pub use non_interactive_setup::NonInteractiveSetup;
 
 mod setup;
+pub use setup::{InteractiveSetup, InteractiveSetupWithDerivations};
+pub(crate) use setup::SigningKey;
 
-mod shims;
-pub use shims::{Participant, PrimeFieldBits};
+mod batch_verifier;
+use batch_verifier::BatchVerifier;
 
-mod integer;
-pub use integer::UnsignedInteger;
+mod ciphertext;
+pub(crate) use ciphertext::Ciphertext;
+mod commitment;
+pub(crate) use commitment::Commitment;
+mod dual_scaled_decryption;
+pub(crate) use dual_scaled_decryption::DualScaledDecryption;
 
-/// ZK proofs included for the protocols.
-pub mod proofs;
-pub(crate) use proofs::*;
-
-mod key_gen;
-pub use key_gen::*;
-
+mod preprocess;
+pub use preprocess::{Preprocess, PreprocessOpening, Aggregating, AggregatePreprocess};
 mod sign;
-pub use sign::*;
+pub use sign::Sign;
 
-pub(crate) struct ToLeBits<F: PrimeFieldBits> {
-  underlying: group::ff::FieldBits<F::ReprBits>,
-  i: usize,
+mod ciphersuites;
+pub use ciphersuites::*;
+
+/// A wrapper for `R: io::Read` which copies read bytes.
+struct CopyRead<R: io::Read, W: io::Write> {
+  read: R,
+  copy_to: W,
 }
-impl<F: PrimeFieldBits> Iterator for ToLeBits<F> {
-  type Item = Choice;
-  fn next(&mut self) -> Option<Choice> {
-    if self.i >= usize::try_from(F::NUM_BITS).unwrap() {
-      None?;
-    }
-    let mut bit_raw = self.underlying.get_mut(self.i).unwrap();
-    self.i += 1;
-
-    // The following black_box/Zeroizing are a best-effort, horrific attempt to avoid side-channels
-    let bit_bool =
-      Zeroizing::new(*core::hint::black_box(core::convert::AsRef::<bool>::as_ref(&bit_raw)));
-    // zeroize the underlying bitstore as we iterate so secret material isn't left behind
-    core::convert::AsMut::<bool>::as_mut(&mut bit_raw).zeroize();
-    let bit_u8 = u8::from(core::hint::black_box(*bit_bool));
-    Some(bit_u8.into())
+impl<R: io::Read, W: io::Write> io::Read for CopyRead<R, W> {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    let len = self.read.read(buf)?;
+    self.copy_to.write_all(&buf[.. len])?;
+    Ok(len)
   }
 }
-/// Alternative to `to_le_bits` which returns `Choice` instead of `bool`
-pub(crate) fn const_to_le_bits<F: PrimeFieldBits>(scalar: &F) -> ToLeBits<F> {
-  ToLeBits { underlying: scalar.to_le_bits().into(), i: 0 }
+
+trait CShake: Clone + CustomizedInit + Update + ExtendableOutput {
+  /// The bits of security offered by this instance of CShake.
+  const BITS_OF_SECURITY: u16;
+}
+impl CShake for cshake::CShake128 {
+  const BITS_OF_SECURITY: u16 = 128;
+}
+impl CShake for cshake::CShake256 {
+  const BITS_OF_SECURITY: u16 = 256;
 }
 
-pub(crate) fn be_bytes<F: PrimeFieldBits>(scalar: &F) -> Vec<u8> {
-  let mut bytes = vec![0; F::NUM_BITS.div_ceil(8).try_into().unwrap()];
-  for (i, bit) in const_to_le_bits(scalar).enumerate() {
-    // The least-significant bit goes into the last unpopulated byte
-    let byte = bytes.len() - ((i / 8) + 1);
-    bytes[byte] |= u8::ct_select(&0, &(1 << (i % 8)), bit);
-  }
-  bytes
-}
+/// A group wrapped with the necessary helpers for Trout++.
+pub trait WrappedGroup {
+  /// The group this wraps.
+  type G: PrimeGroup<Scalar: Zeroize>;
 
-/// Parameters for the signing protocol.
-pub trait Parameters<CG: ElementExt>: Sized {
-  /// The elliptic curve.
-  type E: PrimeGroup<Scalar = Self::F>;
-  /// The scalar field of the elliptic curve.
-  type F: Zeroize + PrimeFieldBits + group::ff::FromUniformBytes<64>;
+  /// The integer type which can store the prime order of this group.
+  type Up: Clone
+    + AsRef<[Limb]>
+    + AsMut<[Limb]>
+    + PartialOrd
+    + Zeroize
+    + CtSelect
+    + Zero
+    + NegMod<Output = Self::Up>
+    + for<'a> ConcatenatingMul<&'a Self::Up, Output: Encoding>
+    + ConcatenatingSquare<Output: Encoding>
+    + InvertMod<Output = Self::Up>
+    + BitOps
+    + Encoding
+    + RandomBits;
 
-  /// The round one proofs.
-  type RoundOneProofs: RoundOneProofs<CG, Self>;
-  /// The round two proofs.
-  type RoundTwoProofs: RoundTwoProofs<CG, Self>;
-
-  /// Read a `E` while enforcing a canonical encoding.
+  /// The domain-separation tag identifying this ciphersuite.
   ///
-  /// The provided implementation assumes encodings are always canonical and re-encodes to check
-  /// equality to what was decoded.
-  fn read_canonical_E(mut reader: impl io::Read) -> io::Result<Self::E> {
-    let mut bytes = <Self::E as GroupEncoding>::Repr::default();
-    reader.read_exact(bytes.as_mut())?;
-    let res = Option::<Self::E>::from(Self::E::from_bytes(&bytes))
-      .ok_or_else(|| io::Error::other("invalid encoding of E"))?;
-    if res.to_bytes().as_ref() != bytes.as_ref() {
-      Err(io::Error::other("non-canonical encoding of E"))?;
-    }
-    Ok(res)
-  }
+  /// This MUST be a recognized label for an elliptic curve ("P-224", "P-256", "P-384", "P-521").
+  ///
+  /// `Self::BITS_OF_SECURITY`, `Self::generator_e()` MUST be singular and explicitly defined with
+  /// regards to the domain separation tag.
+  const DST: &[u8];
 
-  /// Derive a scalar from an XOF.
-  fn from_xof(xof: blake3::OutputReader) -> Self::F;
-  /// Hash the message and reduce it into a scalar.
-  fn hash_message(message: &[u8]) -> Self::F;
+  /// The bits of security this targets.
+  const BITS_OF_SECURITY: u16;
+
+  /// The cSHAKE instance used.
+  ///
+  /// The bits of security from cSHAKE MUST be the first choice greater than or equal to
+  /// `Self::BITS_OF_SECURITY`.
+  #[expect(private_bounds)]
+  type CShake: CShake;
+
+  /// The generator of this group used for public keys.
+  fn generator_e() -> Self::G;
+
+  /// Deserialize a point from a _canonical_ encoding.
+  fn point_from_canonical_bytes(transcript: impl io::Read) -> io::Result<Self::G>;
+
+  /// Convert a scalar to its _little-endian_ bits.
+  fn scalar_to_le_bits(
+    scalar: &<Self::G as Group>::Scalar,
+  ) -> impl IntoIterator<Item: Deref<Target = bool> + DerefMut>;
+
   /// Reduce the `x`-coordinate of a point into a scalar.
-  fn x_coordinate(point: &Self::E) -> Self::F;
+  fn x_coordinate(point: &Self::G) -> <Self::G as Group>::Scalar;
+
+  /// Hash the message and reduce it into a scalar.
+  fn hash_message(message: impl AsRef<[u8]>) -> <Self::G as Group>::Scalar;
+
+  /// Squeeze a scalar from the sponge.
+  fn squeeze_scalar(xof: &mut impl XofReader) -> <Self::G as Group>::Scalar;
 }
 
-/// ECDSA over secp256k1.
-#[cfg(feature = "secp256k1")]
-pub struct Secp256k1<P: Primes>(PhantomData<P>);
-#[cfg(feature = "secp256k1")]
-impl<CG: ElementExt, P: Primes> Parameters<CG> for Secp256k1<P> {
-  type E = k256::ProjectivePoint;
-  type F = k256::Scalar;
+type Up2<G> = <<G as WrappedGroup>::Up as ConcatenatingSquare>::Output;
 
-  type RoundOneProofs = Ccykc2023RoundOne<P>;
-  type RoundTwoProofs = Ccykc2023RoundTwo<P>;
-
-  fn from_xof(mut xof: blake3::OutputReader) -> Self::F {
-    let mut bytes = [0; 64];
-    xof.fill(&mut bytes);
-    use k256::elliptic_curve::ops::Reduce;
-    <k256::Scalar as Reduce<hybrid_array::Array<u8, hybrid_array::typenum::U64>>>::reduce(
-      &bytes.into(),
-    )
+// TODO: https://github.com/RustCrypto/crypto-bigint/1275
+#[allow(non_snake_case)]
+fn Up_zero_with_precision<Up: AsMut<[Limb]> + RandomBits>(bits_precision: u32) -> Up {
+  struct Zero;
+  impl crypto_bigint::rand_core::TryRng for Zero {
+    type Error = crypto_bigint::rand_core::Infallible;
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+      Ok(0)
+    }
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+      Ok(0)
+    }
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+      for b in dst {
+        *b = 0;
+      }
+      Ok(())
+    }
   }
-  fn hash_message(message: &[u8]) -> Self::F {
-    use sha2::{Digest as _, Sha256};
-    use k256::elliptic_curve::ops::Reduce;
-    <k256::Scalar as Reduce<hybrid_array::Array<u8, hybrid_array::typenum::U32>>>::reduce(
-      &<[u8; 32]>::from(Sha256::digest(message)).into(),
-    )
+  let mut result = Up::random_bits_with_precision(&mut Zero, 0, bits_precision);
+  for limb in result.as_mut() {
+    *limb = Limb::ZERO;
   }
-  fn x_coordinate(point: &Self::E) -> Self::F {
-    use k256::elliptic_curve::{ops::Reduce, point::AffineCoordinates as _};
-    <k256::Scalar as Reduce<hybrid_array::Array<u8, hybrid_array::typenum::U32>>>::reduce(
-      &<[u8; 32]>::from(point.to_affine().x()).into(),
-    )
-  }
+  result
 }
 
-/// ECDSA over secp256k1, without identifiable aborts.
-#[cfg(feature = "secp256k1")]
-pub struct Secp256k1NoIa<P: Primes>(PhantomData<P>);
-#[cfg(feature = "secp256k1")]
-impl<CG: ElementExt, P: Primes> Parameters<CG> for Secp256k1NoIa<P> {
-  type E = <Secp256k1<P> as Parameters<CG>>::E;
-  type F = <Secp256k1<P> as Parameters<CG>>::F;
+/// Return a `Up` with value equal to the integer value of a scalar.
+///
+/// This assumes the amount of bits required to represent a scalar is less than or equal to the
+/// capacity of `Up.`
+///
+/// This function runs in time only variable to the amount of bits needed to represent a scalar and
+/// is independent to the value of the scalar itself.
+fn Up_from_scalar<Up: AsMut<[Limb]> + BitOps + RandomBits, G: WrappedGroup>(
+  scalar: &<G::G as Group>::Scalar,
+) -> Up {
+  let mut result = Up_zero_with_precision::<Up>(<G::G as Group>::Scalar::NUM_BITS);
 
-  type RoundOneProofs = <Secp256k1<P> as Parameters<CG>>::RoundOneProofs;
-  type RoundTwoProofs = NoIdentifiableAborts;
+  let mut i = 0;
+  for mut b in G::scalar_to_le_bits(scalar) {
+    let b: &mut bool = b.deref_mut();
+    result.set_bit(i, Choice::from(u8::from(*b)));
+    b.zeroize();
+    i += 1;
+  }
 
-  fn from_xof(xof: blake3::OutputReader) -> Self::F {
-    <Secp256k1<P> as Parameters<CG>>::from_xof(xof)
+  // Ensure all remaining bits are zeroed as expected
+  for i in i .. result.bits_precision() {
+    result.set_bit(i, Choice::FALSE);
   }
-  fn hash_message(message: &[u8]) -> Self::F {
-    <Secp256k1<P> as Parameters<CG>>::hash_message(message)
-  }
-  fn x_coordinate(point: &Self::E) -> Self::F {
-    <Secp256k1<P> as Parameters<CG>>::x_coordinate(point)
-  }
+
+  result
+}
+
+/// Return `p: Up` with value the order of the elliptic curve.
+///
+/// This assumes the order of the elliptic curve is _odd_ (not `2`) and`p` has capacity greater
+/// than or equal to the amount of bits in the representation of the order of the elliptic curve.
+///
+/// This function runs in time only variable to the amount of bits needed to represent a scalar and
+/// is independent to the value of the order itself.
+fn p_Up<Up: AsMut<[Limb]> + BitOps + RandomBits, G: WrappedGroup>() -> Up {
+  let mut p = Up_from_scalar::<Up, G>(&-<G::G as Group>::Scalar::ONE);
+  assert!(!p.bit_vartime(0), "-1 isn't even so the order of the elliptic curve is not odd");
+  p.set_bit_vartime(0, true);
+  p
+}
+
+/// Sample a challenge.
+///
+/// The result is of form $(c_\mathsf{prime}, c)$.
+///
+/// The result is completely deterministic to `xof`, except with statistical negligibility (if the
+/// primality tests disagree). The RNG is only used for entropy for said primality tests.
+fn challenge<G: WrappedGroup>(
+  rng: impl CryptoRng,
+  xof: &mut impl XofReader,
+) -> (BoxedUint, <G::G as Group>::Scalar) {
+  let bytes = (2 * u32::from(G::BITS_OF_SECURITY)).div_ceil(8);
+  let bits = 8 * bytes;
+
+  let mut prime =
+    vec![0; usize::from(u16::try_from(bytes).expect(r"$\lceil (2 * x) / 8 \rceil \le x$"))];
+  xof.read(&mut prime);
+  let first_odd_prime = BoxedUint::from(3u8).resize(bits);
+  let prime = match class_groups::primes::next_prime(
+    rng,
+    BoxedUint::from_le_bytes(prime.into()),
+    u32::from(G::BITS_OF_SECURITY),
+  ) {
+    Ok(prime) => {
+      if prime.bits() <= bits {
+        prime
+      } else {
+        first_odd_prime
+      }
+    }
+    Err(class_groups::primes::Error::NoMillerRabin) => {
+      panic!("invalid ciphersuite definition (no Miller-Rabin parameters)")
+    }
+    Err(class_groups::primes::Error::Capacity) => first_odd_prime,
+  };
+
+  let challenge = G::squeeze_scalar(xof);
+
+  (prime, challenge)
+}
+
+/// An ECDSA signature.
+pub struct Signature<G: WrappedGroup> {
+  /// The `x`-coordinate of the nonce commitment, reduced into the scalar field.
+  pub r: <G::G as Group>::Scalar,
+  /// The signature.
+  pub s: <G::G as Group>::Scalar,
 }

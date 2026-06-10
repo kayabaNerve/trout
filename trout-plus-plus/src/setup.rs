@@ -1,185 +1,453 @@
-//! Trout++ Setup Protocol
-//!
-//! Trout++ begins with a _non-interactive_ setup protocol to sample the discriminant(s) of the
-//! class groups which will be used with the Trout++ protocol. This requires a context string and
-//! the parameters for the class group itself. This non-interactive setup protocol MUST be run
-//! before the actual setup protocol, or the signing protocol, is run.
-//!
-//! Trout++ continues with a one-round _interactive_ setup protocol for an existing
-//! Shamir-secret-shared signing key. Callers MAY perform the interactive setup protocol ahead of
-//! time or MAY perform it simultaneously with the first round of the signing protocol, both
-//! exhibiting the same complexities, to avoid an explicit additional setup and to avoid having to
-//! store the results of the setup protocol. Similarly, Callers MAY perform the interactive setup
-//! protocol for a securely-derived signing key or MAY perform the interactive setup protocol for a
-//! pair of keys and then perform derivation over the setups (meaning the same setups can be reused
-//! even when performing signing for derivations).
+use core::ops::Deref as _;
+use alloc::{vec::Vec, vec};
+use std::io::{self, Write as _};
 
-use rand::{TryRng, TryCryptoRng, Rng as _, CryptoRng};
+use zeroize::Zeroizing;
+use rand::CryptoRng;
 
-use ::crypto_bigint::{
-  Choice, CtOption, CtGt, CtAssign, Zero, One, NonZero, Odd, Limb, CheckedAdd, CheckedSub, Mul,
-  ConcatenatingMul, ConcatenatingSquare, Div, Rem, NegMod, MulMod, SquareMod, BitOps, Encoding,
-  RandomBits, RandomMod, UnsignedWithMontyForm, BoxedUint,
-};
+use group::{ff::PrimeField as _, Group, GroupEncoding as _};
 
-use class_groups::{NegativeDiscriminant as _, Cl15Error, Cl15p, Element as _, CryptoBigintElement};
+use crypto_bigint::{CtAssign, CtSelect, Limb, ConcatenatingMul as _, Encoding, BoxedUint};
 
-use cshake::{
-  digest::{Update as _, ExtendableOutput as _, XofReader},
-  CShake,
-};
+use class_groups::{NegativeDiscriminant as _, Element, Table};
 
-/// The non-interactive setup which MUST be run before the interactive setup, signing protocol.
-pub struct NonInteractiveSetup<Up, Up2, Udk, Udp> {
-  cl15p: Cl15p<Up, Up2, Udk, Udp>,
-  generator_k: CryptoBigintElement<BoxedUint>,
+use cshake::digest::{CustomizedInit as _, Update as _, ExtendableOutput as _};
+
+use crate::{CopyRead, WrappedGroup, Up2, NonInteractiveSetup, BatchVerifier, Ciphertext};
+
+mod sealed {
+  pub(super) trait Sealed {}
 }
 
-impl<
-  Up: Clone
-    + AsRef<[Limb]>
-    + AsMut<[Limb]>
-    + CtAssign
-    + Zero
-    + One
-    + NegMod<Output = Up>
-    + MulMod<Output = Up>
-    + SquareMod<Output = Up>
-    + ConcatenatingSquare
-    + BitOps,
-  Udk: Clone
-    + AsRef<[Limb]>
-    + AsMut<[Limb]>
-    + CtGt
-    + One
-    + CheckedAdd
-    + CheckedSub<Udk>
-    + for<'a> Mul<&'a Up, Output = Udk>
-    // TODO: `for<'a> ConcatenatingMul<&'a <Up as ConcatenatingSquare>::Output, Output: 'static>`
-    + ConcatenatingMul<<Up as ConcatenatingSquare>::Output>
-    + for<'a> Div<&'a NonZero<Up>, Output = Udk>
-    + for<'a> Rem<&'a NonZero<Up>, Output = Up>
-    + BitOps
-    + Encoding
-    + RandomBits
-    + RandomMod
-    + UnsignedWithMontyForm,
->
-  NonInteractiveSetup<
-    Up,
-    <Up as ConcatenatingSquare>::Output,
-    Udk,
-    <Udk as ConcatenatingMul<<Up as ConcatenatingSquare>::Output>>::Output,
-  >
-{
-  /// Perform the non-interactive setup.
+/// A view over an ECDSA signing key, as required by the Trout++ signing protocol.
+#[expect(private_bounds)]
+pub trait SigningKey<E, G: WrappedGroup>: sealed::Sealed {
+  /// The setup this corresponds to.
+  type Setup;
+
+  /// The type of the opening for the setup this corresponds to.
+  type Opening;
+
+  /// The transcript for this signing key.
   ///
-  /// This requires a domain-separation tag followed by the context. The domain-separation tag
-  /// MUST be a recognized label for an elliptic curve ("P-224", "P-256", "P-384", "P-521").
-  /// The context string MUST be either:
-  /// - The compressed encoding of the ECDSA signing key, if key derivations are not used
-  /// - The concatenated compressed encodings of the two keys used for key derivation,
-  ///   if key derivations are used
-  ///
-  /// The domain-separation tag is used as the customization for cSHAKE (without a function name),
-  /// where the context string is absorbed before the sponge is squeezed to find two numbers:
-  /// - `q'`, an integer in range $0 \le q' \le (q_\mathsf{max} - q_\mathsf{min})$, where
-  ///   $q_\mathsf{max}$ (respectively $q_\mathsf{min}$) is the largest (respectively smallest)
-  ///   integer such that
-  ///   $\lfloor \mathsf{log}_2(p * q_{*}) \rfloor + 1 = \mathsf{fundamental_discriminant_bits}$.
-  /// - `a'`, an integer in range $0 \le a' \le \sqrt((-\Delta_k) / 4)$.
-  ///
-  /// The process occurs via rejection sampling, where for a $k$-bit sample, $\lceil k / 8 \rceil$
-  /// bytes are squeezed. If the bytes, decoded as a little-endian integer, are in the sample
-  /// range, they're accepted. Else, a new sample occurs.
-  ///
-  /// The prime $q$ is decided as the first eligible prime number found by testing (and
-  /// incrementing by $1$ from) $q_\mathsf{min} + q'$. If the current value is equal to
-  /// $q_\mathsf{max}$, the current value is 'incremented' to $q_\mathsf{min}$.
-  ///
-  /// $\mathsf{next_prime_ideal_squared}(a', \Delta_k)$ is invoked for a generator of the class
-  /// group with discriminant $\Delta_k$.
-  ///
-  /// `CSHAKE_RATE` MUST be `136` (for cSHAKE 256) or `168` (for cSHAKE 128). The bits of security
-  /// from cSHAKE MUST be greater than or equal to `bits_of_security`.
-  ///
-  /// The `rng` argument is not used to perform the setup other than as entropy for primality
-  /// tests. Specifying different RNGs will NOT affect the result, other than with negligible
-  /// probability.
-  pub fn setup<'context, const CSHAKE_RATE: usize>(
+  /// The transcript MUST be binding to all the individual ciphertexts which contribute to the
+  /// resulting ciphertext AND any derivations applied.
+  fn transcript(&self) -> G::CShake;
+
+  /// The signing key.
+  fn key(&self) -> G::G;
+
+  /// The ciphertext for the discrete logarithm of the signing key.
+  fn ciphertext(&self) -> E;
+
+  /// Transform an individual share's setup to the corresponding share of this key's ciphertext.
+  fn share_ciphertext(
+    &self,
+    interpolation_factor: <G::G as Group>::Scalar,
+    setup: Self::Setup,
+  ) -> E;
+
+  /// Transform an individual share's opening to the corresponding share of this key's ciphertext's
+  /// opening.
+  fn share_opening(
+    &self,
+    interpolation_factor: <G::G as Group>::Scalar,
+    share: Self::Opening,
+  ) -> Zeroizing<BoxedUint>;
+}
+
+/// The interactive setup for the Trout++ signing protocol.
+///
+/// This inputs a Shamir secret share of an ECDSA signing key. Protocols for generating
+/// ECDSA signing keys are out of scope to this library (and Trout++'s technical specification as a
+/// whole), intending to be composed with existing (ideally standardized) key generation protocols.
+/// We do assume an _unbiased_ key generation protocol.
+///
+/// This MAY be run before the signing protocol or MAY be run in parallel with the first round of
+/// the signing protocol. This SHOULD be run ahead of time in order to reduce the communication
+/// cost of the signing protocol but the resulting protocol has the same complexities either way.
+#[derive(Clone)]
+pub struct InteractiveSetup<E> {
+  ciphertext: Ciphertext<E>,
+  message: Vec<u8>,
+}
+
+impl<E: CtAssign + Element> InteractiveSetup<E> {
+  /// Perform the setup protocol.
+  pub fn setup<Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Encoding, G: WrappedGroup>(
     mut rng: impl CryptoRng,
-    dst: &[u8],
-    context: impl IntoIterator<Item = &'context [u8]>,
-    p: Odd<Up>,
-    bits_of_security: u32,
-    fundamental_discriminant_bit_length: u32,
-  ) -> Result<Self, Cl15Error> {
-    {
-      let cshake_bits_of_security = match CSHAKE_RATE {
-        136 => 256,
-        168 => 128,
-        _ => panic!("unrecognized rate for cSHAKE"),
-      };
-      assert!(bits_of_security >= cshake_bits_of_security);
-    }
+    setup: &NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
+    share: Zeroizing<<G::G as Group>::Scalar>,
+    mut out: impl io::Write,
+  ) -> io::Result<(Self, Zeroizing<BoxedUint>)> {
+    let mut commit = vec![];
+    let (ciphertext, interactive_ciphertext) =
+      Ciphertext::<E>::encrypt::<_, _, G>(&mut rng, setup, share.clone(), &mut commit)?;
 
-    let mut sponge = CShake::<CSHAKE_RATE>::new_with_function_name(&[], dst);
-    for context_piece in context {
-      sponge.update(context_piece);
-    }
-    let sponge = sponge.finalize_xof();
+    let mut message = vec![];
+    ciphertext.clone().write(&mut message)?;
+    message.write_all(&commit)?;
 
-    struct XofRand<X: XofReader>(X);
-    impl<X: XofReader> TryRng for XofRand<X> {
-      type Error = core::convert::Infallible;
-      fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-        let mut bytes = [0; 4];
-        self.0.read(&mut bytes);
-        Ok(u32::from_le_bytes(bytes))
-      }
-      fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        let mut bytes = [0; 8];
-        self.0.read(&mut bytes);
-        Ok(u64::from_le_bytes(bytes))
-      }
-      fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
-        self.0.read(dst);
-        Ok(())
-      }
-    }
-    impl<X: XofReader> TryCryptoRng for XofRand<X> {}
-    let mut sponge = XofRand(sponge);
+    let mut sponge = G::CShake::new_customized(setup.context());
+    sponge.update((G::generator_e() * share.deref()).to_bytes().as_ref());
+    sponge.update(&message);
+    let mut sponge = sponge.finalize_xof();
 
-    let cl15k_parameters = Cl15p::sample_parameters(fundamental_discriminant_bit_length, &p)?;
-    let q_apostraphe =
-      Option::<_>::from(cl15k_parameters.sample_q_apostraphe(&mut sponge)).ok_or(Cl15Error::NoQ)?;
-    let cl15p = Cl15p::derive(
+    let (prime, challenge) = crate::challenge::<G>(&mut rng, &mut sponge);
+    let opening = interactive_ciphertext.respond(&prime, challenge, &mut message)?;
+
+    out.write_all(&message)?;
+
+    Ok((Self { ciphertext, message }, opening))
+  }
+}
+
+impl<E: Element> InteractiveSetup<E> {
+  /// Deserialize and verify an invocation of the setup.
+  // TODO: Support batch verification
+  pub fn verify<Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Encoding, G: WrappedGroup>(
+    mut rng: impl CryptoRng,
+    setup: &NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
+    elliptic_commitment: G::G,
+    input: impl io::Read,
+  ) -> io::Result<Self> {
+    let mut sponge = G::CShake::new_customized(setup.context());
+    sponge.update(elliptic_commitment.to_bytes().as_ref());
+
+    let mut input = CopyRead { read: input, copy_to: vec![] };
+
+    let ciphertext = Ciphertext::read(setup.cl15p(), &mut input)?;
+    let commit = crate::ciphertext::Commit::<E, G>::read(setup, &mut input)?;
+
+    sponge.update(&input.copy_to);
+    let mut sponge = sponge.finalize_xof();
+    let (prime, challenge) = crate::challenge::<G>(&mut rng, &mut sponge);
+
+    let mut batch_verifier = BatchVerifier::new();
+    let () = commit.queue_batch_verification(
       &mut rng,
-      bits_of_security,
-      fundamental_discriminant_bit_length,
-      p,
-      q_apostraphe,
+      setup,
+      &mut batch_verifier,
+      ciphertext.clone(),
+      elliptic_commitment,
+      &prime,
+      challenge,
+      &mut input,
     )?;
+    let () = batch_verifier.verify(setup)?;
 
-    let floor_sqrt_delta_div_4 = (BoxedUint::from_le_bytes(
-      cl15p.fundamental_discriminant().absolute_value().as_ref().into(),
-    ) >> 2u32)
-      .floor_sqrt();
-    let mut prime_ideal_seed = {
-      let mut bytes = vec![0; usize::try_from(floor_sqrt_delta_div_4.bits().div_ceil(8)).unwrap()];
-      while {
-        sponge.fill_bytes(&mut bytes);
-        BoxedUint::from_le_bytes(bytes.clone().into()) > floor_sqrt_delta_div_4
-      } {}
-      BoxedUint::from_le_bytes(bytes.into())
+    Ok(Self { ciphertext, message: input.copy_to })
+  }
+}
+
+struct SigningKeyWithoutDerivations<E, G: WrappedGroup> {
+  transcript: G::CShake,
+  key: G::G,
+  ciphertext: E,
+}
+
+impl<E: Element, G: WrappedGroup> sealed::Sealed for SigningKeyWithoutDerivations<E, G> {}
+impl<E: Element, G: WrappedGroup> SigningKey<E, G> for SigningKeyWithoutDerivations<E, G> {
+  type Setup = InteractiveSetup<E>;
+  type Opening = Zeroizing<BoxedUint>;
+  fn transcript(&self) -> G::CShake {
+    self.transcript.clone()
+  }
+  fn key(&self) -> G::G {
+    self.key
+  }
+  fn ciphertext(&self) -> E {
+    self.ciphertext.clone()
+  }
+  fn share_ciphertext(
+    &self,
+    interpolation_factor: <G::G as Group>::Scalar,
+    setup: Self::Setup,
+  ) -> E {
+    // TODO
+    let (_a, _b, _c, discriminant_abs) = setup.ciphertext.ciphertext.clone().a_b_c_discriminant();
+    let ciphertext = Table::new(core::num::NonZero::new(4).unwrap(), setup.ciphertext.ciphertext);
+    Table::msm_vartime(
+      E::identity(discriminant_abs),
+      &[(
+        crate::Up_from_scalar::<BoxedUint, G>(&interpolation_factor).to_le_bytes().as_ref(),
+        &ciphertext,
+      )],
+    )
+  }
+  fn share_opening(
+    &self,
+    interpolation_factor: <G::G as Group>::Scalar,
+    opening: Self::Opening,
+  ) -> Zeroizing<BoxedUint> {
+    Zeroizing::new(
+      opening.concatenating_mul(crate::Up_from_scalar::<BoxedUint, G>(&interpolation_factor)),
+    )
+  }
+}
+
+impl<E: Element> InteractiveSetup<E> {
+  /// The representation of the signing key for the sum of these setups.
+  ///
+  /// The `key` MUST be the key specified as the context string for the non-interactive setup.
+  ///
+  /// Each setup is specified with a scalar which SHOULD be its interpolation factor such that the
+  /// sum of the ciphertexts encrypt the signing key. These will presumably be the Lagrange
+  /// interpolation factors.
+  pub fn signing_key<'a, Udk: Encoding, Udp: Encoding, G: WrappedGroup>(
+    setup: &NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
+    key: G::G,
+    setups: impl Iterator<Item = (<G::G as Group>::Scalar, &'a Self)>,
+  ) -> impl SigningKey<E, G, Setup = Self, Opening = Zeroizing<BoxedUint>>
+  where
+    E: 'a,
+  {
+    let mut transcript = G::CShake::new_customized(setup.context());
+    let cl15p = setup.cl15p();
+    let mut ciphertext = E::identity(cl15p.absolute_value());
+    for (interpolation_factor, setup) in setups {
+      transcript.update(interpolation_factor.to_repr().as_ref());
+      transcript.update(&setup.message);
+
+      // TODO: Calculate this with a multi-scalar multiplication
+      let table =
+        Table::new(core::num::NonZero::new(4).unwrap(), setup.ciphertext.ciphertext.clone());
+      ciphertext = ciphertext.add(Table::msm_vartime(
+        E::identity(cl15p.absolute_value()),
+        &[(
+          crate::Up_from_scalar::<BoxedUint, G>(&interpolation_factor).to_le_bytes().as_ref(),
+          &table,
+        )],
+      ));
+    }
+    SigningKeyWithoutDerivations { transcript, key, ciphertext }
+  }
+}
+
+/// The interactive setup for the Trout++ signing protocol _with support for additive key
+/// derivations_.
+///
+/// This inputs two Shamir secret shares which may have a linear combination taking to yield an
+/// ECDSA signing key. Protocols for sharing secrets are out of scope to this library (and
+/// Trout++'s technical specification as a whole), intending to be composed with existing (ideally
+/// standardized) key generation protocols. We do assume an _unbiased_ key generation protocol.
+///
+/// This MAY be run before the signing protocol or MAY be run in parallel with the first round of
+/// the signing protocol. This SHOULD be run ahead of time in order to reduce the communication
+/// cost of the signing protocol but the resulting protocol has the same complexities either way.
+#[derive(Clone)]
+pub struct InteractiveSetupWithDerivations<E> {
+  ciphertexts: [Ciphertext<E>; 2],
+  message: Vec<u8>,
+}
+
+impl<E: CtSelect + CtAssign + Element> InteractiveSetupWithDerivations<E> {
+  /// Perform the setup protocol with support for additive key derivations.
+  pub fn setup<Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Encoding, G: WrappedGroup>(
+    mut rng: impl CryptoRng,
+    setup: &NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
+    shares: Zeroizing<[<G::G as Group>::Scalar; 2]>,
+    mut out: impl io::Write,
+  ) -> io::Result<(Self, [Zeroizing<BoxedUint>; 2])> {
+    let mut ciphertexts = Vec::with_capacity(2);
+    let mut commit = vec![];
+    let mut message = vec![];
+    let interactive_ciphertexts = shares.map(|share| {
+      let (ciphertext, interactive_ciphertext) =
+        Ciphertext::<E>::encrypt::<_, _, G>(&mut rng, setup, Zeroizing::new(share), &mut commit)
+          .expect("`<Vec<u8> as io::Write>::write` is infallible");
+      ciphertext
+        .clone()
+        .write(&mut message)
+        .expect("`<Vec<u8> as io::Write>::write` is infallible");
+      ciphertexts.push(ciphertext);
+      interactive_ciphertext
+    });
+    message.write_all(&commit)?;
+
+    let mut sponge = G::CShake::new_customized(setup.context());
+    sponge.update((G::generator_e() * shares.deref()[0]).to_bytes().as_ref());
+    sponge.update((G::generator_e() * shares.deref()[1]).to_bytes().as_ref());
+    sponge.update(&message);
+    let mut sponge = sponge.finalize_xof();
+
+    let (prime, challenge) = crate::challenge::<G>(&mut rng, &mut sponge);
+    let openings = interactive_ciphertexts.map(|interactive_ciphertext| {
+      interactive_ciphertext
+        .respond(&prime, challenge, &mut message)
+        .expect("`<Vec<u8> as io::Write>::write` is infallible")
+    });
+
+    out.write_all(&message)?;
+
+    Ok((Self { ciphertexts: ciphertexts.try_into().map_err(|_| ()).unwrap(), message }, openings))
+  }
+
+  /// Deserialize and verify an invocation of the setup.
+  // TODO: Support batch verification
+  pub fn verify<Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Encoding, G: WrappedGroup>(
+    mut rng: impl CryptoRng,
+    setup: &NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
+    elliptic_commitments: [G::G; 2],
+    input: impl io::Read,
+  ) -> io::Result<Self> {
+    let mut sponge = G::CShake::new_customized(setup.context());
+    for elliptic_commitment in elliptic_commitments {
+      sponge.update(elliptic_commitment.to_bytes().as_ref());
+    }
+
+    let mut input = CopyRead { read: input, copy_to: vec![] };
+
+    let ciphertexts = {
+      let first_ciphertext = Ciphertext::read(setup.cl15p(), &mut input)?;
+      let second_ciphertext = Ciphertext::read(setup.cl15p(), &mut input)?;
+      [first_ciphertext, second_ciphertext]
     };
-    let generator_k = CryptoBigintElement::<BoxedUint>::next_prime_ideal_squared(
-      rng,
-      prime_ideal_seed,
-      cl15p.fundamental_discriminant().absolute_value(),
-      bits_of_security,
-    );
+    let commits = {
+      let first_commit = crate::ciphertext::Commit::<E, G>::read(setup, &mut input)?;
+      let second_commit = crate::ciphertext::Commit::<E, G>::read(setup, &mut input)?;
+      [first_commit, second_commit]
+    };
 
-    Ok(Self { cl15p, generator_k })
+    sponge.update(&input.copy_to);
+    let mut sponge = sponge.finalize_xof();
+    let (prime, challenge) = crate::challenge::<G>(&mut rng, &mut sponge);
+
+    let mut batch_verifier = BatchVerifier::new();
+    for ((elliptic_commitment, ciphertext), commit) in
+      elliptic_commitments.into_iter().zip(ciphertexts.iter().cloned()).zip(commits)
+    {
+      let () = commit.queue_batch_verification(
+        &mut rng,
+        setup,
+        &mut batch_verifier,
+        ciphertext,
+        elliptic_commitment,
+        &prime,
+        challenge,
+        &mut input,
+      )?;
+    }
+    let () = batch_verifier.verify(setup)?;
+
+    Ok(Self { ciphertexts, message: input.copy_to })
+  }
+}
+
+impl<E> InteractiveSetupWithDerivations<E> {
+  fn scalars<G: WrappedGroup>(
+    interpolation_factor: <G::G as Group>::Scalar,
+    derivation: <G::G as Group>::Scalar,
+  ) -> (BoxedUint, BoxedUint) {
+    (
+      crate::Up_from_scalar::<BoxedUint, G>(&interpolation_factor),
+      crate::Up_from_scalar::<BoxedUint, G>(&(derivation * interpolation_factor)),
+    )
+  }
+}
+
+impl<E: Element> InteractiveSetupWithDerivations<E> {
+  fn scaled_ciphertext<G: WrappedGroup>(
+    self,
+    interpolation_factor: <G::G as Group>::Scalar,
+    derivation: <G::G as Group>::Scalar,
+  ) -> E {
+    // TODO
+    let (_a, _b, _c, discriminant_abs) =
+      self.ciphertexts[0].ciphertext.clone().a_b_c_discriminant();
+    let [first_ciphertext, second_ciphertext] = self.ciphertexts;
+    let first_ciphertext =
+      Table::new(core::num::NonZero::new(4).unwrap(), first_ciphertext.ciphertext);
+    let second_ciphertext =
+      Table::new(core::num::NonZero::new(4).unwrap(), second_ciphertext.ciphertext);
+    let scalars = Self::scalars::<G>(interpolation_factor, derivation);
+    Table::msm_vartime(
+      E::identity(discriminant_abs),
+      &[
+        (scalars.0.to_le_bytes().as_ref(), &first_ciphertext),
+        (scalars.1.to_le_bytes().as_ref(), &second_ciphertext),
+      ],
+    )
+  }
+}
+
+struct SigningKeyWithDerivations<E, G: WrappedGroup> {
+  derivation: <G::G as Group>::Scalar,
+  transcript: G::CShake,
+  key: G::G,
+  ciphertext: E,
+}
+
+impl<E: Element, G: WrappedGroup> sealed::Sealed for SigningKeyWithDerivations<E, G> {}
+impl<E: Element, G: WrappedGroup> SigningKey<E, G> for SigningKeyWithDerivations<E, G> {
+  type Setup = InteractiveSetupWithDerivations<E>;
+  type Opening = Zeroizing<[BoxedUint; 2]>;
+  fn transcript(&self) -> G::CShake {
+    self.transcript.clone()
+  }
+  fn key(&self) -> G::G {
+    self.key
+  }
+  fn ciphertext(&self) -> E {
+    self.ciphertext.clone()
+  }
+  fn share_ciphertext(
+    &self,
+    interpolation_factor: <G::G as Group>::Scalar,
+    setup: Self::Setup,
+  ) -> E {
+    setup.scaled_ciphertext::<G>(interpolation_factor, self.derivation)
+  }
+  fn share_opening(
+    &self,
+    interpolation_factor: <G::G as Group>::Scalar,
+    share: Self::Opening,
+  ) -> Zeroizing<BoxedUint> {
+    let scalars =
+      InteractiveSetupWithDerivations::<E>::scalars::<G>(interpolation_factor, self.derivation);
+    Zeroizing::new(
+      share[0]
+        .concatenating_mul(scalars.0)
+        .concatenating_add(share[1].concatenating_mul(scalars.1)),
+    )
+  }
+}
+
+impl<E: Element> InteractiveSetupWithDerivations<E> {
+  /// The representation of the signing key for the sum of these setups.
+  ///
+  /// `key` MUST be the terms specified as the context string for the non-interactive setup.
+  ///
+  /// Each setup is specified with a scalar which SHOULD be its interpolation factor such that the
+  /// sum of the ciphertexts encrypt the signing key. These will presumably be the Lagrange
+  /// interpolation factors.
+  pub fn signing_key<'a, Udk: Encoding, Udp: Encoding, G: WrappedGroup>(
+    setup: &NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
+    key: [G::G; 2],
+    setups: impl Iterator<Item = (<G::G as Group>::Scalar, &'a Self)>,
+    derivation: <G::G as Group>::Scalar,
+  ) -> impl SigningKey<E, G, Setup = Self, Opening = Zeroizing<[BoxedUint; 2]>>
+  where
+    E: 'a,
+  {
+    let mut transcript = G::CShake::new_customized(setup.context());
+    transcript.update(derivation.to_repr().as_ref());
+    let cl15p = setup.cl15p();
+    let mut ciphertext = E::identity(cl15p.absolute_value());
+    for (interpolation_factor, setup) in setups {
+      transcript.update(interpolation_factor.to_repr().as_ref());
+      transcript.update(&setup.message);
+
+      // TODO: Calculate this with a multi-scalar multiplication
+      ciphertext =
+        ciphertext.add(setup.clone().scaled_ciphertext::<G>(interpolation_factor, derivation));
+    }
+
+    SigningKeyWithDerivations {
+      derivation,
+      transcript,
+      key: key[0] + (key[1] * derivation),
+      ciphertext,
+    }
   }
 }

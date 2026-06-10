@@ -102,6 +102,19 @@ the _verifier's_ type for representing elements of the class group (which will
 not be used with secrets). This allows limiting constant-time implementations,
 which are slower, to solely when secrets are being worked with.
 
+The security parameter for the soundness of the zero-knowledge proofs is
+configurable. However, when sampling integers uniform to the unknown order of a
+class group, the statistical distance is explicitly and universally set to
+$< 2^{-128}$.
+[NIST.IR.8214C](https://nvlpubs.nist.gov/nistpubs/ir/2026/NIST.IR.8214C.pdf)
+Section 9.1.2 explicitly requires just 40 bits of statistical security, stating
+a preference for 64 bits. We find this parameter to not only (effectively)
+guarantee the sampled numbers are indistinguishable from uniform, but also to
+be sufficiently conservative that even when aiming for a soundness error
+$< 2^{-256}$, this is an appropriate parameter choice. This allows us to
+simplify configuration by not having to further expose/propagate this. The same
+parameter, $< 2^{-128}$, is also used for weights within batch verification.
+
 `class-groups`, BICYCL, the bindings to BICYCL, and this implementation of
 Trout++ have not been externally reviewed or audited as far as the authors of
 this implementation are aware. Please carefully read and consider all security
@@ -121,15 +134,53 @@ The `class-groups` library contains a
 ). Trout++ is expected to continue with an exact technical specification though
 this is still a work in progress.
 
+### Usage
+
+This library extensively makes use of generic types, intending to minimize the
+amount of allocations required. While the bounds on arithmetic operations may
+be overwhelming, they may generally be immediately satisfied by simply using
+[`BoxedUint`](
+  https://docs.rs/crypto-bigint/0.7.3/crypto_bigint/struct.BoxedUint.html
+). This defers to a version which will spuriously allocate however, and if the
+use-case is known ahead of time, the fixed-size
+[`Uint`](https://docs.rs/crypto-bigint/0.7.3/crypto_bigint/struct.Uint.html)
+should be used instead (with performance benefits accordingly).
+
+Internally, the library does use `BoxedUint` to represent scalars and the
+openings of ciphertexts/commitments. This does bind the library to `alloc`.
+Additionally, IO is handled via `std::io`, requiring the use of `std` as well.
+
+This library assumes the caller already has generated an unbiased ECDSA signing
+key (or terms from which it's suitable to derive ECDSA signing keys). A
+distributed key generation protocol for the ECDSA signing key is _out of scope_
+to this library. The setup for Trout++ (which is transparent, and may be run in
+parallel with the first round of the signing protocol with the same
+complexities) is part of this library though.
+
+All operations regarding witnesses are expected to be performed in
+constant-time and make use of `Table::msm` (not `Table::msm_vartime`) to this
+effect. At this time,
+[`CryptoBigintElement`](
+  https://docs.rs/class-groups/0.0.2-alpha/class_groups/crypto_bigint/element/struct.CryptoBigintElement.html
+) is the only implementation of `Element` which satisfies the necessary trait
+bounds. Users SHOULD use `CryptoBigintElement<Uint<_>>` as
+`CryptoBigintElement<BoxedUint>` has been observed to be ~33% slower.
+
+This library effectively assumes an ideal network such that any message sent is
+received and agreed upon by all pertinent parties. For deployment in
+asynchronous networks, please review [ROAST](https://eprint.iacr.org/2022/550)
+as the recommended method of deployment.
+
 ### History
 
 Trout's design began in December, 2023 with sketches (and an experimental
 implementation) of a two-round threshold ECDSA publicly posted in
 January, 2024. Trout was improved, proven, and published by
-Hila Dahari-Garbian, Ariel Nof, and Luke Parker in ACM CCS 2025. This
-repository was cited as containing the experimental implementation of Trout but
-it has since been improved and updated to Trout++. The history is available via
-Git however.
+Hila Dahari-Garbian, Ariel Nof, and Luke Parker in ACM CCS 2025, which also
+published an independent two-round threshold ECDSA protocol premised on class
+groups. This repository was cited as containing the experimental implementation
+of Trout but it has since been improved and updated to Trout++. The history is
+available via Git however.
 
 Trout++ continued with an optimized commitment scheme and focusing on features,
 in order to attempt to become a definitive choice for threshold ECDSA.

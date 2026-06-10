@@ -8,6 +8,7 @@ mod table {
   ///
   /// no-`alloc`, this is constrained to the `bits = 1` case so that its memory may be statically
   /// defined. It exists to maintain the API, not to offer any performance benefit.
+  #[derive(Clone)]
   pub struct Table<E> {
     pub(super) bits: u8,
     pub(super) element: Box<[E]>,
@@ -44,6 +45,7 @@ mod table {
   ///
   /// no-`alloc`, this is constrained to the `bits = 1` case so that its memory may be statically
   /// defined. It exists to maintain the API, not to offer any performance benefit.
+  #[derive(Clone)]
   pub struct Table<E> {
     pub(super) bits: u8,
     pub(super) element: [E; 1],
