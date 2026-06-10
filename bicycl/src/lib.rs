@@ -350,8 +350,6 @@ impl Element for BicyclElement {
   }
 }
 
-impl class_groups::ElementExt for BicyclElement {}
-
 #[test]
 fn bicycl() {
   let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);

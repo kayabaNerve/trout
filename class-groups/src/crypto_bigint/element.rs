@@ -3,15 +3,12 @@ use core::{ops::Neg, fmt::Debug};
 use zeroize::Zeroize;
 
 use crypto_bigint::{
-  Choice, CtOption, CtEq, CtGt as _, CtSelect, CtAssign as _, BitOps, NonZero, One as _, Limb,
-  UintRef,
+  Choice, CtOption, CtEq, CtGt as _, CtSelect, CtAssign, BitOps, NonZero, One as _, Limb, UintRef,
 };
 
 use super::I;
 
 use crate::Element;
-#[cfg(feature = "alloc")]
-use crate::Table;
 
 pub(super) trait Limbs:
   Send
@@ -20,6 +17,7 @@ pub(super) trait Limbs:
   + Zeroize
   + CtEq
   + CtSelect
+  + CtAssign
   + BitOps
   + super::composition::Limbs<
     Wide: Send
@@ -27,6 +25,7 @@ pub(super) trait Limbs:
             + Debug
             + Zeroize
             + CtSelect
+            + CtAssign
             + BitOps
             + super::c::Limbs
             + super::reduction::Limbs,
@@ -241,6 +240,16 @@ impl<U: Limbs> CtSelect for CryptoBigintElement<U> {
       // `self`'s without invoking `ct_select`
       discriminant_abs: self.discriminant_abs.clone(),
     }
+  }
+}
+
+impl<U: Limbs> CtAssign for CryptoBigintElement<U> {
+  /// This MAY return an incorrect result for forms of different discriminants.
+  fn ct_assign(&mut self, b: &Self, choice: Choice) {
+    self.a.ct_assign(&b.a, choice);
+    self.b.0.ct_assign(&b.b.0, choice);
+    self.b.1.ct_assign(&b.b.1, choice);
+    self.c.ct_assign(&b.c, choice);
   }
 }
 
@@ -522,74 +531,5 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
       super::encoding::validate_binary_quadratic_form(a, (b_positive, b_abs), &discriminant_abs)
         .map(|(a, b, c)| Self { a: a.get(), b, c, discriminant_abs })
     })
-  }
-}
-
-// TODO
-#[cfg(feature = "alloc")]
-impl<U: Limbs> crate::ElementExt for CryptoBigintElement<U> {
-  const MAX_TABLE_BITS: u32 = 12;
-
-  /// This is only correct when `identity` is in fact the identity element for the class group the
-  /// elements in the table belong to.
-  fn multiexp(identity: &Self, pairs: &[(&Table<Self>, &[u8])]) -> Self {
-    let mut longest_scalar_bits = 0;
-    for (_table, scalar) in pairs {
-      longest_scalar_bits = longest_scalar_bits.max(scalar.len() * 8);
-    }
-
-    let mut res: Option<Self> = None;
-    for i in 0 .. longest_scalar_bits {
-      // Shift over the existing result by a bit
-      if let Some(res) = res.as_mut() {
-        *res = res.double();
-      }
-
-      for (table, scalar) in pairs {
-        let scalar_bits = scalar.len() * 8;
-        // Transform the index of the bit in our longest scalar to the index of the bit in this one
-        let Some(i) = i.checked_sub(longest_scalar_bits - scalar_bits) else {
-          // If we're indexing a bit which doesn't exist in this scalar, continue
-          continue;
-        };
-
-        // If it's time to add this entry, do so
-        let table_bits = table.bits();
-        if ((i + 1) % table_bits) == 0 {
-          let mut accum = 0usize;
-          debug_assert_eq!(i - (i + 1 - table_bits) + 1, table_bits);
-          for i in (i + 1 - table_bits) ..= i {
-            accum <<= 1;
-            accum |= (usize::from(scalar[i / 8] >> (7 - (i % 8)))) & 1;
-          }
-
-          let mut to_add = Self::ct_select(&table[0], &table[1], 1.ct_eq(&accum));
-          for i in 2 .. table.as_ref().len() {
-            to_add = Self::ct_select(&to_add, &table[i], i.ct_eq(&accum));
-          }
-          res = Some(res.as_ref().map(|res| res.add(&to_add)).unwrap_or_else(|| to_add.clone()));
-        }
-      }
-    }
-
-    // Perform the final step of the accumulator
-    for (table, scalar) in pairs {
-      let scalar_bits = scalar.len() * 8;
-
-      let table_bits = table.bits();
-      let mut accum = 0usize;
-      for i in ((scalar_bits / table_bits) * table_bits) .. scalar_bits {
-        accum <<= 1;
-        accum |= (usize::from(scalar[i / 8] >> (7 - (i % 8)))) & 1;
-      }
-
-      let mut to_add = Self::ct_select(&table[0], &table[1], 1.ct_eq(&accum));
-      for i in 2 .. table.as_ref().len() {
-        to_add = Self::ct_select(&to_add, &table[i], i.ct_eq(&accum));
-      }
-      res = Some(res.as_ref().map(|res| res.add(&to_add)).unwrap_or_else(|| to_add.clone()));
-    }
-
-    res.unwrap_or_else(|| identity.clone())
   }
 }

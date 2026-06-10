@@ -12,10 +12,8 @@ extern crate std;
 mod element;
 pub use element::{Coefficients, Element};
 
-#[cfg(feature = "alloc")]
-mod table;
-#[cfg(feature = "alloc")]
-pub use table::{Table, ElementExt};
+mod mul;
+pub use mul::Table;
 
 mod crypto_bigint;
 pub use crypto_bigint::{Error, CryptoBigintElement};
