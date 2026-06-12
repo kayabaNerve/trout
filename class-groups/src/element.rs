@@ -63,13 +63,13 @@ pub trait Element:
   /// This is generally faster than adding an element to itself as it's allowed to specialize on
   /// this special case.
   #[must_use]
-  fn double(&self) -> Self;
+  fn double(self) -> Self;
   /// Add two elements.
   #[must_use]
-  fn add(&self, other: &Self) -> Self;
+  fn add(self, other: Self) -> Self;
   /// Subtract one element from another.
   #[must_use]
-  fn sub(&self, other: Self) -> Self;
+  fn sub(self, other: Self) -> Self;
 
   /// Load a form from its coefficients.
   ///

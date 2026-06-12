@@ -191,16 +191,16 @@ impl Element for BicyclElement {
     ))
   }
 
-  fn double(&self) -> Self {
+  fn double(self) -> Self {
     unsafe { Self(rust_bicycl_qfi_double(self.0 as *mut core::ffi::c_void) as usize) }
   }
-  fn add(&self, other: &Self) -> Self {
+  fn add(self, other: Self) -> Self {
     unsafe {
       Self(rust_bicycl_qfi_add(self.0 as *mut core::ffi::c_void, other.0 as *mut core::ffi::c_void)
         as usize)
     }
   }
-  fn sub(&self, other: Self) -> Self {
+  fn sub(self, other: Self) -> Self {
     unsafe {
       Self(rust_bicycl_qfi_sub(self.0 as *mut core::ffi::c_void, other.0 as *mut core::ffi::c_void)
         as usize)
@@ -394,16 +394,16 @@ fn bicycl() {
     )
   );
   assert_eq!(
-    crypto_bigint_g.double(),
-    <CryptoBigintElement::<BoxedUint> as class_groups::Element>::from(bicycl_g.double())
+    crypto_bigint_g.clone().double(),
+    <CryptoBigintElement::<BoxedUint> as class_groups::Element>::from(bicycl_g.clone().double())
   );
-  assert!(bool::from(bicycl_g.sub(bicycl_g.clone()).is_identity()));
+  assert!(bool::from(bicycl_g.clone().sub(bicycl_g.clone()).is_identity()));
 
   {
     let mut bicycl_g = bicycl_g.clone();
     let start = std::time::Instant::now();
     for _ in 0 .. 100_000 {
-      bicycl_g = bicycl_g.add(&bicycl_g);
+      bicycl_g = bicycl_g.clone().add(bicycl_g);
     }
     println!("100,000 `BicyclElement` NUCOMPs: {}ms", start.elapsed().as_millis());
   }
@@ -415,7 +415,7 @@ fn bicycl() {
       );
     let start = std::time::Instant::now();
     for _ in 0 .. 100_000 {
-      crypto_bigint_g = crypto_bigint_g.add(&crypto_bigint_g);
+      crypto_bigint_g = crypto_bigint_g.clone().add(crypto_bigint_g);
     }
     println!(
       "100,000 `CryptoBigintElement::<BoxedUint>` NUCOMPs: {}ms",

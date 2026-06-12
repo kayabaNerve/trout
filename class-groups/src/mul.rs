@@ -24,9 +24,9 @@ mod table {
       table.push(element);
       for i in 2 ..= len {
         if (i % 2) == 0 {
-          table.push(table[(i / 2) - 1].double());
+          table.push(table[(i / 2) - 1].clone().double());
         } else {
-          table.push(table[i - 2].add(&table[0]));
+          table.push(table[i - 2].clone().add(table[0].clone()));
         }
       }
 
@@ -155,7 +155,7 @@ impl<E: Element> Table<E> {
             for i in 1 ..= table.element.len() {
               to_add.ct_assign(&table.element[i - 1], i.ct_eq(&index));
             }
-            result = result.add(&to_add);
+            result = result.add(to_add);
 
             // The element should be doubled until this window is aligned again
             let doubles = doubles.get_or_insert(usize::from(table.bits));
@@ -205,7 +205,7 @@ impl<E: Element> Table<E> {
         match bit_chunk(scalar, bits, table.bits) {
           Ok(index) => {
             if let Some(index) = index.checked_sub(1) {
-              result = result.add(&table.element[index]);
+              result = result.add(table.element[index].clone());
             }
             let doubles = doubles.get_or_insert(usize::from(table.bits));
             *doubles = (*doubles).min(usize::from(table.bits));

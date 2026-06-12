@@ -380,23 +380,21 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
   }
 
   /// This is only correct for forms of the same discriminant where at least one form is primitive.
-  fn add(&self, other: &Self) -> Self {
-    let (a3, b3) =
-      super::add(self.a.clone(), self.b.clone(), other.a.clone(), other.b.clone(), other.c.clone());
-    Self::partial_reduce(a3, b3, self.discriminant_abs.clone())
+  fn add(self, other: Self) -> Self {
+    let (a3, b3) = super::add(self.a, self.b, other.a, other.b, other.c);
+    Self::partial_reduce(a3, b3, self.discriminant_abs)
   }
 
   /// This is only correct when the form is primitive.
-  fn double(&self) -> Self {
-    let (a3, b3) = super::double(self.a.clone(), self.b.clone(), self.c.clone());
-    Self::partial_reduce(a3, b3, self.discriminant_abs.clone())
+  fn double(self) -> Self {
+    let (a3, b3) = super::double(self.a, self.b, self.c);
+    Self::partial_reduce(a3, b3, self.discriminant_abs)
   }
 
   /// This is only correct for forms of the same discriminant where at least one form is primitive.
-  fn sub(&self, other: Self) -> Self {
-    let (a3, b3) =
-      super::add(self.a.clone(), self.b.clone(), other.a, (!other.b.0, other.b.1), other.c);
-    Self::partial_reduce(a3, b3, self.discriminant_abs.clone())
+  fn sub(self, other: Self) -> Self {
+    let (a3, b3) = super::add(self.a, self.b, other.a, (!other.b.0, other.b.1), other.c);
+    Self::partial_reduce(a3, b3, self.discriminant_abs)
   }
 
   /// This function is only valid for primitive reduced positive definite binary quadratic forms of
