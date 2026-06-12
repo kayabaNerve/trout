@@ -105,7 +105,7 @@ impl super::composition::Limbs for BoxedUint {
     super::composition::Xgcd { d: gcd.get(), u: (Choice::TRUE, u), v: (v_sign, v) }
   }
   #[inline(always)]
-  fn div(self, denom: &Self) -> Self {
+  fn div_exact(self, denom: &Self) -> Self {
     self.div_rem(&NonZero::new(denom.clone()).unwrap()).0
   }
   #[inline(always)]

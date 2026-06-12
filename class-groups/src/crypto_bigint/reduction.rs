@@ -273,12 +273,13 @@ fn reduce_to_next_bit<L: Limbs>(
 
     TODO: Can we remove the requirement for this scratch variable? Presumably not, as we have a
     constant-time shift of unbounded bit-length (where the shift may exceed a limb), so this can't
-    trivially be done as we iterate over limbs. We then need this to calculate `b` before we again
+    trivially be done as we iterate over limbs. We then need this to calculate `b'` before we again
     use it to calculate `c`, so we can't write it directly into one of those. We could directly
-    modify `a`, or at least, require we be passed in a copy of `a` we then use as scratch, but that
-    really just defers allocating this scratch variable to the caller.
+    modify `a'`, or at least, require we be passed in a copy of `a` we then use as scratch, but
+    that really just defers allocating this scratch variable to the caller.
 
-    This is currently the only explicit `clone` (or equivalent) in this entire file.
+    This is currently one of the the only two explicit `clone`s (or equivalent) in this entire
+    file.
   */
   let mut m_a = c.like_zero();
   // When `should_reduce = true`, `((1 << log_2_m) * a) < b`, so this will fit in `limbs` limbs

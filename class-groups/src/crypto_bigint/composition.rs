@@ -283,7 +283,7 @@ pub(crate) trait Limbs:
   /// `denom = 0`.
   ///
   /// Implementations MUST return a value with the same amount of limbs as the numerator.
-  fn div(self, denom: &Self) -> Self;
+  fn div_exact(self, denom: &Self) -> Self;
 
   /// Multiply two values modulo `modulus`.
   ///
@@ -433,8 +433,8 @@ pub(crate) fn add<U: Limbs>(
   };
 
   // `d1` is a factor of `d`, the greatest common factor of `a1, a2`, and therefore non-zero
-  let v1: U = a1.div(&d1);
-  let v2: U = a2.div(&d1);
+  let v1: U = a1.div_exact(&d1);
+  let v2: U = a2.div_exact(&d1);
 
   /*
     This computes `r` via the two parts of its equation, before taking their difference, entirely
@@ -448,7 +448,7 @@ pub(crate) fn add<U: Limbs>(
     While this is silly, handling the edge case the value is the modulus at the very end avoids
     doing it at each step.
   */
-  let r = {
+  let r: U = {
     let r1 = y1.1.mul_mod(&y2.1, &v1).mul_mod(&n.1, &v1);
     let r1_is_negative = (!y1.0) ^ (!y2.0) ^ (!n.0);
     let (r1_was_zero, r1) = r1.ct_neg_mod(&v1, r1_is_negative);
@@ -481,25 +481,20 @@ pub(crate) fn add<U: Limbs>(
   */
   let mut b3 = v2.mul(&r).double();
   let b3_is_negative = {
-    let mut carry = Limb::ZERO;
-    let mut borrow = Limb::ZERO;
+    let mut carry = Limb::from(u8::from(!b2.0));
+    let mask = Limb::ZERO.wrapping_sub(carry);
     let mut b3_limbs = b3.as_mut().iter_mut();
     for (b3_limb, b2_limb) in
       (&mut b3_limbs).zip(b2.1.as_ref().iter().chain(core::iter::repeat(&Limb::ZERO)))
     {
-      let if_add;
-      (if_add, carry) = b3_limb.carrying_add(*b2_limb, carry);
-      let if_sub;
-      (if_sub, borrow) = b3_limb.borrowing_sub(*b2_limb, borrow);
-
-      *b3_limb = Limb::ct_select(&if_sub, &if_add, b2.0);
+      let new_limb;
+      (new_limb, carry) = b3_limb.carrying_add((*b2_limb) ^ mask, carry);
+      *b3_limb = new_limb;
     }
 
-    // Clear the borrow if this was an addition, not a subtraction
-    borrow.ct_assign(&Limb::ZERO, b2.0);
-
-    // If the underflowed, negate `b3`
-    let underflowed = !borrow.is_zero();
+    // If this underflowed (we added a negative number and didn't overflow
+    // back to a positive representation), negate `b3`
+    let underflowed = (!b2.0) & carry.is_zero();
     let mut carry = Limb::from(u8::from(underflowed));
     let mask = Limb::ZERO.wrapping_sub(carry);
     for b3_limb in b3.as_mut() {
@@ -554,9 +549,9 @@ pub(crate) fn double<U: Limbs>(a: U, b: I<U>, c: U::Wide) -> (U::Wide, I<U::Wide
     (d1, x2)
   };
 
-  let v1: U = a.div(&d1);
+  let v1: U = a.div_exact(&d1);
 
-  let r = {
+  let r: U = {
     // `r1 = 0` as `y1 = 0` (and as `n = 0`)
 
     let r2 = x2.1.mul_mod(&c.rem(&v1), &v1);
@@ -575,23 +570,18 @@ pub(crate) fn double<U: Limbs>(a: U, b: I<U>, c: U::Wide) -> (U::Wide, I<U::Wide
 
   let mut b3 = v1.mul(&r).double();
   let b3_is_negative = {
-    let mut carry = Limb::ZERO;
-    let mut borrow = Limb::ZERO;
+    let mut carry = Limb::from(u8::from(!b.0));
+    let mask = Limb::ZERO.wrapping_sub(carry);
     let mut b3_limbs = b3.as_mut().iter_mut();
-    for (b3_limb, b_limb) in
+    for (b3_limb, b2_limb) in
       (&mut b3_limbs).zip(b.1.as_ref().iter().chain(core::iter::repeat(&Limb::ZERO)))
     {
-      let if_add;
-      (if_add, carry) = b3_limb.carrying_add(*b_limb, carry);
-      let if_sub;
-      (if_sub, borrow) = b3_limb.borrowing_sub(*b_limb, borrow);
-
-      *b3_limb = Limb::ct_select(&if_sub, &if_add, b.0);
+      let new_limb;
+      (new_limb, carry) = b3_limb.carrying_add((*b2_limb) ^ mask, carry);
+      *b3_limb = new_limb;
     }
 
-    borrow.ct_assign(&Limb::ZERO, b.0);
-
-    let underflowed = !borrow.is_zero();
+    let underflowed = (!b.0) & carry.is_zero();
     let mut carry = Limb::from(u8::from(underflowed));
     let mask = Limb::ZERO.wrapping_sub(carry);
     for b3_limb in b3.as_mut() {

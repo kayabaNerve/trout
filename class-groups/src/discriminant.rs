@@ -217,7 +217,7 @@ pub trait OddDiscriminant: Discriminant {}
 /// A fundamental (square-free) discriminant.
 pub trait FundamentalDiscriminant: Discriminant {
   /// Take an element of the class group with fundamental discriminant and apply the injection such
-  /// that it is mapped to an element of the class group with non-fundamental discriminant.
+  /// that it is mapped to an element of a class group with a non-fundamental discriminant.
   ///
   /// This implements Algorithm 2, `GoToNonMaxOrder`. We specify it as follows for primitive forms
   /// of fundamental negative discriminants:

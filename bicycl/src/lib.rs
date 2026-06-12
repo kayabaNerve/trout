@@ -417,9 +417,6 @@ fn bicycl() {
     for _ in 0 .. 100_000 {
       crypto_bigint_g = crypto_bigint_g.clone().add(crypto_bigint_g);
     }
-    println!(
-      "100,000 `CryptoBigintElement::<BoxedUint>` NUCOMPs: {}ms",
-      start.elapsed().as_millis()
-    );
+    println!("100,000 `CryptoBigintElement::<U1280>` NUCOMPs: {}ms", start.elapsed().as_millis());
   }
 }

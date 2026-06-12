@@ -46,7 +46,7 @@ where
     }
   }
   #[inline(always)]
-  fn div(self, denom: &Self) -> Self {
+  fn div_exact(self, denom: &Self) -> Self {
     self.div_rem(&NonZero::new(*denom).unwrap()).0
   }
   #[inline(always)]
