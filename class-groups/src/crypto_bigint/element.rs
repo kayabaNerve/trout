@@ -445,7 +445,7 @@ impl<U: Limbs> Element for CryptoBigintElement<U> {
     assert!(bool::from(!a.bits().ct_gt(&sqrt_discriminant_bits)));
     let b = (b_positive, U::from_le_slice(b_abs, 1 + sqrt_discriminant_bits));
     assert!(bool::from(!b.1.bits().ct_gt(&sqrt_discriminant_bits)));
-    let c = U::wide_from_le_slice(c, discriminant_bits);
+    let c = U::wide_from_le_slice(c, 2 * a.bits_precision());
 
     Self { a, b, c, discriminant_abs }
   }
