@@ -27,5 +27,5 @@ rand_chacha = { version = "0.10", default-features = false, features = ["std"] }
 crypto-bigint = { version = "0.7", default-features = false, features = ["extra-sizes"] }
 
 [features]
-alloc = ["crypto-bigint/alloc"]
+alloc = ["crypto-bigint/alloc", "crypto-primes/alloc"]
 std = ["alloc"]
