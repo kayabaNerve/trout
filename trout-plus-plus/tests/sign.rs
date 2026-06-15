@@ -1,6 +1,6 @@
 //! Test the signing protocol.
 
-use std::collections::HashMap;
+use std::{time::Instant, collections::HashMap};
 
 use zeroize::Zeroizing;
 use rand::{rand_core, rngs::SysRng};
@@ -17,8 +17,29 @@ use dkg_dealer::Participant;
 
 #[test]
 fn sign() {
+  /*
+    - 1827 corresponds to 128-bit computational security with 14-bit statistical security
+    - 3072 corresponds to 128-bit computational security with 40-bit statistical security
+    - 4096 corresponds to 128-bit computational security with 64-bit statistical security
+    - 6784 corresponds to 128-bit computational security with 128-bit statistical security
+
+    Trustless unknown-order groups by Samuel Dobson, Steven D. Galbraith, and Benjamin Smith,
+    https://eprint.iacr.org/2020/196 Table 2
+
+    We only use 1827 here as a reference point as frequently used for benchmarking works with class
+    groups. Per NIST.IR.8214C, 40 bits of statistical security is required for submissions, with
+    64 bits preferred, meaning the minimum should be 3072.
+  */
+  const FUNDAMENTAL_DISCRIMINANT_BIT_LENGTH: u16 = 1827;
+  #[expect(clippy::as_conversions)]
   type ProverElement = class_groups::CryptoBigintElement<
-    crypto_bigint::Uint<{ crypto_bigint::nlimbs((1827u32 + (2u32 * 256u32)).div_ceil(2)) }>,
+    crypto_bigint::Uint<
+      {
+        crypto_bigint::nlimbs(
+          ((FUNDAMENTAL_DISCRIMINANT_BIT_LENGTH as u32) + (2u32 * 256u32)).div_ceil(2),
+        )
+      },
+    >,
   >;
   type VerifierElement = bicycl::BicyclElement;
 
@@ -54,7 +75,7 @@ fn sign() {
     NonInteractiveSetup::<U256, U512, BoxedUint, BoxedUint>::setup::<P256>(
       &mut rng,
       [keys.values().next().unwrap().group_key().to_bytes()],
-      1827,
+      FUNDAMENTAL_DISCRIMINANT_BIT_LENGTH,
     )
     .unwrap();
   println!("NonInteractiveSetup");
@@ -97,6 +118,7 @@ fn sign() {
     })
     .collect::<HashMap<_, _>>();
   for id in &signing_set {
+    let start = Instant::now();
     let mut encoding = vec![];
     let preprocess_opening = Preprocess::<ProverElement>::participate::<_, _, P256>(
       rng,
@@ -105,6 +127,7 @@ fn sign() {
     )
     .unwrap();
     preprocess_openings.insert(id, preprocess_opening);
+    println!("Preprocessed once in {}ms", start.elapsed().as_millis());
 
     for id in &signing_set {
       let mut encoding = encoding.as_slice();
@@ -126,6 +149,7 @@ fn sign() {
 
   let mut completing = None;
   for (id, preprocess_opening) in preprocess_openings {
+    let start = Instant::now();
     let preprocess = preprocesses.remove(id).unwrap();
     let mut share = vec![];
     let first = completing.is_none();
@@ -145,6 +169,7 @@ fn sign() {
       )
       .unwrap(),
     ));
+    println!("Signed share once in {}ms", start.elapsed().as_millis());
 
     if !first {
       let completing = completing.as_mut().unwrap();
