@@ -127,12 +127,16 @@ fn sign() {
     )
     .unwrap();
     preprocess_openings.insert(id, preprocess_opening);
-    println!("Preprocessed once in {}ms", start.elapsed().as_millis());
+    println!(
+      "Preprocessed once in {}ms taking {} bytes",
+      start.elapsed().as_millis(),
+      encoding.len()
+    );
 
-    for id in &signing_set {
+    for aggregating in aggregating.values_mut() {
       let mut encoding = encoding.as_slice();
       // Note aggregation is SPECIFIC TO THE ORDER AGGREGATED
-      let preprocess = aggregating.get_mut(id).unwrap().aggregate(rng, &mut encoding).unwrap();
+      let preprocess = aggregating.aggregate(rng, &mut encoding).unwrap();
       preprocesses.insert(id, preprocess);
       assert!(encoding.is_empty());
     }
@@ -169,7 +173,7 @@ fn sign() {
       )
       .unwrap(),
     ));
-    println!("Signed share once in {}ms", start.elapsed().as_millis());
+    println!("Signed share once in {}ms taking {} bytes", start.elapsed().as_millis(), share.len());
 
     if !first {
       let completing = completing.as_mut().unwrap();

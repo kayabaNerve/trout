@@ -261,14 +261,13 @@ impl<E: Element, G: WrappedGroup> Commit<E, G> {
         batch_verification_weight.concatenating_mul(prime),
         Table::new(core::num::NonZero::new(4).unwrap(), D),
       ));
-      // TODO: This should work over `generator_k`
-      batch_verifier.generator_p = batch_verifier
-        .generator_p
+      batch_verifier.generator_k = batch_verifier
+        .generator_k
         .concatenating_add(batch_verification_weight.concatenating_mul(e));
-      // If we unnecessarily widened `batch_verifier.generator_p`, resize it back down
+      // If we unnecessarily widened `batch_verifier.generator_k`, resize it back down
       // TODO: Find a better pattern for this/ensure we do it everywhere
-      batch_verifier.generator_p =
-        batch_verifier.generator_p.clone().resize(batch_verifier.generator_p.bits_vartime());
+      batch_verifier.generator_k =
+        batch_verifier.generator_k.clone().resize(batch_verifier.generator_k.bits_vartime());
       batch_verifier.f += batch_verification_weight_scalar * s;
 
       // TODO: `Table::new`

@@ -379,30 +379,26 @@ impl<E: Element> Commit<E> {
     let table_bits = core::num::NonZero::new(4).unwrap();
     {
       let batch_verification_weight = BoxedUint::random_bits(&mut rng, 128);
+      let batch_verification_weight = batch_verification_weight.concatenating_mul(&p);
+      batch_verifier.generator_p = batch_verifier
+        .generator_p
+        .concatenating_add(batch_verification_weight.concatenating_mul(&e_delta));
       batch_verifier.p.extend([
-        (
-          batch_verification_weight.concatenating_mul(&challenge).concatenating_mul(&p),
-          Table::new(table_bits, -Delta_i),
-        ),
-        (batch_verification_weight.concatenating_mul(&divisor), Table::new(table_bits, D_delta)),
-        (batch_verification_weight.concatenating_mul(&p), Table::new(table_bits, -R_delta)),
+        (batch_verification_weight.concatenating_mul(prime), Table::new(table_bits, D_delta)),
+        (batch_verification_weight.concatenating_mul(&challenge), Table::new(table_bits, -Delta_i)),
+        (batch_verification_weight, Table::new(table_bits, -R_delta)),
       ]);
-      batch_verifier.generator_p = batch_verifier.generator_p.concatenating_add(
-        batch_verification_weight.concatenating_mul(&e_delta).concatenating_mul(&p),
-      );
     }
     {
       let batch_verification_weight = BoxedUint::random_bits(&mut rng, 128);
-      batch_verifier.generator_p = batch_verifier.generator_p.concatenating_add(
-        batch_verification_weight.concatenating_mul(&e_alpha).concatenating_mul(&p),
-      );
+      let batch_verification_weight = batch_verification_weight.concatenating_mul(&p);
+      batch_verifier.generator_p = batch_verifier
+        .generator_p
+        .concatenating_add(batch_verification_weight.concatenating_mul(&e_alpha));
       batch_verifier.p.extend([
-        (
-          batch_verification_weight.concatenating_mul(&challenge).concatenating_mul(&p),
-          Table::new(table_bits, -Alpha_i),
-        ),
-        (batch_verification_weight.concatenating_mul(&divisor), Table::new(table_bits, D_alpha)),
-        (batch_verification_weight.concatenating_mul(&p), Table::new(table_bits, -R_alpha)),
+        (batch_verification_weight.concatenating_mul(prime), Table::new(table_bits, D_alpha)),
+        (batch_verification_weight.concatenating_mul(&challenge), Table::new(table_bits, -Alpha_i)),
+        (batch_verification_weight, Table::new(table_bits, -R_alpha)),
       ]);
     }
     {
@@ -411,9 +407,9 @@ impl<E: Element> Commit<E> {
         .generator_k
         .concatenating_add(batch_verification_weight.concatenating_mul(&e_beta));
       batch_verifier.k.extend([
-        (batch_verification_weight.concatenating_mul(&challenge), Table::new(table_bits, -Beta_i)),
         (batch_verification_weight.concatenating_mul(&divisor), Table::new(table_bits, D_beta)),
-        (batch_verification_weight.concatenating_mul(&p), Table::new(table_bits, -R_beta)),
+        (batch_verification_weight.concatenating_mul(&challenge), Table::new(table_bits, -Beta_i)),
+        (batch_verification_weight, Table::new(table_bits, -R_beta)),
       ]);
     }
     {
