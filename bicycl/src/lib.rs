@@ -1,7 +1,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
-#![expect(clippy::as_conversions)]
 
 use core::{ops::Neg, fmt};
 
@@ -75,7 +74,13 @@ unsafe extern "C" {
 ///
 /// This is implemented entirely in variable time.
 #[derive(Eq)]
-pub struct BicyclElement(usize);
+pub struct BicyclElement(*mut core::ffi::c_void);
+
+/*
+  We do not implement `Sync` as it's unclear if every single operation is thread-safe. We do
+  implement `Send` on the _assumption_ this is thread-safe.
+*/
+unsafe impl Send for BicyclElement {}
 
 impl fmt::Debug for BicyclElement {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -85,13 +90,13 @@ impl fmt::Debug for BicyclElement {
 
 impl Clone for BicyclElement {
   fn clone(&self) -> Self {
-    Self(unsafe { rust_bicycl_qfi_clone(self.0 as *mut core::ffi::c_void) } as usize)
+    Self(unsafe { rust_bicycl_qfi_clone(self.0) })
   }
 }
 
 impl Drop for BicyclElement {
   fn drop(&mut self) {
-    unsafe { rust_bicycl_qfi_delete(self.0 as *mut core::ffi::c_void) }
+    unsafe { rust_bicycl_qfi_delete(self.0) }
   }
 }
 
@@ -105,7 +110,7 @@ impl Neg for BicyclElement {
   type Output = Self;
   fn neg(self) -> Self {
     unsafe {
-      rust_bicycl_qfi_neg(self.0 as *mut core::ffi::c_void);
+      rust_bicycl_qfi_neg(self.0);
     }
     self
   }
@@ -119,7 +124,7 @@ unsafe impl Coefficients for BicyclElement {
       let mut len = 0u32;
       let mut res;
       unsafe {
-        let bytes = rust_bicycl_qfi_a(self.0 as *mut core::ffi::c_void, &raw mut len);
+        let bytes = rust_bicycl_qfi_a(self.0, &raw mut len);
         res = core::slice::from_raw_parts(bytes, len.try_into().unwrap()).to_vec();
         rust_bicycl_free(bytes.cast::<core::ffi::c_void>());
       }
@@ -132,8 +137,7 @@ unsafe impl Coefficients for BicyclElement {
       let mut is_negative = false;
       let mut res;
       unsafe {
-        let bytes =
-          rust_bicycl_qfi_b(self.0 as *mut core::ffi::c_void, &raw mut len, &raw mut is_negative);
+        let bytes = rust_bicycl_qfi_b(self.0, &raw mut len, &raw mut is_negative);
         res = core::slice::from_raw_parts(bytes, len.try_into().unwrap()).to_vec();
         rust_bicycl_free(bytes.cast::<core::ffi::c_void>());
       }
@@ -145,7 +149,7 @@ unsafe impl Coefficients for BicyclElement {
       let mut len = 0u32;
       let mut res;
       unsafe {
-        let bytes = rust_bicycl_qfi_c(self.0 as *mut core::ffi::c_void, &raw mut len);
+        let bytes = rust_bicycl_qfi_c(self.0, &raw mut len);
         res = core::slice::from_raw_parts(bytes, len.try_into().unwrap()).to_vec();
         rust_bicycl_free(bytes.cast::<core::ffi::c_void>());
       }
@@ -157,8 +161,7 @@ unsafe impl Coefficients for BicyclElement {
       let mut len = 0u32;
       let mut res;
       unsafe {
-        let bytes =
-          rust_bicycl_qfi_discriminant_abs(self.0 as *mut core::ffi::c_void, &raw mut len);
+        let bytes = rust_bicycl_qfi_discriminant_abs(self.0, &raw mut len);
         res = core::slice::from_raw_parts(bytes, len.try_into().unwrap()).to_vec();
         rust_bicycl_free(bytes.cast::<core::ffi::c_void>());
       }
@@ -179,7 +182,7 @@ impl Element for BicyclElement {
       rust_bicycl_identity_bicycl_qfi(
         discriminant_abs.as_ptr(),
         discriminant_abs.len().try_into().unwrap(),
-      ) as usize
+      )
     })
   }
 
@@ -192,19 +195,13 @@ impl Element for BicyclElement {
   }
 
   fn double(self) -> Self {
-    unsafe { Self(rust_bicycl_qfi_double(self.0 as *mut core::ffi::c_void) as usize) }
+    unsafe { Self(rust_bicycl_qfi_double(self.0)) }
   }
   fn add(self, other: Self) -> Self {
-    unsafe {
-      Self(rust_bicycl_qfi_add(self.0 as *mut core::ffi::c_void, other.0 as *mut core::ffi::c_void)
-        as usize)
-    }
+    unsafe { Self(rust_bicycl_qfi_add(self.0, other.0)) }
   }
   fn sub(self, other: Self) -> Self {
-    unsafe {
-      Self(rust_bicycl_qfi_sub(self.0 as *mut core::ffi::c_void, other.0 as *mut core::ffi::c_void)
-        as usize)
-    }
+    unsafe { Self(rust_bicycl_qfi_sub(self.0, other.0)) }
   }
 
   unsafe fn from_coefficients(
@@ -228,7 +225,7 @@ impl Element for BicyclElement {
         !bool::from(b_positive),
         c.as_ptr(),
         c.len().try_into().unwrap(),
-      ) as usize
+      )
     })
   }
 
@@ -274,10 +271,10 @@ impl Element for BicyclElement {
       discriminant_abs.pop();
     }
     if discriminant_abs.is_empty() {
-      return CtOption::new(Self(0), Choice::FALSE);
+      return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
     }
     if (discriminant_abs[0] & 1) != 1 {
-      return CtOption::new(Self(0), Choice::FALSE);
+      return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
     }
     let floor_log_2_discriminant_abs_plus_one = (8 * (discriminant_abs.len() - 1)) +
       usize::try_from(8 - discriminant_abs.last().unwrap().leading_zeros()).unwrap();
@@ -287,7 +284,7 @@ impl Element for BicyclElement {
 
     let buf = buf.as_ref();
     if buf.len() != (2 * bytes_per_element) {
-      return CtOption::new(Self(0), Choice::FALSE);
+      return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
     }
 
     let mut a = buf[.. bytes_per_element].to_vec();
@@ -308,28 +305,28 @@ impl Element for BicyclElement {
       let four_ac = b_abs.concatenating_square().concatenating_add(discriminant_abs);
       let (four_c, rem) = four_ac.div_rem(&{
         let Some(a) = Option::<NonZero<BoxedUint>>::from(NonZero::new(a.clone())) else {
-          return CtOption::new(Self(0), Choice::FALSE);
+          return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
         };
         a
       });
       if bool::from(!rem.is_zero()) {
-        return CtOption::new(Self(0), Choice::FALSE);
+        return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
       }
       let (c, rem) = four_c.div_rem(&NonZero::new(BoxedUint::from(4u8)).unwrap());
       if bool::from(!rem.is_zero()) {
-        return CtOption::new(Self(0), Choice::FALSE);
+        return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
       }
       if b_abs > a {
-        return CtOption::new(Self(0), Choice::FALSE);
+        return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
       }
       if a > c {
-        return CtOption::new(Self(0), Choice::FALSE);
+        return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
       }
       if !((!((b_abs == a) || (a == c))) || bool::from(b_positive)) {
-        return CtOption::new(Self(0), Choice::FALSE);
+        return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
       }
       if bool::from(!a.gcd(&b_abs).gcd(&c).is_one()) {
-        return CtOption::new(Self(0), Choice::FALSE);
+        return CtOption::new(Self(core::ptr::null_mut()), Choice::FALSE);
       }
     }
 
@@ -343,7 +340,7 @@ impl Element for BicyclElement {
           !bool::from(b_positive),
           discriminant_abs.as_ptr(),
           discriminant_abs.len().try_into().unwrap(),
-        ) as usize
+        )
       }),
       Choice::TRUE,
     )

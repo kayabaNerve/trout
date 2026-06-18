@@ -12,7 +12,6 @@ use crate::Element;
 
 pub(super) trait Limbs:
   Send
-  + Sync
   + Debug
   + Zeroize
   + CtEq
@@ -21,7 +20,6 @@ pub(super) trait Limbs:
   + BitOps
   + super::composition::Limbs<
     Wide: Send
-            + Sync
             + Debug
             + Zeroize
             + CtSelect

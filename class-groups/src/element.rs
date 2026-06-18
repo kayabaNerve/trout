@@ -46,7 +46,7 @@ pub unsafe trait Coefficients {
 ///
 /// Implementations of this trait MAY run in variable time.
 pub trait Element:
-  Sized + Send + Sync + Clone + PartialEq + Eq + Debug + Neg<Output = Self> + Coefficients
+  Sized + Send + Clone + PartialEq + Eq + Debug + Neg<Output = Self> + Coefficients
 {
   /// The identity element.
   ///
