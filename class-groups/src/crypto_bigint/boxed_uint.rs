@@ -3,8 +3,8 @@
 use alloc::boxed::Box;
 
 use crypto_bigint::{
-  CtEq as _, CtAssign as _, Resize as _, Zero, One as _, ConcatenatingSquare as _,
-  ConcatenatingMul as _, Gcd as _, Choice, NonZero, BoxedUint,
+  Choice, CtEq as _, CtAssign as _, Resize as _, Zero, One as _, NonZero, ConcatenatingSquare as _,
+  ConcatenatingMul as _, Gcd as _, Div as _, BoxedUint,
 };
 
 impl super::c::Limbs for BoxedUint {
@@ -17,18 +17,17 @@ impl super::c::Limbs for BoxedUint {
     (lo, hi)
   }
   #[inline(always)]
-  fn wrapping_div(num: (Self, Self), denom: &Self) -> Self {
+  fn wrapping_div_exact(num: (Self, Self), denom: &Self) -> Self {
     let denom_bits = denom.bits_precision();
     let num =
       num.1.resize_unchecked(2 * denom_bits).overflowing_shl_vartime(denom_bits).unwrap() | num.0;
     // The caller is bound to not pass `0` as the denominator
-    let (quotient, remainder) = num.div_rem(&denom.to_nz().unwrap());
-    debug_assert!(bool::from(remainder.is_zero()));
+    let quotient = BoxedUint::div(num, &denom.to_nz().unwrap());
     quotient.resize_unchecked(denom_bits)
   }
   #[inline(always)]
   fn rem(num: Self, denom: &Self) -> Self {
-    num.div_rem(&NonZero::new(denom.clone()).unwrap()).1
+    BoxedUint::rem(&num, &NonZero::new(denom.clone()).unwrap())
   }
 }
 
@@ -106,7 +105,7 @@ impl super::composition::Limbs for BoxedUint {
   }
   #[inline(always)]
   fn div_exact(self, denom: &Self) -> Self {
-    self.div_rem(&NonZero::new(denom.clone()).unwrap()).0
+    BoxedUint::div(self, &NonZero::new(denom.clone()).unwrap())
   }
   #[inline(always)]
   fn mul_mod(&self, other: &Self, modulus: &Self) -> Self {
@@ -126,7 +125,7 @@ impl super::composition::Limbs for BoxedUint {
 impl super::composition::WideLimbs<BoxedUint> for BoxedUint {
   #[inline(always)]
   fn rem(self, denom: &BoxedUint) -> Self {
-    let remainder = self.div_rem(&NonZero::new(denom.clone()).unwrap()).1;
+    let remainder = BoxedUint::rem(&self, &NonZero::new(denom.clone()).unwrap());
     remainder.resize_unchecked(denom.bits_precision())
   }
 }

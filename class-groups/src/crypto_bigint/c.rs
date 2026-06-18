@@ -12,14 +12,14 @@ pub(super) trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> {
   /// limbs the input has.
   fn widening_square(&self) -> (Self, Self);
 
-  /// Divide `num`  by `denom`, returning the low bits.
+  /// Divide `num` by `denom`, returning the low bits.
   ///
   /// Callers MUST ensure both parts of the numerator have an equivalent amount of limbs. Callers
-  /// MUST NOT request a division by `0`.
+  /// MUST ensure `num` is divisible by `denom` and `denom` is NOT `0`.
   ///
   /// Implementations MUST ensure the result has an amount of limbs equal to how many limbs each
   /// part of the input has.
-  fn wrapping_div(num: (Self, Self), denom: &Self) -> Self;
+  fn wrapping_div_exact(num: (Self, Self), denom: &Self) -> Self;
 
   /// Calculate the remainder of `num % denom`.
   ///
@@ -93,5 +93,5 @@ pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L)
     where the sum of `a + |delta|` is bound to fit in the container for `a`, which is of less than
     or equal capacity to the container for `b.1` (itself of equal capacity to `b_lo, b_hi`).
   */
-  L::wrapping_div(ac, a)
+  L::wrapping_div_exact(ac, a)
 }

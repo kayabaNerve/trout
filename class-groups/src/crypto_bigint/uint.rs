@@ -1,6 +1,7 @@
 #![expect(clippy::inline_always)]
 
-use crypto_bigint::{Choice, CtEq as _, Encoding, Concat, SplitEven, One as _, NonZero, Uint};
+#[rustfmt::skip]
+use crypto_bigint::{Choice, CtEq as _, Encoding, Concat, SplitEven, One as _, NonZero, Div as _, Uint};
 
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where
@@ -12,14 +13,14 @@ where
     Uint::<LIMBS>::widening_square(self)
   }
   #[inline(always)]
-  fn wrapping_div(num: (Self, Self), denom: &Self) -> Self {
+  fn wrapping_div_exact(num: (Self, Self), denom: &Self) -> Self {
     let concatenated = num.0.concat(&num.1);
-    let quotient = concatenated / *denom;
+    let quotient = Uint::div(concatenated, &NonZero::new(*denom).unwrap());
     quotient.split().0
   }
   #[inline(always)]
   fn rem(num: Self, denom: &Self) -> Self {
-    num.div_rem(&NonZero::new(*denom).unwrap()).1
+    Uint::rem(&num, &NonZero::new(*denom).unwrap())
   }
 }
 
@@ -47,7 +48,7 @@ where
   }
   #[inline(always)]
   fn div_exact(self, denom: &Self) -> Self {
-    self.div_rem(&NonZero::new(*denom).unwrap()).0
+    Uint::div(self, &NonZero::new(*denom).unwrap())
   }
   #[inline(always)]
   fn mul_mod(&self, other: &Self, modulus: &Self) -> Self {
@@ -70,7 +71,7 @@ where
 {
   #[inline(always)]
   fn rem(self, denom: &<Self as SplitEven>::Output) -> <Self as SplitEven>::Output {
-    self.div_rem(&NonZero::new(*denom).unwrap()).1
+    Uint::rem(&self, &NonZero::new(*denom).unwrap())
   }
 }
 
