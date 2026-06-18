@@ -1,9 +1,13 @@
-use core::{ops::Neg, fmt::Debug};
+use core::{
+  ops::Neg,
+  fmt::{self, Debug},
+};
 
 use zeroize::Zeroize;
 
 use crypto_bigint::{
-  Choice, CtOption, CtEq, CtGt as _, CtSelect, CtAssign, BitOps, NonZero, One as _, Limb, UintRef,
+  Choice, CtOption, CtEq, CtGt as _, CtSelect, CtAssign, BitOps, NonZero, One as _, Limb, Encoding,
+  UintRef,
 };
 
 use super::I;
@@ -11,26 +15,15 @@ use super::I;
 use crate::Element;
 
 pub(super) trait Limbs:
-  Send
-  + Debug
-  + Zeroize
-  + CtEq
+  CtEq
   + CtSelect
   + CtAssign
   + BitOps
+  + Encoding
   + super::composition::Limbs<
-    Wide: Send
-            + Debug
-            + Zeroize
-            + CtSelect
-            + CtAssign
-            + BitOps
-            + super::c::Limbs
-            + super::reduction::Limbs,
+    Wide: CtSelect + CtAssign + BitOps + Encoding + super::c::Limbs + super::reduction::Limbs,
   > + super::encoding::Limbs
 {
-  type Bytes: AsRef<[u8]> + AsMut<[u8]>;
-
   /// The maximum amount of bits this value can support.
   ///
   /// `None` signifies this value is unbounded.
@@ -50,18 +43,6 @@ pub(super) trait Limbs:
   /// `2 * Self::max_bits()` when `Self::max_bits().is_some()`.
   fn widen(thin: Self, wide_bits: u32) -> Self::Wide;
 
-  /// Convert this number to a sequence of little-endian bytes.
-  ///
-  /// This function MUST run in constant time and yield a result of length constant to the relevant
-  /// bound.
-  fn to_le_bytes(self) -> Self::Bytes;
-
-  /// Convert this wide number to a sequence of little-endian bytes.
-  ///
-  /// This function MUST run in constant time and yield a result of length constant to the relevant
-  /// bound.
-  fn wide_to_le_bytes(wide: Self::Wide) -> impl AsRef<[u8]>;
-
   /// Load this number from a sequence of little-endian bytes.
   ///
   /// The slice MAY be of arbitrary length so long as the encoded value has bits less than or
@@ -77,7 +58,11 @@ pub(super) trait Limbs:
   fn wide_from_le_slice(bytes: &[u8], max_bits: u32) -> Self::Wide;
 
   /// Stich together two byte sequences into a single container of length `2 * bytes_per_element`.
-  fn stitch(first: Self::Bytes, second: Self::Bytes, bytes_per_element: usize) -> impl AsRef<[u8]>;
+  fn stitch(
+    first: <Self as Encoding>::Repr,
+    second: <Self as Encoding>::Repr,
+    bytes_per_element: usize,
+  ) -> impl AsRef<[u8]>;
 }
 
 /// A constant-time primitive element of a class group, implemented via `crypto-bigint`.
@@ -94,7 +79,7 @@ pub(super) trait Limbs:
 /// bounded subset of discriminants. Alternatively, [`crypto_bigint::BoxedUint`] may be used to
 /// support all discriminants, at the cost of using the heap.
 #[expect(private_bounds)]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CryptoBigintElement<U: Limbs> {
   /// The `a` coefficient.
   ///
@@ -123,6 +108,23 @@ pub struct CryptoBigintElement<U: Limbs> {
   discriminant_abs: U::Wide,
 }
 
+impl<U: Debug + Limbs<Wide: Debug>> Debug for CryptoBigintElement<U> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    #[cfg(feature = "alloc")]
+    let name = alloc::format!("CryptoBigintElement<{}>", core::any::type_name::<U>());
+    #[cfg(feature = "alloc")]
+    let name = &name;
+    #[cfg(not(feature = "alloc"))]
+    let name = "CryptoBigintElement";
+    f.debug_struct(name)
+      .field("a", &self.a)
+      .field("b", &self.b)
+      .field("c", &self.c)
+      .field("discriminant_abs", &self.discriminant_abs)
+      .finish()
+  }
+}
+
 impl<U: Limbs> CtEq for CryptoBigintElement<U> {
   /// This MAY return an incorrect result for forms of different discriminants.
   fn ct_eq(&self, other: &Self) -> Choice {
@@ -149,6 +151,8 @@ impl<U: Limbs> Eq for CryptoBigintElement<U> {}
 impl<U: Limbs> CryptoBigintElement<U> {
   /// This is only valid for forms of negative odd discriminant.
   fn identity_from_discriminant(discriminant_abs: U::Wide) -> Self {
+    let discriminant_abs_le_bytes = discriminant_abs.to_le_bytes();
+
     /*
       The identity element has `a = 1`. As composition sets $a_3 = (a_1 * a_2) / gcd(a_1, a_2)^2$,
       it's clear how having one $a_1 = 1$ causes $a_3 = a_2$ (or $a_2 = 1$ causes $a_3 = a_1$). As
@@ -171,7 +175,7 @@ impl<U: Limbs> CryptoBigintElement<U> {
 
       $(1 + |delta|) / 4 = c$
     */
-    let mut c = discriminant_abs.clone();
+    let mut c = discriminant_abs;
     {
       let c = AsMut::<[Limb]>::as_mut(&mut c);
       let mut i = 0;
@@ -200,17 +204,12 @@ impl<U: Limbs> CryptoBigintElement<U> {
 
     // SAFETY: This is well-defined, reduced, and primitive
     unsafe {
-      <Self as Element>::from_coefficients(
-        a,
-        b,
-        U::wide_to_le_bytes(c),
-        U::wide_to_le_bytes(discriminant_abs),
-      )
+      <Self as Element>::from_coefficients(a, b, c.to_le_bytes(), discriminant_abs_le_bytes)
     }
   }
 }
 
-impl<U: Limbs> Zeroize for CryptoBigintElement<U> {
+impl<U: Zeroize + Limbs<Wide: Zeroize>> Zeroize for CryptoBigintElement<U> {
   /// This is only valid for forms of negative odd discriminant.
   ///
   /// This does not zeroize the discriminant, solely the `a, b, c` coefficients, and will set the
@@ -338,8 +337,8 @@ unsafe impl<U: Limbs> crate::Coefficients for CryptoBigintElement<U> {
     (
       reduced.a.to_le_bytes(),
       (reduced.b.0, reduced.b.1.to_le_bytes()),
-      U::wide_to_le_bytes(reduced.c),
-      U::wide_to_le_bytes(reduced.discriminant_abs),
+      reduced.c.to_le_bytes(),
+      reduced.discriminant_abs.to_le_bytes(),
     )
   }
 }

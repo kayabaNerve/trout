@@ -111,8 +111,6 @@ where
   Self: Encoding<Repr: Default> + Concat<LIMBS, Output = Uint<WIDE_LIMBS>>,
   Uint<WIDE_LIMBS>: Encoding<Repr: Default> + SplitEven<Output = Self> + super::c::Limbs,
 {
-  type Bytes = crypto_bigint::EncodedUint<LIMBS>;
-
   #[inline(always)]
   fn max_bits() -> Option<u32> {
     Some(Self::BITS)
@@ -125,15 +123,6 @@ where
   #[inline(always)]
   fn widen(thin: Self, _wide_bits: u32) -> Self::Wide {
     thin.concat(&Uint::ZERO)
-  }
-
-  #[inline(always)]
-  fn to_le_bytes(self) -> Self::Bytes {
-    Self::to_le_bytes(&self)
-  }
-  #[inline(always)]
-  fn wide_to_le_bytes(wide: Self::Wide) -> impl AsRef<[u8]> {
-    Self::Wide::to_le_bytes(&wide)
   }
 
   #[inline(always)]
@@ -169,7 +158,11 @@ where
     Self::Wide::from_le_bytes(fixed_bytes)
   }
 
-  fn stitch(first: Self::Bytes, second: Self::Bytes, bytes_per_element: usize) -> impl AsRef<[u8]> {
+  fn stitch(
+    first: <Self as Encoding>::Repr,
+    second: <Self as Encoding>::Repr,
+    bytes_per_element: usize,
+  ) -> impl AsRef<[u8]> {
     let mut buf = <Self::Wide as Encoding>::Repr::default();
     buf.as_mut()[.. bytes_per_element].copy_from_slice(&first.as_ref()[.. bytes_per_element]);
     buf.as_mut()[bytes_per_element .. (2 * bytes_per_element)]

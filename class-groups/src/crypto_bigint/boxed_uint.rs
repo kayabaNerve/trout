@@ -1,10 +1,8 @@
 #![expect(clippy::inline_always)]
 
-use alloc::boxed::Box;
-
 use crypto_bigint::{
   Choice, CtEq as _, CtAssign as _, Resize as _, Zero, One as _, NonZero, ConcatenatingSquare as _,
-  ConcatenatingMul as _, Gcd as _, Div as _, BoxedUint,
+  ConcatenatingMul as _, Gcd as _, Div as _, Encoding, BoxedUint,
 };
 
 impl super::c::Limbs for BoxedUint {
@@ -141,8 +139,6 @@ impl super::encoding::Limbs for BoxedUint {
 }
 
 impl super::element::Limbs for BoxedUint {
-  type Bytes = Box<[u8]>;
-
   #[inline(always)]
   fn max_bits() -> Option<u32> {
     None
@@ -155,15 +151,6 @@ impl super::element::Limbs for BoxedUint {
   #[inline(always)]
   fn widen(thin: Self, wide_bits: u32) -> Self::Wide {
     thin.resize_unchecked(wide_bits)
-  }
-
-  #[inline(always)]
-  fn to_le_bytes(self) -> Self::Bytes {
-    BoxedUint::to_le_bytes(&self)
-  }
-  #[inline(always)]
-  fn wide_to_le_bytes(wide: Self::Wide) -> impl AsRef<[u8]> {
-    BoxedUint::to_le_bytes(&wide)
   }
 
   #[inline(always)]
@@ -185,7 +172,11 @@ impl super::element::Limbs for BoxedUint {
     Self::from_le_slice(bytes, max_bits).unwrap()
   }
 
-  fn stitch(first: Self::Bytes, second: Self::Bytes, bytes_per_element: usize) -> impl AsRef<[u8]> {
+  fn stitch(
+    first: <Self as Encoding>::Repr,
+    second: <Self as Encoding>::Repr,
+    bytes_per_element: usize,
+  ) -> impl AsRef<[u8]> {
     [&first[.. bytes_per_element], &second[.. bytes_per_element]].concat()
   }
 }

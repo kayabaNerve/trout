@@ -1,4 +1,4 @@
-use core::{fmt::Debug, ops::Neg};
+use core::ops::Neg;
 #[cfg(feature = "std")]
 use std::io;
 
@@ -45,9 +45,7 @@ pub unsafe trait Coefficients {
 /// itself is referred to as doubling. The inverse of an element is notated as its negation.
 ///
 /// Implementations of this trait MAY run in variable time.
-pub trait Element:
-  Sized + Send + Clone + PartialEq + Eq + Debug + Neg<Output = Self> + Coefficients
-{
+pub trait Element: Clone + PartialEq + Eq + Neg<Output = Self> + Coefficients {
   /// The identity element.
   ///
   /// The negative discriminant is specified by the little-endian encoding of its absolute value.

@@ -5,7 +5,7 @@ use crypto_bigint::{Choice, Limb};
 /// Implementations MUST implement all functions in time constant to the value of the inputs,
 /// except for the amount of limbs, unless otherwise stated. Implementations MUST NOT panic for any
 /// input which the caller MAY pass.
-pub(super) trait Limbs: Sized + Clone + AsRef<[Limb]> + AsMut<[Limb]> {
+pub(super) trait Limbs: Clone + AsRef<[Limb]> + AsMut<[Limb]> {
   /// Square the value, returning the `(lo, hi)` terms.
   ///
   /// Implementations MUST ensure each part of the result has an amount of limbs equal to how many
