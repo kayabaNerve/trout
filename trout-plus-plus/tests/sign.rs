@@ -1,9 +1,15 @@
 //! Test the signing protocol.
 
-use std::{time::Instant, collections::HashMap};
+use std::{
+  time::Instant,
+  collections::{HashSet, HashMap},
+};
 
 use zeroize::Zeroizing;
-use rand::{rand_core, rngs::SysRng};
+use rand::{
+  rand_core::{self, Rng as _},
+  rngs::SysRng,
+};
 
 use p256::elliptic_curve::PrimeField as _;
 use ciphersuite::group::{ff::PrimeField as _, GroupEncoding as _};
@@ -31,6 +37,7 @@ fn sign() {
     64 bits preferred, meaning the minimum should be 3072.
   */
   const FUNDAMENTAL_DISCRIMINANT_BIT_LENGTH: u16 = 1827;
+
   #[expect(clippy::as_conversions)]
   type ProverElement = class_groups::CryptoBigintElement<
     crypto_bigint::Uint<
@@ -43,6 +50,9 @@ fn sign() {
   >;
   type VerifierElement = bicycl::BicyclElement;
 
+  const THRESHOLD: u16 = 3;
+  const PARTICIPANTS: u16 = 5;
+
   let mut rng = rand_core::UnwrapErr(SysRng);
 
   // Convert from `p256 0.13` (`dkg-dealer`) to a `p256 0.14` (`trout-plus-plus`)
@@ -53,15 +63,29 @@ fn sign() {
     P256::point_from_canonical_bytes(&mut <_ as AsRef<[u8]>>::as_ref(&point.to_bytes())).unwrap()
   };
 
-  let keys =
-    dkg_dealer::key_gen::<_, ciphersuite_kp256::P256>(&mut rand_core_06::OsRng, 3, 5).unwrap();
-  let mut signing_set = vec![
-    dkg_dealer::Participant::new(1).unwrap(),
-    dkg_dealer::Participant::new(2).unwrap(),
-    dkg_dealer::Participant::new(4).unwrap(),
-  ];
+  println!("Threshold: {THRESHOLD}");
+  println!("Participants: {PARTICIPANTS}");
+
+  let keys = dkg_dealer::key_gen::<_, ciphersuite_kp256::P256>(
+    &mut rand_core_06::OsRng,
+    THRESHOLD,
+    PARTICIPANTS,
+  )
+  .unwrap();
+
+  let mut signing_set = HashSet::new();
+  while signing_set.len() < usize::from(THRESHOLD) {
+    let Some(i) =
+      Participant::new(u16::try_from(rng.next_u64() % u64::from(PARTICIPANTS)).unwrap())
+    else {
+      continue;
+    };
+    signing_set.insert(i);
+  }
+  let mut signing_set = signing_set.into_iter().collect::<Vec<_>>();
   // Aggregation, determination of the signing key, requires a definitive ordering
   signing_set.sort_unstable();
+
   let interpolation_factors = {
     let view = keys[&signing_set[0]].view(signing_set.clone()).unwrap();
     signing_set
@@ -78,7 +102,6 @@ fn sign() {
       FUNDAMENTAL_DISCRIMINANT_BIT_LENGTH,
     )
     .unwrap();
-  println!("NonInteractiveSetup");
 
   let mut key_ciphertext_openings = HashMap::new();
   let mut setups = HashMap::new();
@@ -107,10 +130,12 @@ fn sign() {
     );
     assert!(setup.is_empty());
   }
-  println!("Setup");
 
   let mut preprocesses = HashMap::new();
   let mut preprocess_openings = HashMap::new();
+  let mut preprocess_times = vec![];
+  let mut preprocess_sizes = vec![];
+  let mut aggregate_times = vec![];
   let mut aggregating = signing_set
     .iter()
     .map(|id| {
@@ -127,11 +152,8 @@ fn sign() {
     )
     .unwrap();
     preprocess_openings.insert(id, preprocess_opening);
-    println!(
-      "Preprocessed once in {}ms taking {} bytes",
-      start.elapsed().as_millis(),
-      encoding.len()
-    );
+    preprocess_times.push(start.elapsed().as_millis());
+    preprocess_sizes.push(encoding.len());
 
     for aggregating in aggregating.values_mut() {
       let start = Instant::now();
@@ -140,10 +162,21 @@ fn sign() {
       let preprocess = aggregating.aggregate(rng, &mut encoding).unwrap();
       preprocesses.insert(id, preprocess);
       assert!(encoding.is_empty());
-      println!("Aggregated once in {}ms", start.elapsed().as_millis());
+      aggregate_times.push(start.elapsed().as_millis());
     }
   }
-  println!("Preprocessed");
+  preprocess_times.sort_unstable();
+  preprocess_sizes.sort_unstable();
+  aggregate_times.sort_unstable();
+  println!(
+    "Preprocessed with a median time of {}ms and median size of {} bytes",
+    preprocess_times[preprocess_times.len() / 2],
+    preprocess_sizes[preprocess_sizes.len() / 2],
+  );
+  println!(
+    "Aggregated one preprocess with a median time of {}ms",
+    aggregate_times[aggregate_times.len() / 2]
+  );
 
   let group_key = point_13_14(keys.values().next().unwrap().original_group_key());
   let signing_key = InteractiveSetup::signing_key(
@@ -153,11 +186,15 @@ fn sign() {
   );
   const MESSAGE: &[u8] = b"Hello, World!";
 
+  let mut batch_verification_times = vec![];
+  let mut share_times = vec![];
+  let mut share_sizes = vec![];
+  let mut aggregate_times = vec![];
   let mut completing = None;
   for (id, preprocess_opening) in preprocess_openings {
     let start = Instant::now();
     let aggregating = aggregating.remove(id).unwrap().verify().unwrap();
-    println!("Batch verified preprocesses in {}ms", start.elapsed().as_millis());
+    batch_verification_times.push(start.elapsed().as_millis());
 
     let start = Instant::now();
     let preprocess = preprocesses.remove(id).unwrap();
@@ -179,7 +216,8 @@ fn sign() {
       )
       .unwrap(),
     ));
-    println!("Signed share once in {}ms taking {} bytes", start.elapsed().as_millis(), share.len());
+    share_times.push(start.elapsed().as_millis());
+    share_sizes.push(share.len());
 
     if !first {
       let start = Instant::now();
@@ -189,9 +227,26 @@ fn sign() {
         .aggregate(rng, *id, interpolation_factors[id], setups[id].clone(), preprocess, &mut share)
         .unwrap();
       assert!(share.is_empty());
-      println!("Aggregated share in {}ms", start.elapsed().as_millis());
+      aggregate_times.push(start.elapsed().as_millis());
     }
   }
+  batch_verification_times.sort_unstable();
+  share_times.sort_unstable();
+  share_sizes.sort_unstable();
+  aggregate_times.sort_unstable();
+  println!(
+    "Batch verified preprocesses with a median time of {}ms",
+    batch_verification_times[batch_verification_times.len() / 2]
+  );
+  println!(
+    "Signed share with a median time of {}ms and median size of {} bytes",
+    share_times[share_times.len() / 2],
+    share_sizes[share_sizes.len() / 2]
+  );
+  println!(
+    "Aggregated one share with a median time of {}ms",
+    aggregate_times[aggregate_times.len() / 2]
+  );
 
   let start = Instant::now();
   let signature = completing.unwrap().complete().unwrap();
