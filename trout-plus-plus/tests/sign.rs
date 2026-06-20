@@ -134,11 +134,13 @@ fn sign() {
     );
 
     for aggregating in aggregating.values_mut() {
+      let start = Instant::now();
       let mut encoding = encoding.as_slice();
       // Note aggregation is SPECIFIC TO THE ORDER AGGREGATED
       let preprocess = aggregating.aggregate(rng, &mut encoding).unwrap();
       preprocesses.insert(id, preprocess);
       assert!(encoding.is_empty());
+      println!("Aggregated once in {}ms", start.elapsed().as_millis());
     }
   }
   println!("Preprocessed");
@@ -154,6 +156,10 @@ fn sign() {
   let mut completing = None;
   for (id, preprocess_opening) in preprocess_openings {
     let start = Instant::now();
+    let aggregating = aggregating.remove(id).unwrap().verify().unwrap();
+    println!("Batch verified preprocesses in {}ms", start.elapsed().as_millis());
+
+    let start = Instant::now();
     let preprocess = preprocesses.remove(id).unwrap();
     let mut share = vec![];
     let first = completing.is_none();
@@ -165,7 +171,7 @@ fn sign() {
         interpolation_factors[id],
         setups[id].clone(),
         key_ciphertext_openings[id].clone(),
-        aggregating.remove(id).unwrap().verify().unwrap(),
+        aggregating,
         &preprocess,
         preprocess_opening,
         MESSAGE,
@@ -176,16 +182,20 @@ fn sign() {
     println!("Signed share once in {}ms taking {} bytes", start.elapsed().as_millis(), share.len());
 
     if !first {
+      let start = Instant::now();
       let completing = completing.as_mut().unwrap();
       let mut share = share.as_slice();
       completing
         .aggregate(rng, *id, interpolation_factors[id], setups[id].clone(), preprocess, &mut share)
         .unwrap();
       assert!(share.is_empty());
+      println!("Aggregated share in {}ms", start.elapsed().as_millis());
     }
   }
 
+  let start = Instant::now();
   let signature = completing.unwrap().complete().unwrap();
+  println!("Recovered signature in {}ms", start.elapsed().as_millis());
 
   {
     use ecdsa::signature::Verifier as _;
