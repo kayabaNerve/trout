@@ -742,13 +742,12 @@ pub(crate) fn reduce_to_upper_bound<L: Limbs>(
 ///
 /// `delta` is bound to be negative and specified via its absolute value in
 /// `negative_discriminant_abs`.
-#[expect(private_bounds)]
 #[inline(always)]
 pub(crate) fn partial_reduce<L: super::c::Limbs + Limbs>(
   log_2_bound: u32,
   a: L,
   mut b: (Choice, L),
-  negative_discriminant_abs: &L,
+  negative_discriminant_abs: &(impl AsRef<[Limb]> + BitOps),
 ) -> (L, (Choice, L), L) {
   let discriminant_bits = negative_discriminant_abs.bits_vartime();
   let sqrt_discriminant_bits = discriminant_bits.div_ceil(2);

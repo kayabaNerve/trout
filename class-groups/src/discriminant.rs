@@ -55,7 +55,7 @@
 use rand::CryptoRng;
 use ::crypto_bigint::{
   Choice, CtOption, CtEq, CtGt, CtSelect, CtAssign, Zero, One, NonZero, Odd, Limb, CheckedAdd,
-  CheckedSub, Mul, ConcatenatingMul, ConcatenatingSquare, Div, Rem, Gcd, NegMod, MulMod, SquareMod,
+  CheckedSub, Mul, ConcatenatingMul, ConcatenatingSquare, Div, Rem, NegMod, MulMod, SquareMod,
   InvertMod, BitOps, Encoding, RandomBits, RandomMod, UnsignedWithMontyForm,
 };
 
@@ -64,21 +64,24 @@ use crate::Element;
 /// For a primitive reduced positive definite form of negative discriminant, return the
 /// equivalent form whose `a` coefficient is coprime to the prime `p`.
 ///
-/// The inputs MUST have sufficient capacity to calculate `a + b + c, b + 2 a`. Additionally,
-/// `a, b, c, p` MUST be of the same size.
+/// `p` MUST be prime. The inputs MUST have sufficient capacity to calculate `a + b + c, b + 2 a`.
+/// Additionally, `a, b, c` MUST be of the same size.
 ///
 /// This function runs in constant time. It WILL NOT return `None` if the inputs are satisfied but
 /// MAY return `None` if for invalid inputs, if it fails to find an equivalent form with a coprime
 /// `a` coefficient.
 #[must_use]
-fn coprime_form<P, U: AsRef<[Limb]> + AsMut<[Limb]> + CtSelect + Gcd<P, Output: One>>(
+fn coprime_form<
+  Up: Zero,
+  U: Clone + AsRef<[Limb]> + AsMut<[Limb]> + CtSelect + for<'a> Rem<&'a NonZero<Up>, Output: Zero>,
+>(
   mut a: U,
   (mut b_positive, mut b_abs): (Choice, U),
   mut c: U,
-  p: &P,
+  p: &NonZero<Up>,
 ) -> CtOption<(U, (Choice, U))> {
-  let a_is_coprime = a.gcd(p).is_one();
-  let c_is_coprime = c.gcd(p).is_one();
+  let a_is_coprime = !a.clone().rem(p).is_zero();
+  let c_is_coprime = !c.clone().rem(p).is_zero();
 
   // If neither are coprime, map with `m = 1`
   let neither_a_c_coprime = !(a_is_coprime | c_is_coprime);
@@ -131,7 +134,7 @@ fn coprime_form<P, U: AsRef<[Limb]> + AsMut<[Limb]> + CtSelect + Gcd<P, Output: 
     b_positive ^= swap;
   }
 
-  correct &= a.gcd(p).is_one();
+  correct &= !a.clone().rem(p).is_zero();
   CtOption::new((a, (b_positive, b_abs)), correct)
 }
 
@@ -239,58 +242,108 @@ pub trait FundamentalDiscriminant: Discriminant {
   /// `coprime_form` yields a form whose `a` coefficient is coprime to `p`, so scaling the `b`
   /// coefficient by `p` won't affect the greatest common divisor of `a, b`.
   ///
-  /// This function MAY panic or return an incorrect result if `element` is not of this
+  /// `Udk` MUST be large enough to store the absolute value of this discriminant. `p` MUST be
+  /// prime. This function MAY panic or return an incorrect result if `element` is not of this
   /// discriminant. This function runs in time only variable to the discriminant, the length of the
   /// encoding of `p`, and `E::a_b_c_discriminant` (which may be implemented in constant-time).
-  #[cfg(feature = "alloc")] // TODO: no-`alloc`
   #[must_use]
-  fn inject<E: Element>(&self, element: impl Element, p: &impl Encoding) -> E
+  #[expect(private_bounds)]
+  fn inject<
+    Up: Zero + ConcatenatingSquare,
+    Udk: AsRef<[Limb]>
+      + ConcatenatingMul<
+        <Up as ConcatenatingSquare>::Output,
+        Output: AsRef<[Limb]>
+                  + AsMut<[Limb]>
+                  + for<'a> Mul<
+          &'a Up,
+          Output = <Udk as ConcatenatingMul<<Up as ConcatenatingSquare>::Output>>::Output,
+        > + for<'a> Rem<&'a NonZero<Up>, Output: Zero>
+                  + BitOps
+                  + Encoding
+                  + RandomBits
+                  + crate::crypto_bigint::c::Limbs
+                  + crate::crypto_bigint::reduction::Limbs,
+      > + Encoding
+      + RandomBits,
+    E: Element,
+  >(
+    &self,
+    element: impl Element,
+    p: &NonZero<Up>,
+  ) -> E
   where
     Self: NegativeDiscriminant,
   {
-    use crypto_bigint::{Resize as _, BoxedUint};
-
     let (a, (b_positive, b_abs), c, discriminant_abs) = element.a_b_c_discriminant();
-    assert!(bool::from(le_malleable_eq(self.absolute_value().as_ref(), discriminant_abs.as_ref())));
+    let a: &[u8] = a.as_ref();
+    let b_abs: &[u8] = b_abs.as_ref();
+    let c: &[u8] = c.as_ref();
+    let discriminant_abs: &[u8] = discriminant_abs.as_ref();
+
+    assert!(bool::from(le_malleable_eq(self.absolute_value().as_ref(), discriminant_abs)));
+
+    type Udp<Up, Udk> = <Udk as ConcatenatingMul<<Up as ConcatenatingSquare>::Output>>::Output;
 
     // This is only vartime with regards to the length of the encoding
-    let a = BoxedUint::from_le_slice_vartime(a.as_ref());
-    let b_abs = BoxedUint::from_le_slice_vartime(b_abs.as_ref());
-    let c = BoxedUint::from_le_slice_vartime(c.as_ref());
+    fn Ux_from_bytes<Ux: AsRef<[Limb]> + Encoding + RandomBits>(
+      bytes: &[u8],
+      bits_precision: u32,
+    ) -> Ux {
+      let mut repr = Ux_zero_with_precision::<Ux>(bits_precision).to_le_bytes();
+      {
+        let repr: &mut [u8] = repr.as_mut();
+        let mutual_len = bytes.len().min(repr.len());
+        repr[.. mutual_len].copy_from_slice(&bytes[.. mutual_len]);
+        let mut remaining = Limb::ZERO;
+        for b in &bytes[mutual_len ..] {
+          remaining |= Limb::from(*b);
+        }
+        assert!(bool::from(remaining.is_zero()), "`Ux` could not fit this value");
+      }
+      Ux::from_le_bytes(repr)
+    }
 
-    let discriminant_abs = BoxedUint::from_le_slice_vartime(discriminant_abs.as_ref());
-    let p = {
-      let p = p.to_le_bytes();
-      BoxedUint::from_le_slice_vartime(p.as_ref())
-    };
-
+    let discriminant_abs = Ux_from_bytes::<Udk>(
+      discriminant_abs,
+      8 * u32::try_from(discriminant_abs.as_ref().len()).unwrap(),
+    );
     let discriminant_abs = discriminant_abs.concatenating_mul(p.concatenating_square());
 
-    let bits_precision = 2 + a.bits_precision().max(b_abs.bits_precision()).max(c.bits_precision());
-    let p = p.resize(bits_precision);
-    let (a, (b_positive, b_abs)) = coprime_form(
-      a.resize(bits_precision),
-      (b_positive, b_abs.resize(bits_precision)),
-      c.resize(bits_precision),
-      &p,
-    )
-    .expect("could not find a coprime form (non-primitive or unreduced?)");
+    let bits_precision = discriminant_abs.bits_precision();
+    let a = Ux_from_bytes::<Udp<Up, Udk>>(a, bits_precision);
+    let b_abs = Ux_from_bytes::<Udp<Up, Udk>>(b_abs, bits_precision);
+    let c = Ux_from_bytes::<Udp<Up, Udk>>(c, bits_precision);
 
-    let b_abs = b_abs.concatenating_mul(&p);
+    /*
+      `coprime_form` requires these numbers have the capacity for `a + b + c` and `b + 2 a`. As
+      these numbers fit in `Udk`, yet this is over `Udp` which is at least two bits larger (due to
+      the smallest prime being `2`), the results will fit in `Udp`.
+    */
+    let (a, (b_positive, b_abs)) = coprime_form::<Up, Udp<Up, Udk>>(a, (b_positive, b_abs), c, p)
+      .expect("could not find a coprime form (non-primitive or unreduced?)");
 
-    // TODO: Tighten this
-    let log_2_bound = 8 + bits_precision.max(discriminant_abs.bits_precision());
-    let discriminant_abs = discriminant_abs.resize(log_2_bound);
+    /*
+      `b_abs` as output from `coprime_form`, is bound to be less than or equal to `3 a` (for the
+      input `a`, not the output `a`). That means `b_abs` is less than the fundamental
+      discriminant's absolute value so long as the fundamental discriminant's absolute value is
+      greater than or equal to `9`. If the fundamental discriminant's absolute value is less than
+      `9`, than this will fit in the padding due to having such a small value in relation to to the
+      size of a `Limb` (at least 16 bits).
+
+      `b_abs * p` will then fit in `Udp` as `Udp` can fit the fundamental discriminant's absolute
+      values multiplied by `p^2`.
+    */
+    let b_abs = b_abs * p.as_ref();
+
+    // `max(a, |b|) < |discriminant|` so long as `discriminant <= -9`, as per prior commentary
+    let log_2_bound = discriminant_abs.bits_precision() - 1;
     /*
       The form is valid. The numbers are within `log_2_bound`. The numbers are the same size, and
       with a spare bit of capacity. This causes our call to `partial_reduce` to be valid.
     */
-    let (a, (b_positive, b_abs), c) = crate::crypto_bigint::partial_reduce(
-      log_2_bound,
-      a.resize(log_2_bound),
-      (b_positive, b_abs.resize(log_2_bound)),
-      &discriminant_abs,
-    );
+    let (a, (b_positive, b_abs), c) =
+      crate::crypto_bigint::partial_reduce(log_2_bound, a, (b_positive, b_abs), &discriminant_abs);
     /*
       As correct for `partial_reduce`, we are correct for `reduce`. We do tighten our bound to the
       square root of the discriminant, but this is a bound on the output from `partial_reduce`.
@@ -322,8 +375,8 @@ pub trait FundamentalDiscriminant: Discriminant {
       E::from_coefficients(
         &a.to_le_bytes().as_ref()[.. sqrt_discriminant_bits.div_ceil(8)],
         (b_positive, &b_abs.to_le_bytes().as_ref()[.. sqrt_discriminant_bits.div_ceil(8)]),
-        &c.to_le_bytes()[.. discriminant_bits.div_ceil(8)],
-        &discriminant_abs.to_le_bytes()[.. discriminant_bits.div_ceil(8)],
+        &c.to_le_bytes().as_ref()[.. discriminant_bits.div_ceil(8)],
+        &discriminant_abs.to_le_bytes().as_ref()[.. discriminant_bits.div_ceil(8)],
       )
     }
   }
@@ -366,7 +419,7 @@ impl<Up, Udk> FundamentalDiscriminant for Cl15k<Up, Udk> {}
 impl<Up, Udk> Cl15k<Up, Udk> {
   /// The prime `p` from the setup.
   #[must_use]
-  pub fn p(&self) -> &Up {
+  pub fn p(&self) -> &Odd<Up> {
     &self.p
   }
 }
@@ -441,7 +494,7 @@ pub struct QApostraphe<Udk> {
   q_apostraphe: Udk,
 }
 
-impl<Udk> Cl15kParameters<Udk> {
+impl<Udk: CtGt + CheckedAdd + CheckedSub + BitOps + Encoding> Cl15kParameters<Udk> {
   /// Sample a $q'$ within these parameters.
   ///
   /// This denotes $q'$, traditionally read "q prime", as "q apostraphe" as we do not wish to
@@ -457,10 +510,7 @@ impl<Udk> Cl15kParameters<Udk> {
   /// This returns `None` if the set of candidates for `q` is empty.
   ///
   /// This function runs in variable time.
-  pub fn sample_q_apostraphe(self, mut rng: impl CryptoRng) -> CtOption<QApostraphe<Udk>>
-  where
-    Udk: CtGt + CheckedAdd + CheckedSub + BitOps + Encoding,
-  {
+  pub fn sample_q_apostraphe(self, mut rng: impl CryptoRng) -> CtOption<QApostraphe<Udk>> {
     self.q_max.checked_sub(&self.q_min).map(|sample_range| {
       let mut starting_point_in_range = sample_range.to_le_bytes();
       for b in starting_point_in_range.as_mut() {
@@ -482,6 +532,36 @@ impl<Udk> Cl15kParameters<Udk> {
       QApostraphe { parameters: self, q_apostraphe }
     })
   }
+}
+
+// TODO: https://github.com/RustCrypto/crypto-bigint/issues/1275
+#[allow(non_snake_case)]
+fn Ux_zero_with_precision<Udk: AsRef<[Limb]> + RandomBits>(bits_precision: u32) -> Udk {
+  struct Zero;
+  impl crypto_bigint::rand_core::TryRng for Zero {
+    type Error = crypto_bigint::rand_core::Infallible;
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+      Ok(0)
+    }
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+      Ok(0)
+    }
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+      for b in dst {
+        *b = 0;
+      }
+      Ok(())
+    }
+  }
+  let result = Udk::random_bits_with_precision(&mut Zero, 0, bits_precision);
+  {
+    let mut zero = Limb::ZERO;
+    for limb in <_ as AsRef<[Limb]>>::as_ref(&result) {
+      zero |= *limb;
+    }
+    debug_assert!(bool::from(zero.is_zero()));
+  }
+  result
 }
 
 impl<
@@ -529,30 +609,6 @@ impl<
     fundamental_discriminant_bit_length: u32,
     p: &Odd<Up>,
   ) -> Result<Cl15kParameters<Udk>, Cl15Error> {
-    // TODO: https://github.com/RustCrypto/crypto-bigint/1275
-    #[allow(non_snake_case)]
-    let Udk_zero_with_precision = |bits_precision| -> Udk {
-      struct Zero;
-      impl crypto_bigint::rand_core::TryRng for Zero {
-        type Error = crypto_bigint::rand_core::Infallible;
-        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-          Ok(0)
-        }
-        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-          Ok(0)
-        }
-        fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
-          for b in dst {
-            *b = 0;
-          }
-          Ok(())
-        }
-      }
-      let result = Udk::random_bits_with_precision(&mut Zero, 0, bits_precision);
-      debug_assert!(bool::from(result.is_zero()));
-      result
-    };
-
     /*
       Find the lowest, highest numbers `q` could be while still effecting the desired bit-length
       of the fundamental_discriminant.
@@ -560,12 +616,14 @@ impl<
       The lower bound is `(1 << (fundamental_discriminant_bit_length - 1)) / p`.
       The upper bound is `((1 << fundamental_discriminant_bit_length) - 1) / p`.
     */
-    let mut lower_bound_inclusive = Udk_zero_with_precision(fundamental_discriminant_bit_length);
+    let mut lower_bound_inclusive =
+      Ux_zero_with_precision::<Udk>(fundamental_discriminant_bit_length);
     lower_bound_inclusive.set_bit(fundamental_discriminant_bit_length - 1, Choice::TRUE);
     debug_assert_eq!(lower_bound_inclusive.bits_vartime(), fundamental_discriminant_bit_length);
     lower_bound_inclusive = lower_bound_inclusive / p.as_nz_ref();
 
-    let mut upper_bound_inclusive = Udk_zero_with_precision(fundamental_discriminant_bit_length);
+    let mut upper_bound_inclusive =
+      Ux_zero_with_precision::<Udk>(fundamental_discriminant_bit_length);
     for bit in 0 .. fundamental_discriminant_bit_length {
       upper_bound_inclusive.set_bit(bit, Choice::TRUE);
     }
@@ -1066,8 +1124,13 @@ impl<
   }
 }
 
-impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Encoding>
-  Cl15p<Up, Up2, Udk, Udp>
+#[cfg(feature = "alloc")] // TODO: no-`alloc`
+impl<
+  Up: AsRef<[Limb]> + Zero + BitOps + Encoding,
+  Up2,
+  Udk: Clone + AsMut<[Limb]> + Encoding,
+  Udp: Encoding,
+> Cl15p<Up, Up2, Udk, Udp>
 {
   /// Take an element of the class group with non-fundamental discriminant and apply the surjection
   /// such that it is mapped to an element of the class group with fundamental discriminant.
@@ -1099,7 +1162,6 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
   /// This function MAY panic or return an incorrect result if `element` is not of this
   /// discriminant. This function runs in time only variable to this discriminant and
   /// `E::a_b_c_discriminant` (which may or may not be implemented in constant-time).
-  #[cfg(feature = "alloc")] // TODO: no-`alloc`
   #[must_use]
   pub fn surject<E: Element>(&self, element: impl Element) -> E {
     use crypto_bigint::{Resize as _, BoxedUint};
@@ -1111,16 +1173,14 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
     let a = BoxedUint::from_le_slice_vartime(a.as_ref());
     let b_abs = BoxedUint::from_le_slice_vartime(b_abs.as_ref());
     let c = BoxedUint::from_le_slice_vartime(c.as_ref());
-    let p = self.fundamental.p.to_le_bytes();
-    let p = BoxedUint::from_le_slice_vartime(p.as_ref());
+    let p = &self.fundamental.p;
 
     let bits_precision = 2 + a.bits_precision().max(b_abs.bits_precision()).max(c.bits_precision());
-    let p = p.resize(bits_precision);
     let (a, (mut b_positive, b_abs)) = coprime_form(
       a.resize(bits_precision),
       (b_positive, b_abs.resize(bits_precision)),
       c.resize(bits_precision),
-      &p,
+      &NonZero::new(BoxedUint::from(<_ as AsRef<[Limb]>>::as_ref(p.as_ref()))).unwrap(),
     )
     .expect("could not find a coprime form (non-primitive or unreduced?)");
 
@@ -1138,7 +1198,10 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
       `trailing_zeroes((mu * p) - 1) > trailing_zeroes(a)`.
     */
     let b_abs = {
-      let a = NonZero::new(a.clone())
+      let p = BoxedUint::from(<_ as AsRef<[Limb]>>::as_ref(p));
+      let bits_precision = a.bits_precision().max(p.bits_precision());
+      let p = p.resize(bits_precision);
+      let a = NonZero::new(a.clone().resize(bits_precision))
         .expect("`a` is non-zero for a positive definite form of negative discriminant");
       let mu = p.invert_mod(&a).expect("`a` is coprime to `p`");
       let lambda_is_even =
@@ -1208,7 +1271,33 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
       )
     }
   }
+}
 
+#[cfg(feature = "alloc")] // TODO: no-`alloc`
+#[expect(private_bounds)]
+impl<
+  Up: AsRef<[Limb]> + Zero + ConcatenatingSquare + BitOps + Encoding,
+  Up2,
+  Udk: Clone
+    + AsRef<[Limb]>
+    + AsMut<[Limb]>
+    + ConcatenatingMul<
+      <Up as ConcatenatingSquare>::Output,
+      Output: AsRef<[Limb]>
+                + AsMut<[Limb]>
+                + for<'a> Mul<
+        &'a Up,
+        Output = <Udk as ConcatenatingMul<<Up as ConcatenatingSquare>::Output>>::Output,
+      > + for<'a> Rem<&'a NonZero<Up>, Output: Zero>
+                + BitOps
+                + Encoding
+                + RandomBits
+                + crate::crypto_bigint::c::Limbs
+                + crate::crypto_bigint::reduction::Limbs,
+    > + Encoding
+    + RandomBits,
+> Cl15p<Up, Up2, Udk, <Udk as ConcatenatingMul<<Up as ConcatenatingSquare>::Output>>::Output>
+{
   /// Apply the coset labeling function to an element of this discriminant.
   ///
   /// This is equivalent to the following:
@@ -1222,10 +1311,11 @@ impl<Up: BitOps + Encoding, Up2, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Enc
   /// This function MAY panic or return an incorrect result if `element` is not of this
   /// discriminant. This function runs in time only variable to this discriminant and
   /// `E::a_b_c_discriminant` (which may or may not be implemented in constant-time).
-  #[cfg(feature = "alloc")] // TODO: no-`alloc`
   #[must_use]
   pub fn coset_labeling_function<E: Element>(&self, element: impl Element) -> E {
-    self.fundamental_discriminant().inject(self.surject::<E>(element), self.fundamental.p.as_ref())
+    self
+      .fundamental_discriminant()
+      .inject::<Up, Udk, _>(self.surject::<E>(element), self.fundamental.p.as_nz_ref())
   }
 }
 

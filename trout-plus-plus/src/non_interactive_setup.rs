@@ -41,14 +41,15 @@ pub struct NonInteractiveSetup<Up, Up2, Udk, Udp> {
   generator_p: CryptoBigintElement<BoxedUint>,
 }
 
-impl<Up: BitOps + Encoding, Up2, Udk: Encoding, Udp: Encoding>
+impl<Up: AsRef<[Limb]> + Zero + BitOps + Encoding, Up2, Udk: Encoding, Udp: Encoding>
   NonInteractiveSetup<Up, Up2, Udk, Udp>
 {
   /// Inject a point from the class group of fundamental discriminant to the class group of
   /// non-fundamental discriminant, before scaling it by `p`.
   pub(crate) fn inject_p<E: Element>(cl15p: &Cl15p<Up, Up2, Udk, Udp>, e: impl Element) -> E {
     let p = cl15p.fundamental_discriminant().p();
-    let base = cl15p.fundamental_discriminant().inject::<E>(e, p);
+    let p = NonZero::new(BoxedUint::from(<_ as AsRef<[Limb]>>::as_ref(p.as_ref()))).unwrap();
+    let base = cl15p.fundamental_discriminant().inject::<_, BoxedUint, E>(e, &p);
 
     // TODO: `Table::new`
     Table::msm_vartime(

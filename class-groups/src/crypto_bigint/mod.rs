@@ -5,10 +5,10 @@
 /// is undefined.
 pub(super) type I<U> = (crypto_bigint::Choice, U);
 
-mod c;
+pub(crate) mod c;
 use c::c;
 
-mod reduction;
+pub(crate) mod reduction;
 pub(crate) use reduction::{partial_reduce, reduce};
 
 mod composition;

@@ -3,7 +3,7 @@ use std::io;
 
 use group::{ff::Field as _, Group};
 
-use crypto_bigint::{Limb, Encoding, BoxedUint};
+use crypto_bigint::{NonZero, Limb, Encoding, BoxedUint};
 use class_groups::{FundamentalDiscriminant as _, NegativeDiscriminant as _, Element, Table};
 
 use crate::{WrappedGroup, Up2, NonInteractiveSetup};
@@ -101,7 +101,13 @@ impl<E: Element, G: WrappedGroup> BatchVerifier<E, G> {
     let p = core::iter::once((generator_p, E::from(setup.generator_p().clone())))
       .chain(core::iter::once((
         crate::p_Up::<BoxedUint, G>(),
-        setup.cl15p().fundamental_discriminant().inject(k, &crate::p_Up::<G::Up, G>()),
+        setup.cl15p().fundamental_discriminant().inject::<_, BoxedUint, _>(
+          k,
+          &NonZero::new(BoxedUint::from(<_ as AsRef<[Limb]>>::as_ref(
+            setup.cl15p().fundamental_discriminant().p().as_ref(),
+          )))
+          .unwrap(),
+        ),
       )))
       .map(table)
       .chain(p)

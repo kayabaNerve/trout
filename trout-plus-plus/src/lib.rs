@@ -137,7 +137,7 @@ pub trait WrappedGroup {
 
 type Up2<G> = <<G as WrappedGroup>::Up as ConcatenatingSquare>::Output;
 
-// TODO: https://github.com/RustCrypto/crypto-bigint/1275
+// TODO: https://github.com/RustCrypto/crypto-bigint/issues/1275
 #[allow(non_snake_case)]
 fn Up_zero_with_precision<Up: AsMut<[Limb]> + RandomBits>(bits_precision: u32) -> Up {
   struct Zero;

@@ -5,7 +5,7 @@ use crypto_bigint::{Choice, Limb};
 /// Implementations MUST implement all functions in time constant to the value of the inputs,
 /// except for the amount of limbs, unless otherwise stated. Implementations MUST NOT panic for any
 /// input which the caller MAY pass.
-pub(super) trait Limbs: Clone + AsRef<[Limb]> + AsMut<[Limb]> {
+pub(crate) trait Limbs: Clone + AsRef<[Limb]> + AsMut<[Limb]> {
   /// Square the value, returning the `(lo, hi)` terms.
   ///
   /// Implementations MUST ensure each part of the result has an amount of limbs equal to how many
@@ -40,7 +40,11 @@ pub(super) trait Limbs: Clone + AsRef<[Limb]> + AsMut<[Limb]> {
 /// - $floor(log_2(|a|)) + 1 < <_ as AsRef<[Limb]>>::as_ref(a).len() * Limb::BITS$
 ///
 /// `delta` is specified via its absolute value in `negative_discriminant_abs`.
-pub(crate) fn c<L: Limbs>(a: &L, b: &(Choice, L), negative_discriminant_abs: &L) -> L {
+pub(crate) fn c<L: Limbs>(
+  a: &L,
+  b: &(Choice, L),
+  negative_discriminant_abs: &impl AsRef<[Limb]>,
+) -> L {
   let (mut b_lo, mut b_hi) = b.1.widening_square();
 
   /*

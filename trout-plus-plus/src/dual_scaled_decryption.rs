@@ -7,7 +7,8 @@ use rand::CryptoRng;
 use group::{ff::PrimeField as _, Group};
 
 use crypto_bigint::{
-  CtAssign, NonZero, Limb, ConcatenatingMul as _, BitOps, Encoding, RandomBits as _, BoxedUint,
+  CtAssign, Zero, NonZero, Limb, ConcatenatingMul as _, ConcatenatingSquare, BitOps, Encoding,
+  RandomBits as _, BoxedUint,
 };
 use class_groups::{NegativeDiscriminant as _, FundamentalDiscriminant as _, Element, Cl15p, Table};
 
@@ -193,7 +194,7 @@ impl<'a, Up: BitOps, Up2, Udk: Encoding, Udp: Encoding, E: CtAssign + Element>
 }
 
 impl<
-  Up: BitOps + Encoding,
+  Up: AsRef<[Limb]> + Zero + ConcatenatingSquare + BitOps + Encoding,
   Up2,
   Udk: Clone + AsMut<[Limb]> + Encoding,
   Udp: Encoding,
@@ -307,7 +308,7 @@ impl<E: Element> Commit<E> {
 
   /// Check the response (read from the transcript) to the challenge.
   pub(crate) fn queue_batch_verification<
-    Up: BitOps + Encoding,
+    Up: AsRef<[Limb]> + Zero + ConcatenatingSquare + BitOps + Encoding,
     Up2,
     Udk: Encoding,
     Udp: Encoding,
@@ -331,32 +332,30 @@ impl<E: Element> Commit<E> {
   ) -> io::Result<()> {
     let Self { R_delta, R_alpha, R_beta, R_delta_beta, R_alpha_beta } = self;
 
-    let R_delta =
-      cl15p.fundamental_discriminant().inject::<E>(R_delta, cl15p.fundamental_discriminant().p());
-    let R_alpha =
-      cl15p.fundamental_discriminant().inject::<E>(R_alpha, cl15p.fundamental_discriminant().p());
+    let p = NonZero::new(BoxedUint::from(<_ as AsRef<[Limb]>>::as_ref(
+      cl15p.fundamental_discriminant().p().as_ref(),
+    )))
+    .unwrap();
+    let R_delta = cl15p.fundamental_discriminant().inject::<_, BoxedUint, E>(R_delta, &p);
+    let R_alpha = cl15p.fundamental_discriminant().inject::<_, BoxedUint, E>(R_alpha, &p);
 
     let D_delta =
       E::decompress(&mut transcript, cl15p.fundamental_discriminant().absolute_value())?;
-    let D_delta =
-      cl15p.fundamental_discriminant().inject(D_delta, cl15p.fundamental_discriminant().p());
+    let D_delta = cl15p.fundamental_discriminant().inject::<_, BoxedUint, _>(D_delta, &p);
 
     let D_alpha =
       E::decompress(&mut transcript, cl15p.fundamental_discriminant().absolute_value())?;
-    let D_alpha =
-      cl15p.fundamental_discriminant().inject(D_alpha, cl15p.fundamental_discriminant().p());
+    let D_alpha = cl15p.fundamental_discriminant().inject::<_, BoxedUint, _>(D_alpha, &p);
 
     let D_beta = E::decompress(&mut transcript, cl15p.fundamental_discriminant().absolute_value())?;
 
     let D_delta_beta =
       E::decompress(&mut transcript, cl15p.fundamental_discriminant().absolute_value())?;
-    let D_delta_beta =
-      cl15p.fundamental_discriminant().inject(D_delta_beta, cl15p.fundamental_discriminant().p());
+    let D_delta_beta = cl15p.fundamental_discriminant().inject::<_, BoxedUint, _>(D_delta_beta, &p);
 
     let D_alpha_beta =
       E::decompress(&mut transcript, cl15p.fundamental_discriminant().absolute_value())?;
-    let D_alpha_beta =
-      cl15p.fundamental_discriminant().inject(D_alpha_beta, cl15p.fundamental_discriminant().p());
+    let D_alpha_beta = cl15p.fundamental_discriminant().inject::<_, BoxedUint, _>(D_alpha_beta, &p);
 
     let p = crate::p_Up::<BoxedUint, G>();
     let divisor = prime.concatenating_mul(&p);
