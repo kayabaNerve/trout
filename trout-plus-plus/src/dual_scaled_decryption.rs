@@ -210,7 +210,7 @@ impl<
     challenge: <G::G as Group>::Scalar,
     mut transcript: impl io::Write,
   ) -> io::Result<()> {
-    let challenge_Up = crate::Up_from_scalar::<BoxedUint, G>(&challenge);
+    let challenge_Up = crate::Up_from_scalar::<BoxedUint, G>(challenge);
 
     let s_delta = Zeroizing::new(
       self.r_delta.concatenating_add(Zeroizing::new(challenge_Up.concatenating_mul(&self.delta_i))),
@@ -372,7 +372,7 @@ impl<E: Element> Commit<E> {
     let e_alpha = read_e()?;
     let e_beta = read_e()?;
 
-    let challenge = crate::Up_from_scalar::<BoxedUint, G>(&challenge);
+    let challenge = crate::Up_from_scalar::<BoxedUint, G>(challenge);
 
     // TODO
     let table_bits = core::num::NonZero::new(4).unwrap();

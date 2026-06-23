@@ -4,7 +4,6 @@
 #![expect(non_snake_case)]
 #![no_std]
 
-use core::ops::{Deref, DerefMut};
 extern crate alloc;
 use alloc::vec;
 extern crate std;
@@ -20,8 +19,8 @@ use group::{
 };
 
 use crypto_bigint::{
-  Choice, CtSelect, Zero, Limb, NegMod, ConcatenatingMul, ConcatenatingSquare, InvertMod, BitOps,
-  Encoding, RandomBits, Resize as _, BoxedUint,
+  CtSelect, Zero, Limb, NegMod, ConcatenatingMul, ConcatenatingSquare, InvertMod, BitOps, Encoding,
+  RandomBits, Resize as _, BoxedUint,
 };
 
 use cshake::digest::{CustomizedInit, Update, ExtendableOutput, XofReader};
@@ -78,7 +77,7 @@ impl CShake for cshake::CShake256 {
 /// A group wrapped with the necessary helpers for Trout++.
 pub trait WrappedGroup {
   /// The group this wraps.
-  type G: PrimeGroup<Scalar: Zeroize>;
+  type G: PrimeGroup<Scalar: Zeroize + CtSelect>;
 
   /// The integer type which can store the prime order of this group.
   type Up: Clone
@@ -119,11 +118,6 @@ pub trait WrappedGroup {
 
   /// Deserialize a point from a _canonical_ encoding.
   fn point_from_canonical_bytes(transcript: impl io::Read) -> io::Result<Self::G>;
-
-  /// Convert a scalar to its _little-endian_ bits.
-  fn scalar_to_le_bits(
-    scalar: &<Self::G as Group>::Scalar,
-  ) -> impl IntoIterator<Item: Deref<Target = bool> + DerefMut>;
 
   /// Reduce the `x`-coordinate of a point into a scalar.
   fn x_coordinate(point: &Self::G) -> <Self::G as Group>::Scalar;
@@ -171,21 +165,20 @@ fn Up_zero_with_precision<Up: AsMut<[Limb]> + RandomBits>(bits_precision: u32) -
 /// This function runs in time only variable to the amount of bits needed to represent a scalar and
 /// is independent to the value of the scalar itself.
 fn Up_from_scalar<Up: AsMut<[Limb]> + BitOps + RandomBits, G: WrappedGroup>(
-  scalar: &<G::G as Group>::Scalar,
+  mut scalar: <G::G as Group>::Scalar,
 ) -> Up {
   let mut result = Up_zero_with_precision::<Up>(<G::G as Group>::Scalar::NUM_BITS);
 
-  let mut i = 0;
-  for mut b in G::scalar_to_le_bits(scalar) {
-    let b: &mut bool = b.deref_mut();
-    result.set_bit(i, Choice::from(u8::from(*b)));
-    b.zeroize();
-    i += 1;
-  }
+  for i in 0 .. <G::G as Group>::Scalar::NUM_BITS {
+    let b = scalar.is_odd();
 
-  // Ensure all remaining bits are zeroed as expected
-  for i in i .. result.bits_precision() {
-    result.set_bit(i, Choice::FALSE);
+    // Write this bit into the `Up`
+    result.set_bit(i, b.into());
+
+    // Clear this bit and shift the scalar by one
+    scalar -=
+      <_>::ct_select(&<G::G as Group>::Scalar::ZERO, &<G::G as Group>::Scalar::ONE, b.into());
+    scalar *= <G::G as Group>::Scalar::TWO_INV;
   }
 
   result
@@ -199,7 +192,7 @@ fn Up_from_scalar<Up: AsMut<[Limb]> + BitOps + RandomBits, G: WrappedGroup>(
 /// This function runs in time only variable to the amount of bits needed to represent a scalar and
 /// is independent to the value of the order itself.
 fn p_Up<Up: AsMut<[Limb]> + BitOps + RandomBits, G: WrappedGroup>() -> Up {
-  let mut p = Up_from_scalar::<Up, G>(&-<G::G as Group>::Scalar::ONE);
+  let mut p = Up_from_scalar::<Up, G>(-<G::G as Group>::Scalar::ONE);
   assert!(!p.bit_vartime(0), "-1 isn't even so the order of the elliptic curve is not odd");
   p.set_bit_vartime(0, true);
   p

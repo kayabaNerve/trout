@@ -170,7 +170,7 @@ impl<E: Element, G: WrappedGroup> SigningKey<E, G> for SigningKeyWithoutDerivati
     Table::msm_vartime(
       E::identity(discriminant_abs),
       &[(
-        crate::Up_from_scalar::<BoxedUint, G>(&interpolation_factor).to_le_bytes().as_ref(),
+        crate::Up_from_scalar::<BoxedUint, G>(interpolation_factor).to_le_bytes().as_ref(),
         &ciphertext,
       )],
     )
@@ -181,7 +181,7 @@ impl<E: Element, G: WrappedGroup> SigningKey<E, G> for SigningKeyWithoutDerivati
     opening: Self::Opening,
   ) -> Zeroizing<BoxedUint> {
     Zeroizing::new(
-      opening.concatenating_mul(crate::Up_from_scalar::<BoxedUint, G>(&interpolation_factor)),
+      opening.concatenating_mul(crate::Up_from_scalar::<BoxedUint, G>(interpolation_factor)),
     )
   }
 }
@@ -215,7 +215,7 @@ impl<E: Element> InteractiveSetup<E> {
       ciphertext = ciphertext.add(Table::msm_vartime(
         E::identity(cl15p.absolute_value()),
         &[(
-          crate::Up_from_scalar::<BoxedUint, G>(&interpolation_factor).to_le_bytes().as_ref(),
+          crate::Up_from_scalar::<BoxedUint, G>(interpolation_factor).to_le_bytes().as_ref(),
           &table,
         )],
       ));
@@ -340,8 +340,8 @@ impl<E> InteractiveSetupWithDerivations<E> {
     derivation: <G::G as Group>::Scalar,
   ) -> (BoxedUint, BoxedUint) {
     (
-      crate::Up_from_scalar::<BoxedUint, G>(&interpolation_factor),
-      crate::Up_from_scalar::<BoxedUint, G>(&(derivation * interpolation_factor)),
+      crate::Up_from_scalar::<BoxedUint, G>(interpolation_factor),
+      crate::Up_from_scalar::<BoxedUint, G>(derivation * interpolation_factor),
     )
   }
 }

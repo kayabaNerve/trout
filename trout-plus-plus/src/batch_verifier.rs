@@ -116,7 +116,7 @@ impl<E: Element, G: WrappedGroup> BatchVerifier<E, G> {
     let p = p.iter().map(|(scalar, table)| (scalar.as_ref(), table)).collect::<Vec<_>>();
     if bool::from(
       !Table::msm_vartime(E::identity(setup.cl15p().absolute_value()), &p)
-        .add(setup.cl15p().f_scaled::<E>(&crate::Up_from_scalar::<G::Up, G>(&f)))
+        .add(setup.cl15p().f_scaled::<E>(&crate::Up_from_scalar::<G::Up, G>(f)))
         .is_identity(),
     ) {
       Err(io::Error::other("elements did not sum to the identity"))?;

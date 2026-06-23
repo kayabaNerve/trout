@@ -109,11 +109,7 @@ impl<E: CtAssign + Element> Ciphertext<E> {
         &identity_p,
         &[(Zeroizing::new(delta.to_le_bytes()).as_ref(), &generator_p)],
       )
-      .add(
-        setup
-          .cl15p()
-          .f_scaled(Zeroizing::new(crate::Up_from_scalar::<G::Up, G>(x.deref())).deref()),
-      ),
+      .add(setup.cl15p().f_scaled(Zeroizing::new(crate::Up_from_scalar::<G::Up, G>(*x)).deref())),
     };
 
     let R_ciphertext = Table::msm(
@@ -121,9 +117,7 @@ impl<E: CtAssign + Element> Ciphertext<E> {
       &[(Zeroizing::new(r_ciphertext.to_le_bytes()).as_ref(), &generator_p)],
     )
     .add(
-      setup
-        .cl15p()
-        .f_scaled(Zeroizing::new(crate::Up_from_scalar::<G::Up, G>(&r_elliptic)).deref()),
+      setup.cl15p().f_scaled(Zeroizing::new(crate::Up_from_scalar::<G::Up, G>(r_elliptic)).deref()),
     );
     let R_elliptic = G::generator_e() * r_elliptic;
 
@@ -174,7 +168,7 @@ impl<Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Encoding, E: CtAssign + Element
   ) -> io::Result<Zeroizing<BoxedUint>> {
     // `r_ciphertext + c * delta`
     let s_delta = Zeroizing::new(self.r_ciphertext.concatenating_add(Zeroizing::new(
-      crate::Up_from_scalar::<BoxedUint, G>(&challenge).concatenating_mul(&self.delta),
+      crate::Up_from_scalar::<BoxedUint, G>(challenge).concatenating_mul(&self.delta),
     )));
 
     let divisor = NonZero::new(prime.concatenating_mul(crate::p_Up::<BoxedUint, G>()))
@@ -254,7 +248,7 @@ impl<E: Element, G: WrappedGroup> Commit<E, G> {
     {
       let batch_verification_weight_scalar = <G::G as Group>::Scalar::random(&mut rng);
       let batch_verification_weight =
-        crate::Up_from_scalar::<BoxedUint, G>(&batch_verification_weight_scalar);
+        crate::Up_from_scalar::<BoxedUint, G>(batch_verification_weight_scalar);
 
       // TODO: `Table::new`
       batch_verifier.k.push((
@@ -274,7 +268,7 @@ impl<E: Element, G: WrappedGroup> Commit<E, G> {
       batch_verifier.p.extend([
         (
           batch_verification_weight
-            .concatenating_mul(crate::Up_from_scalar::<BoxedUint, G>(&challenge)),
+            .concatenating_mul(crate::Up_from_scalar::<BoxedUint, G>(challenge)),
           Table::new(core::num::NonZero::new(4).unwrap(), -ciphertext.ciphertext),
         ),
         (batch_verification_weight, Table::new(core::num::NonZero::new(4).unwrap(), -R_ciphertext)),

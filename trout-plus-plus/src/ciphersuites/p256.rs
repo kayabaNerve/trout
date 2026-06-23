@@ -1,11 +1,10 @@
-use core::ops::{Deref, DerefMut};
 use std::io;
 
 use cshake::digest::XofReader;
 use sha2::{Digest as _, Sha256};
 
 use crypto_bigint::{Reduce as _, Encoding as _, U256};
-use group::{ff::PrimeField as _, Group};
+use group::Group;
 use p256::{
   elliptic_curve::{sec1::FromSec1Point as _, point::AffineCoordinates as _},
   Scalar, ProjectivePoint,
@@ -36,26 +35,6 @@ impl WrappedGroup for P256 {
     }
     transcript.read_exact(&mut bytes[1 ..])?;
     ProjectivePoint::from_sec1_bytes(&bytes).map_err(io::Error::other)
-  }
-
-  fn scalar_to_le_bits(
-    scalar: &<Self::G as Group>::Scalar,
-  ) -> impl IntoIterator<Item: Deref<Target = bool> + DerefMut> {
-    struct DerefWrapper<T>(T);
-    impl<T> Deref for DerefWrapper<T> {
-      type Target = T;
-      fn deref(&self) -> &T {
-        &self.0
-      }
-    }
-    impl<T> DerefMut for DerefWrapper<T> {
-      fn deref_mut(&mut self) -> &mut T {
-        &mut self.0
-      }
-    }
-
-    let scalar = U256::from_be_bytes(scalar.to_repr().into());
-    (0 .. Scalar::NUM_BITS).map(move |i| DerefWrapper(scalar.bit_vartime(i)))
   }
 
   fn x_coordinate(point: &Self::G) -> <Self::G as Group>::Scalar {

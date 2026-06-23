@@ -136,7 +136,7 @@ impl<E: CtAssign + Element> InteractiveCommitment<E> {
   ) -> io::Result<Zeroizing<BoxedUint>> {
     // `r_commitment + c * beta`
     let s_beta = Zeroizing::new(self.r_commitment.concatenating_add(Zeroizing::new(
-      crate::Up_from_scalar::<BoxedUint, G>(&challenge).concatenating_mul(&self.beta),
+      crate::Up_from_scalar::<BoxedUint, G>(challenge).concatenating_mul(&self.beta),
     )));
 
     let divisor = NonZero::new(prime.clone()).expect("a prime number is non-zero");
@@ -212,7 +212,7 @@ impl<E: Element> Commit<E> {
         ),
         (
           batch_verification_weight
-            .concatenating_mul(crate::Up_from_scalar::<BoxedUint, G>(&challenge)),
+            .concatenating_mul(crate::Up_from_scalar::<BoxedUint, G>(challenge)),
           Table::new(core::num::NonZero::new(4).unwrap(), -commitment.commitment.clone()),
         ),
         (batch_verification_weight, Table::new(core::num::NonZero::new(4).unwrap(), -R_commitment)),

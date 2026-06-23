@@ -86,12 +86,11 @@ impl Sign {
     let r = G::x_coordinate(&nonce_commitment);
     let h_m = G::hash_message(message);
 
-    let Delta = key_ciphertext.add(
-      setup.cl15p().f_scaled(&crate::Up_from_scalar::<G::Up, G>(&(h_m * r.invert().unwrap()))),
-    );
+    let Delta = key_ciphertext
+      .add(setup.cl15p().f_scaled(&crate::Up_from_scalar::<G::Up, G>(h_m * r.invert().unwrap())));
     let Alpha =
       nonce_ciphertext.ciphertext.add(
-        setup.cl15p().f_scaled(&crate::Up_from_scalar::<G::Up, G>(&(mu * rho.invert().unwrap()))),
+        setup.cl15p().f_scaled(&crate::Up_from_scalar::<G::Up, G>(mu * rho.invert().unwrap())),
       );
 
     Prep { sponge, Delta, Alpha, neg_Beta: -Beta.commitment, h_m, rho, r }
@@ -418,7 +417,7 @@ impl<
     let mut s = numerator * Option::<<G::G as Group>::Scalar>::from(denominator.invert())?;
 
     // Normalize this to have a low `s`
-    if crate::Up_from_scalar::<G::Up, G>(&-s) < crate::Up_from_scalar::<G::Up, G>(&s) {
+    if crate::Up_from_scalar::<G::Up, G>(-s) < crate::Up_from_scalar::<G::Up, G>(s) {
       s = -s;
     }
 
