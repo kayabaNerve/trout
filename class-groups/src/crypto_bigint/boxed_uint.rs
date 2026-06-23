@@ -2,7 +2,7 @@
 
 use crypto_bigint::{
   Choice, CtEq as _, CtAssign as _, Resize as _, Zero, One as _, NonZero, ConcatenatingSquare as _,
-  ConcatenatingMul as _, Gcd as _, Div as _, Encoding, BoxedUint,
+  ConcatenatingMul as _, Gcd as _, Encoding, BoxedUint,
 };
 
 impl super::c::Limbs for BoxedUint {
@@ -20,8 +20,7 @@ impl super::c::Limbs for BoxedUint {
     let num =
       num.1.resize_unchecked(2 * denom_bits).overflowing_shl_vartime(denom_bits).unwrap() | num.0;
     // The caller is bound to not pass `0` as the denominator
-    let quotient = BoxedUint::div(num, &denom.to_nz().unwrap());
-    quotient.resize_unchecked(denom_bits)
+    BoxedUint::div_exact(&num, &denom.to_nz().unwrap()).unwrap().resize(denom_bits)
   }
   #[inline(always)]
   fn rem(num: Self, denom: &Self) -> Self {
@@ -103,7 +102,9 @@ impl super::composition::Limbs for BoxedUint {
   }
   #[inline(always)]
   fn div_exact(self, denom: &Self) -> Self {
-    BoxedUint::div(self, &NonZero::new(denom.clone()).unwrap())
+    BoxedUint::div_exact(&self, &NonZero::new(denom.clone()).unwrap())
+      .unwrap()
+      .resize(denom.bits_precision())
   }
   #[inline(always)]
   fn mul_mod(&self, other: &Self, modulus: &Self) -> Self {

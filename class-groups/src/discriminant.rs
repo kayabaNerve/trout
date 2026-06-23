@@ -1388,6 +1388,7 @@ impl<
       Udp::from_le_bytes(repr)
     };
 
+    // TODO: `div_exact` when `div_exact` has a trait
     let x_tilde = b_abs.clone().div(self.fundamental.p.as_nz_ref());
     let correct_b_coefficient = x_tilde.clone().mul(self.fundamental.p.as_ref()).ct_eq(&b_abs);
 

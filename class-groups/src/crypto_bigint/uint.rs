@@ -1,7 +1,6 @@
 #![expect(clippy::inline_always)]
 
-#[rustfmt::skip]
-use crypto_bigint::{Choice, CtEq as _, Encoding, Concat, SplitEven, One as _, NonZero, Div as _, Uint};
+use crypto_bigint::{Choice, CtEq as _, Encoding, Concat, SplitEven, One as _, NonZero, Uint};
 
 impl<const LIMBS: usize, const WIDE_LIMBS: usize> super::c::Limbs for Uint<LIMBS>
 where
@@ -15,7 +14,7 @@ where
   #[inline(always)]
   fn wrapping_div_exact(num: (Self, Self), denom: &Self) -> Self {
     let concatenated = num.0.concat(&num.1);
-    let quotient = Uint::div(concatenated, &NonZero::new(*denom).unwrap());
+    let quotient = Uint::div_exact(&concatenated, &NonZero::new(*denom).unwrap()).unwrap();
     quotient.split().0
   }
   #[inline(always)]
@@ -48,7 +47,7 @@ where
   }
   #[inline(always)]
   fn div_exact(self, denom: &Self) -> Self {
-    Uint::div(self, &NonZero::new(*denom).unwrap())
+    Uint::div_exact(&self, &NonZero::new(*denom).unwrap()).unwrap()
   }
   #[inline(always)]
   fn mul_mod(&self, other: &Self, modulus: &Self) -> Self {
