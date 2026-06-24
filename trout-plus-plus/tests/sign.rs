@@ -16,7 +16,8 @@ use ciphersuite::group::{ff::PrimeField as _, GroupEncoding as _};
 
 use crypto_bigint::{U256, U512, BoxedUint};
 use trout_plus_plus::{
-  WrappedGroup as _, NonInteractiveSetup, InteractiveSetup, Preprocess, Aggregating, Sign, P256,
+  WrappedGroup as _, NonInteractiveSetup, InteractiveSetup, Preprocess, Aggregating, Sign,
+  Completing, P256,
 };
 
 use dkg_dealer::Participant;
@@ -199,36 +200,34 @@ fn sign() {
     let start = Instant::now();
     let preprocess = preprocesses.remove(id).unwrap();
     let mut share = vec![];
-    let first = completing.is_none();
-    completing = completing.or(Some(
-      Sign::sign::<BoxedUint, BoxedUint, ProverElement, VerifierElement, _, P256, _, Participant>(
-        &mut rng,
-        &non_interactive_setup,
-        &signing_key,
-        interpolation_factors[id],
-        setups[id].clone(),
-        key_ciphertext_openings[id].clone(),
-        aggregating,
-        &preprocess,
-        preprocess_opening,
-        MESSAGE,
-        &mut share,
-      )
-      .unwrap(),
-    ));
+    let () = Sign::sign::<BoxedUint, BoxedUint, ProverElement, VerifierElement, _, P256, _>(
+      &mut rng,
+      &non_interactive_setup,
+      &signing_key,
+      interpolation_factors[id],
+      setups[id].clone(),
+      key_ciphertext_openings[id].clone(),
+      &aggregating,
+      &preprocess,
+      preprocess_opening,
+      MESSAGE,
+      &mut share,
+    )
+    .unwrap();
     share_times.push(start.elapsed().as_millis());
     share_sizes.push(share.len());
 
-    if !first {
-      let start = Instant::now();
-      let completing = completing.as_mut().unwrap();
-      let mut share = share.as_slice();
-      completing
-        .aggregate(rng, *id, interpolation_factors[id], setups[id].clone(), preprocess, &mut share)
-        .unwrap();
-      assert!(share.is_empty());
-      aggregate_times.push(start.elapsed().as_millis());
-    }
+    let completing = completing.get_or_insert_with(|| {
+      Completing::new(&non_interactive_setup, &signing_key, aggregating, MESSAGE)
+    });
+
+    let start = Instant::now();
+    let mut share = share.as_slice();
+    completing
+      .aggregate(rng, *id, interpolation_factors[id], setups[id].clone(), preprocess, &mut share)
+      .unwrap();
+    assert!(share.is_empty());
+    aggregate_times.push(start.elapsed().as_millis());
   }
   batch_verification_times.sort_unstable();
   share_times.sort_unstable();

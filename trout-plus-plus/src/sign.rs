@@ -38,7 +38,7 @@ impl Sign {
   >(
     setup: &NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
     signing_key: &S,
-    aggregate_preprocess: AggregatePreprocess<E, G>,
+    aggregate_preprocess: &AggregatePreprocess<E, G>,
     message: impl AsRef<[u8]>,
   ) -> Prep<E, G> {
     let key_ciphertext = signing_key.ciphertext();
@@ -48,6 +48,10 @@ impl Sign {
       ciphertext: nonce_ciphertext,
       commitment: Beta,
     } = aggregate_preprocess;
+    let preprocess_transcript = preprocess_transcript.clone();
+    let nonce_commitment = *nonce_commitment;
+    let nonce_ciphertext = nonce_ciphertext.clone();
+    let Beta = Beta.clone();
 
     let mut preprocess_context = vec![
       0;
@@ -98,7 +102,6 @@ impl Sign {
 }
 
 /// The Trout++ signing protocol being completed, without identifiable aborts.
-// TODO: Support third-party completions
 pub struct CompletingWithoutIdentifiableAborts<'a, Udk, Udp, E, G: WrappedGroup> {
   cl15p: &'a Cl15p<G::Up, Up2<G>, Udk, Udp>,
   key: G::G,
@@ -110,7 +113,6 @@ pub struct CompletingWithoutIdentifiableAborts<'a, Udk, Udp, E, G: WrappedGroup>
 }
 
 /// The Trout++ signing protocol being completed.
-// TODO: Support third-party completions
 pub struct Completing<'a, Udk, Udp, E, G: WrappedGroup, S, Id> {
   setup: &'a NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
   completing: CompletingWithoutIdentifiableAborts<'a, Udk, Udp, E, G>,
@@ -124,10 +126,8 @@ pub struct Completing<'a, Udk, Udp, E, G: WrappedGroup, S, Id> {
 
 impl Sign {
   /// Participate in the second round of Trout++ _without_ identifiable aborts.
-  // TODO: Don't assume one preprocess to one key
   #[expect(clippy::needless_pass_by_value)] // A `PreprocessOpening` is single-use
   pub fn sign_without_identifiable_aborts<
-    'cl15p,
     Udk: Clone + AsMut<[Limb]> + Encoding,
     Udp: Encoding,
     E: CtAssign + Element,
@@ -135,16 +135,16 @@ impl Sign {
     G: WrappedGroup,
     S: SigningKey<VerifierElement, G>,
   >(
-    setup: &'cl15p NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
+    setup: &NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
     signing_key: &S,
     interpolation_factor: <G::G as Group>::Scalar,
     setup_opening: S::Opening,
-    aggregate_preprocess: AggregatePreprocess<VerifierElement, G>,
+    aggregate_preprocess: &AggregatePreprocess<VerifierElement, G>,
     preprocess_opening: PreprocessOpening,
     message: impl AsRef<[u8]>,
     mut out: impl io::Write,
-  ) -> io::Result<CompletingWithoutIdentifiableAborts<'cl15p, Udk, Udp, VerifierElement, G>> {
-    let Prep { sponge: _, Delta, Alpha, neg_Beta, h_m, rho, r } =
+  ) -> io::Result<()> {
+    let Prep { sponge: _, Delta, Alpha, neg_Beta, h_m: _, rho: _, r: _ } =
       Self::prep(setup, signing_key, aggregate_preprocess, message);
     let Delta = E::from(Delta);
     let Alpha = E::from(Alpha);
@@ -167,21 +167,12 @@ impl Sign {
       nonce_ciphertext_opening,
       commitment_opening,
     );
-    S_delta_beta.clone().compress(&mut out)?;
-    S_alpha_beta.clone().compress(&mut out)?;
-    Ok(CompletingWithoutIdentifiableAborts {
-      cl15p: setup.cl15p(),
-      key: signing_key.key(),
-      h_m,
-      rho,
-      r,
-      S_delta_beta: VerifierElement::from(S_delta_beta),
-      S_alpha_beta: VerifierElement::from(S_alpha_beta),
-    })
+    S_delta_beta.compress(&mut out)?;
+    S_alpha_beta.compress(&mut out)?;
+    Ok(())
   }
 
   /// Participate in the second round of Trout++.
-  // TODO: Don't assume one preprocess to one key
   #[expect(clippy::needless_pass_by_value)] // A `PreprocessOpening` is single-use
   pub fn sign<
     'cl15p,
@@ -192,7 +183,6 @@ impl Sign {
     PreprocessElement: Element,
     G: WrappedGroup,
     S: SigningKey<VerifierElement, G>,
-    Id,
   >(
     mut rng: impl CryptoRng,
     setup: &'cl15p NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
@@ -200,13 +190,13 @@ impl Sign {
     interpolation_factor: <G::G as Group>::Scalar,
     key_share_ciphertext: S::Setup,
     setup_opening: S::Opening,
-    aggregate_preprocess: AggregatePreprocess<VerifierElement, G>,
+    aggregate_preprocess: &AggregatePreprocess<VerifierElement, G>,
     preprocess: &Preprocess<PreprocessElement>,
     preprocess_opening: PreprocessOpening,
     message: impl AsRef<[u8]>,
     mut out: impl io::Write,
-  ) -> io::Result<Completing<'cl15p, Udk, Udp, VerifierElement, G, S, Id>> {
-    let Prep { sponge, Delta, Alpha, neg_Beta, h_m, rho, r } =
+  ) -> io::Result<()> {
+    let Prep { sponge, Delta, Alpha, neg_Beta, h_m: _, rho: _, r: _ } =
       Self::prep(setup, signing_key, aggregate_preprocess, message);
     let Delta = E::from(Delta);
     let Alpha = E::from(Alpha);
@@ -215,7 +205,7 @@ impl Sign {
     let commitment_opening = preprocess_opening.commitment_opening.clone();
 
     let mut transcript = vec![];
-    let (S_delta_beta, S_alpha_beta) = {
+    {
       // TODO: `Table::new`
       let Delta = Table::new(core::num::NonZero::new(4).unwrap(), Delta.clone());
       let Alpha = Table::new(core::num::NonZero::new(4).unwrap(), Alpha.clone());
@@ -237,12 +227,12 @@ impl Sign {
       {
         let S_delta_beta = {
           let mut bytes = vec![];
-          S_delta_beta.clone().compress(&mut bytes)?;
+          S_delta_beta.compress(&mut bytes)?;
           bytes
         };
         let S_alpha_beta = {
           let mut bytes = vec![];
-          S_alpha_beta.clone().compress(&mut bytes)?;
+          S_alpha_beta.compress(&mut bytes)?;
           bytes
         };
 
@@ -274,28 +264,35 @@ impl Sign {
         out.write_all(&S_alpha_beta)?;
         out.write_all(&transcript)?;
       }
+    }
 
-      (S_delta_beta, S_alpha_beta)
-    };
+    Ok(())
+  }
+}
 
-    Ok(Completing {
-      setup,
-      completing: CompletingWithoutIdentifiableAborts {
-        cl15p: setup.cl15p(),
-        key: signing_key.key(),
-        h_m,
-        rho,
-        r,
-        S_delta_beta: VerifierElement::from(S_delta_beta),
-        S_alpha_beta: VerifierElement::from(S_alpha_beta),
-      },
-      signing_key,
-      Delta: Table::new(core::num::NonZero::new(4).unwrap(), VerifierElement::from(Delta)),
-      Alpha: Table::new(core::num::NonZero::new(4).unwrap(), VerifierElement::from(Alpha)),
-      neg_Beta: Table::new(core::num::NonZero::new(4).unwrap(), VerifierElement::from(neg_Beta)),
-      sponge,
-      batch_verifiers: vec![],
-    })
+impl<'cl15p, Udk: Clone + AsMut<[Limb]> + Encoding, Udp: Encoding, E: Element, G: WrappedGroup>
+  CompletingWithoutIdentifiableAborts<'cl15p, Udk, Udp, E, G>
+{
+  /// Begin completion of an invocation of the Trout++ signing protocol, without identifiable
+  /// aborts.
+  #[expect(clippy::needless_pass_by_value)] // A preprocess should only be used once
+  pub fn new(
+    setup: &'cl15p NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
+    signing_key: &impl SigningKey<E, G>,
+    aggregate_preprocess: AggregatePreprocess<E, G>,
+    message: impl AsRef<[u8]>,
+  ) -> Self {
+    let Prep { sponge: _, Delta: _, Alpha: _, neg_Beta: _, h_m, rho, r } =
+      Sign::prep(setup, signing_key, &aggregate_preprocess, message);
+    CompletingWithoutIdentifiableAborts {
+      cl15p: setup.cl15p(),
+      key: signing_key.key(),
+      h_m,
+      rho,
+      r,
+      S_delta_beta: E::identity(setup.cl15p().absolute_value()),
+      S_alpha_beta: E::identity(setup.cl15p().absolute_value()),
+    }
   }
 }
 
@@ -310,6 +307,48 @@ impl<Udk: Encoding, Udp: Encoding, E: Element, G: WrappedGroup>
     self.S_delta_beta = self.S_delta_beta.clone().add(S_delta_beta);
     self.S_alpha_beta = self.S_alpha_beta.clone().add(S_alpha_beta);
     Ok(())
+  }
+}
+
+impl<
+  'a,
+  Udk: Clone + AsMut<[Limb]> + Encoding,
+  Udp: Encoding,
+  E: Element,
+  G: WrappedGroup,
+  S: SigningKey<E, G>,
+  Id,
+> Completing<'a, Udk, Udp, E, G, S, Id>
+{
+  /// Begin completion of an invocation of the Trout++ signing protocol.
+  #[expect(clippy::needless_pass_by_value)] // A preprocess should only be used once
+  pub fn new(
+    setup: &'a NonInteractiveSetup<G::Up, Up2<G>, Udk, Udp>,
+    signing_key: &'a S,
+    aggregate_preprocess: AggregatePreprocess<E, G>,
+    message: impl AsRef<[u8]>,
+  ) -> Self {
+    let Prep { sponge, Delta, Alpha, neg_Beta, h_m, rho, r } =
+      Sign::prep(setup, signing_key, &aggregate_preprocess, message);
+
+    Completing {
+      setup,
+      completing: CompletingWithoutIdentifiableAborts {
+        cl15p: setup.cl15p(),
+        key: signing_key.key(),
+        h_m,
+        rho,
+        r,
+        S_delta_beta: E::identity(setup.cl15p().absolute_value()),
+        S_alpha_beta: E::identity(setup.cl15p().absolute_value()),
+      },
+      signing_key,
+      Delta: Table::new(core::num::NonZero::new(4).unwrap(), Delta),
+      Alpha: Table::new(core::num::NonZero::new(4).unwrap(), Alpha),
+      neg_Beta: Table::new(core::num::NonZero::new(4).unwrap(), neg_Beta),
+      sponge,
+      batch_verifiers: vec![],
+    }
   }
 }
 

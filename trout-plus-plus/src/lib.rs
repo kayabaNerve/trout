@@ -45,7 +45,7 @@ pub(crate) use dual_scaled_decryption::DualScaledDecryption;
 mod preprocess;
 pub use preprocess::{Preprocess, PreprocessOpening, Aggregating, AggregatePreprocess};
 mod sign;
-pub use sign::Sign;
+pub use sign::{Sign, Completing, CompletingWithoutIdentifiableAborts};
 
 mod ciphersuites;
 pub use ciphersuites::*;

@@ -41,6 +41,7 @@ pub trait SigningKey<E, G: WrappedGroup>: sealed::Sealed {
   fn ciphertext(&self) -> E;
 
   /// Transform an individual share's setup to the corresponding share of this key's ciphertext.
+  // TODO: Support multiple key shares which belong to a single identity
   fn share_ciphertext(
     &self,
     interpolation_factor: <G::G as Group>::Scalar,
@@ -49,6 +50,7 @@ pub trait SigningKey<E, G: WrappedGroup>: sealed::Sealed {
 
   /// Transform an individual share's opening to the corresponding share of this key's ciphertext's
   /// opening.
+  // TODO: Support multiple key shares which belong to a single identity
   fn share_opening(
     &self,
     interpolation_factor: <G::G as Group>::Scalar,
